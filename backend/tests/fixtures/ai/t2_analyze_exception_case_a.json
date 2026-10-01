@@ -1,0 +1,31 @@
+{
+  "task_type": "ANALYZE_EXCEPTION",
+  "input_hash": null,
+  "match_any": false,
+  "model": "deepseek-chat",
+  "prompt_version": "v1",
+  "tokens_in": 1730,
+  "tokens_out": 420,
+  "steps": [
+    {"step_no": 1, "step_type": "TOOL", "tool_name": "get_order", "args": {"order_id": 1}},
+    {"step_no": 2, "step_type": "TOOL", "tool_name": "get_tracking_events", "args": {"order_id": 1, "limit": 10}},
+    {"step_no": 3, "step_type": "TOOL", "tool_name": "get_vehicle", "args": {"vehicle_id": 1}}
+  ],
+  "output": {
+    "summary": "订单 SO20260930021 天津→上海在途，车辆在济南爆胎维修。VIP 客户远洋集团承诺 2026-10-01 09:00 送达，当前预计 2026-10-01 13:30 到达，延误 270 分钟，已超出承诺时间。",
+    "root_cause": {"code": "VEHICLE_BREAKDOWN", "note": "承运商反馈右后轮爆胎，正在济南的修理厂处理"},
+    "impact": {"delay_minutes": 270, "sla_breached": true, "affected_customer_level": "VIP"},
+    "suggestions": [
+      {"code": "UPDATE_ETA", "title": "将 ETA 更新为 2026-10-01 13:30", "rationale": "以承运商给出的恢复时间与剩余里程估算"},
+      {"code": "CREATE_FOLLOWUP", "title": "30 分钟后回访承运商确认维修进度", "assignee_role": "OPERATOR"},
+      {"code": "SAVE_NOTICE", "title": "生成并发送延误通知给客户", "rationale": "VIP 客户 SLA 违约，规范要求 30 分钟内告知"}
+    ],
+    "open_questions": ["修理厂是否已确认配件到位？"],
+    "evidence_refs": [
+      {"type": "ORDER", "id": 1, "note": "订单 SO20260930021"},
+      {"type": "TRACKING_EVENT", "id": 3, "note": "济南 REPAIR_START"},
+      {"type": "VEHICLE", "id": 1, "note": "津A·12345 REPAIRING"}
+    ]
+  },
+  "note": "CASE-A 的 T2 录制输出（evidence id 对应单场景测试库）。"
+}

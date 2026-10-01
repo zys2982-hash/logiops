@@ -1,0 +1,8 @@
+# pnpm 12.x: build-script allow-list must live here (pnpm-workspace.yaml).
+# The legacy array key "onlyBuiltDependencies" (in .npmrc) is ignored by pnpm 12 and
+# causes `pnpm install` to exit non-zero with ERR_PNPM_IGNORED_BUILDS.
+# esbuild needs its postinstall (downloads the platform binary) and vue-demi needs its
+# postinstall (generates the Vue version shim); without them vite dev/build fails.
+allowBuilds:
+  esbuild: true
+  vue-demi: true

@@ -1,0 +1,39 @@
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+*.egg-info/
+
+# env & secrets
+.env
+.env.local
+!.env.example
+
+# node
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# artifacts / logs
+artifacts/
+*.log
+
+# 本地数据库与临时目录（演示用 sqlite，不入库）
+*.db
+*.sqlite3
+*.sqlite3-journal
+*.db-journal
+.tmp/
+
+# ide / os
+.idea/
+.DS_Store
+Thumbs.db

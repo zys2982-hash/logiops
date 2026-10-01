@@ -1,0 +1,58 @@
+[project]
+name = "logiops-backend"
+version = "0.1.0"
+description = "LogiOps 物流异常协同平台 - 后端（面试演示项目）"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0,<0.116.0",
+    "uvicorn[standard]>=0.34.0,<0.35.0",
+    "sqlalchemy>=2.0.36,<2.1.0",
+    "pymysql>=1.1.1",
+    "cryptography>=43.0.0",
+    "tzdata>=2024.1",
+    "alembic>=1.14.0,<1.15.0",
+    "pydantic>=2.10.0,<3.0.0",
+    "pydantic-settings>=2.7.0,<3.0.0",
+    "pyjwt>=2.10.0,<3.0.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt==4.0.1",
+    "python-multipart>=0.0.18",
+    "openai>=1.59.0,<2.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-cov>=6.0.0",
+    "httpx>=0.28.0",
+    "ruff>=0.8.0",
+    "mypy>=1.14.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+markers = ["live: 需要真实调用 LLM（默认跳过）"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/ai/prompts/*"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "C4"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]

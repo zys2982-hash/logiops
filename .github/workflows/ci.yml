@@ -1,0 +1,143 @@
+# LogiOps CI（GitHub Actions，基线 §15 D1：lint + pytest + MySQL service）
+#
+# 两个 job：
+#   backend  —— ubuntu-latest + MySQL 8.0 service container（带 health check）
+#               astral-sh/setup-uv + Python 3.12 → ruff → alembic upgrade head → pytest + 覆盖率
+#   frontend —— ubuntu-latest + Node 24 → corepack pnpm install → vue-tsc → vite build
+#
+# 注意（与本机环境的差别，基线 §5.1）：
+#   * runner 上测试库用 service container 的 MySQL（库名 logiops_test），
+#     本地默认走本机 MySQL 3306（或临时 sqlite），业务代码零差异。
+#   * 本机 Windows 一键验收用 scripts/acceptance.ps1（PowerShell），CI 不跑它。
+#   * ⚠️ 本工作流**尚未在本机执行过**（本机无 Docker/GitHub runner），只做静态自查。
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (ruff + alembic + pytest, MySQL 8.0)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    # MySQL 8.0 service container：utf8mb4 + 健康检查（ready 后 job 才开始跑步骤）
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: logiops_test
+          MYSQL_USER: logiops
+          MYSQL_PASSWORD: logiops
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+          --health-start-period=30s
+
+    env:
+      APP_ENV: test
+      # 本机 3306 会被 runner 的 service container 占用？不会：runner 是干净 VM，映射到 3306
+      DATABASE_URL: mysql+pymysql://logiops:logiops@127.0.0.1:3306/logiops_test?charset=utf8mb4
+      TEST_DATABASE_URL: mysql+pymysql://logiops:logiops@127.0.0.1:3306/logiops_test?charset=utf8mb4
+      SECRET_KEY: ci-only-not-a-secret
+      # 演示确定性：CI 与本地一致（基线 §13.1 / §11.3）
+      CLOCK_MODE: replay
+      AI_MODE: replay
+      AI_REPLAY_DIR: tests/fixtures/ai
+      DEMO_BASE_DATE: 2026-09-30T09:00:00+08:00
+      DEMO_RANDOM_SEED: "20260930"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup uv (with cache)
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.17"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Setup Python 3.12
+        run: uv python install 3.12
+
+      - name: 安装依赖（严格按 uv.lock）
+        run: uv sync --frozen --group dev
+
+      - name: Lint（ruff check）
+        run: uv run ruff check .
+
+      - name: 数据库迁移（alembic upgrade head）
+        run: uv run alembic upgrade head
+
+      - name: 兜底建表 + FULLTEXT ngram 索引
+        # alembic 迁移与本 ORM 元数据应一致；init-schema 幂等，顺带创建 MySQL 中文全文索引
+        run: uv run python -m app.cli init-schema
+
+      - name: Seed 演示数据（缺失时跳过并告警）
+        # app.seed 由后端交付；尚未实现时不阻塞 lint/单测，但要显式告警（不静默通过）
+        run: |
+          if uv run python -c "import app.seed" 2>/dev/null; then
+            uv run python -m app.seed --reset --demo
+          else
+            echo "::warning title=seed 缺失::app.seed 尚未实现，跳过 seed（验收脚本在本地会以 exit 2 退出）"
+          fi
+
+      - name: 测试 + 覆盖率（pytest）
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-report=json -q
+
+      - name: 上传覆盖率与 JUnit 之外的产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: |
+            backend/coverage.xml
+            backend/coverage.json
+          if-no-files-found: ignore
+
+  frontend:
+    name: frontend (pnpm build + vue-tsc)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: 启用 corepack 自带的 pnpm（不全局安装）
+        run: corepack enable
+
+      - name: 安装依赖（pnpm-lock.yaml 必须提交，保证可复现）
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: 类型检查（vue-tsc；脚本不存在时跳过）
+        run: corepack pnpm run type-check --if-present
+
+      - name: 构建（vite build）
+        run: corepack pnpm run build

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+# 构建临时目录（本机 sandbox 下 esbuild 需要可写的 TEMP，见 README）
+.tmp/

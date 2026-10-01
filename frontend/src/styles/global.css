@@ -1,0 +1,154 @@
+:root {
+  --logiops-bg: #f5f7fa;
+  --logiops-sidebar: #1f2d3d;
+  --logiops-sidebar-active: #2f6fed;
+  --logiops-card-radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--logiops-bg);
+  color: #303133;
+}
+
+.page {
+  padding: 16px;
+}
+
+.page-card {
+  border-radius: var(--logiops-card-radius);
+}
+
+.u-mb-8 {
+  margin-bottom: 8px;
+}
+
+.u-mb-12 {
+  margin-bottom: 12px;
+}
+
+.u-mb-16 {
+  margin-bottom: 16px;
+}
+
+.u-mt-8 {
+  margin-top: 8px;
+}
+
+.u-mt-12 {
+  margin-top: 12px;
+}
+
+.u-text-muted {
+  color: #909399;
+  font-size: 12px;
+}
+
+.u-nowrap {
+  white-space: nowrap;
+}
+
+.u-mono {
+  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-size: 12px;
+}
+
+.u-clickable {
+  cursor: pointer;
+}
+
+/* 异常详情三列布局（§12.2）：左=事实 中=AI 右=协同 */
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(380px, 1.15fr) minmax(320px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 1400px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.detail-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+/* 逐条点亮的 AI 步骤 */
+.ai-step {
+  border-left: 2px solid #dcdfe6;
+  padding-left: 10px;
+  margin-bottom: 8px;
+}
+
+.ai-step--ok {
+  border-color: #67c23a;
+}
+
+.ai-step--running {
+  border-color: #e6a23c;
+}
+
+.ai-step--pending {
+  border-color: #dcdfe6;
+  opacity: 0.55;
+}
+
+.ai-step--error {
+  border-color: #f56c6c;
+}
+
+/* diff 高亮 */
+.diff-cell--changed {
+  background: #fdf6ec;
+}
+
+.diff-ai {
+  color: #909399;
+  text-decoration: line-through;
+}
+
+.diff-final {
+  color: #e6a23c;
+  font-weight: 600;
+}
+
+.timeline-note {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-level-CRITICAL {
+  color: #c0392b;
+}
+
+.mock-tip {
+  border-left: 3px solid #e6a23c;
+  background: #fdf6ec;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #b88230;
+  border-radius: 4px;
+}

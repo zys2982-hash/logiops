@@ -1,0 +1,25 @@
+{
+  // LogiOps 推荐扩展（基线附录 D-C P6；VS Code 打开仓库时会提示安装）
+  "recommendations": [
+    // Python：ruff 既做 lint 也做格式化（替代 black + isort + flake8）
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    // 前端：Vue3 <script setup> + TS 支持
+    "Vue.volar",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    // 工程化辅助（可选）
+    "redhat.vscode-yaml",
+    "humao.rest-client",
+    "ms-azuretools.vscode-docker"
+  ],
+  "unwantedRecommendations": [
+    // 与 ruff 冲突：不要同时启用 black / isort / flake8
+    "ms-python.black-formatter",
+    "ms-python.isort",
+    "ms-python.flake8",
+    // Volar 与 Vetur 不能共存
+    "octref.vetur"
+  ]
+}

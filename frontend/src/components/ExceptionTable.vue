@@ -1,0 +1,98 @@
+<script setup lang="ts">
+import RiskTag from './RiskTag.vue'
+import { formatDateTime, formatDelay } from '@/utils/datetime'
+import { customerLevelLabel, exceptionStatusLabel, exceptionStatusType, exceptionTypeLabel, formatNumber } from '@/utils/format'
+import type { ExceptionListItem } from '@/types'
+
+defineProps<{
+  items: ExceptionListItem[]
+  loading?: boolean
+  showOrder?: boolean
+  emptyText?: string
+}>()
+
+const emit = defineEmits<{ (e: 'row-click', row: ExceptionListItem): void }>()
+
+/** 列表接口不返回 customer_level，优先用嵌套 customer.level（详情场景），否则留空 */
+function levelText(row: ExceptionListItem): string {
+  const level = row.customer?.level ?? row.customer_level
+  return level ? customerLevelLabel(level) : ''
+}
+
+/** 二级说明：客户等级 + 车牌（两者都没有时显示占位） */
+function subText(row: ExceptionListItem): string {
+  return [levelText(row), row.vehicle_plate].filter((v) => v).join(' · ') || '—'
+}
+</script>
+
+<template>
+  <el-table
+    v-loading="loading"
+    :data="items"
+    size="small"
+    border
+    stripe
+    row-key="id"
+    :empty-text="emptyText ?? '暂无异常数据'"
+    @row-click="(row: ExceptionListItem) => emit('row-click', row)"
+  >
+    <el-table-column label="订单号" min-width="150">
+      <template #default="{ row }">
+        <router-link :to="`/orders/${row.order_id}`" class="order-link" @click.stop>
+          {{ row.order_no ?? `#${row.order_id}` }}
+        </router-link>
+        <div class="u-text-muted u-mono">{{ row.case_no }}</div>
+      </template>
+    </el-table-column>
+    <el-table-column label="客户" min-width="150">
+      <template #default="{ row }">
+        <div>{{ row.customer_name ?? `#${row.customer_id}` }}</div>
+        <div class="u-text-muted">{{ subText(row) }}</div>
+      </template>
+    </el-table-column>
+    <el-table-column label="异常" min-width="140">
+      <template #default="{ row }">
+        <el-tag size="small" effect="plain">{{ exceptionTypeLabel(row.type) }}</el-tag>
+        <div class="u-text-muted">{{ row.detection_rule ?? '—' }}</div>
+      </template>
+    </el-table-column>
+    <el-table-column label="等级" width="110" align="center">
+      <template #default="{ row }">
+        <RiskTag :level="row.level" :score="row.risk_score" show-score />
+      </template>
+    </el-table-column>
+    <el-table-column label="SLA 影响" min-width="150">
+      <template #default="{ row }">
+        <el-tag v-if="row.sla_breached" size="small" type="danger" effect="dark">已违约</el-tag>
+        <el-tag v-else size="small" type="info" effect="plain">未违约</el-tag>
+        <div class="u-text-muted">{{ formatDelay(row.sla_delay_minutes) }}</div>
+      </template>
+    </el-table-column>
+    <el-table-column label="状态" width="110" align="center">
+      <template #default="{ row }">
+        <el-tag size="small" :type="exceptionStatusType(row.status)">{{ exceptionStatusLabel(row.status) }}</el-tag>
+      </template>
+    </el-table-column>
+    <el-table-column label="更新时间" width="150">
+      <template #default="{ row }">{{ formatDateTime(row.updated_at ?? row.created_at) }}</template>
+    </el-table-column>
+    <el-table-column v-if="showOrder" label="合并" width="70" align="center">
+      <template #default="{ row }">{{ formatNumber(row.merged_count) }}</template>
+    </el-table-column>
+    <el-table-column label="操作" width="100" fixed="right">
+      <template #default="{ row }">
+        <router-link :to="`/exceptions/${row.id}`" @click.stop>
+          <el-button size="small" text type="primary">详情</el-button>
+        </router-link>
+      </template>
+    </el-table-column>
+  </el-table>
+</template>
+
+<style scoped>
+.order-link {
+  color: #2f6fed;
+  text-decoration: none;
+  font-weight: 600;
+}
+</style>

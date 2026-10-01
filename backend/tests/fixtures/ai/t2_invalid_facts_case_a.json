@@ -1,0 +1,25 @@
+{
+  "task_type": "ANALYZE_EXCEPTION",
+  "input_hash": null,
+  "match_any": false,
+  "model": "deepseek-chat",
+  "prompt_version": "v1",
+  "steps": [
+    {"step_no": 1, "step_type": "TOOL", "tool_name": "get_order", "args": {"order_id": 1}},
+    {"step_no": 2, "step_type": "TOOL", "tool_name": "get_tracking_events", "args": {"order_id": 1, "limit": 10}}
+  ],
+  "output": {
+    "summary": "订单 SO20260930021 预计 2026-10-01 17:30 到达，延误 510 分钟（模型自行编造 ETA）。",
+    "root_cause": {"code": "VEHICLE_BREAKDOWN", "note": "编造的恢复时间"},
+    "impact": {"delay_minutes": 510, "sla_breached": true, "affected_customer_level": "VIP"},
+    "suggestions": [
+      {"code": "UPDATE_ETA", "title": "将 ETA 更新为 2026-10-01 17:30", "rationale": "模型编造"}
+    ],
+    "open_questions": [],
+    "evidence_refs": [
+      {"type": "TRACKING_EVENT", "id": 9999, "note": "不存在的轨迹事件（编造来源）"},
+      {"type": "KNOWLEDGE_CHUNK", "id": 7, "note": "不存在的知识片段"}
+    ]
+  },
+  "note": "防幻觉用例：delay_minutes=510 与后端 270 不一致（±5min 容差外），且 evidence_refs 引用不存在的 id → guard 必须拦截。"
+}

@@ -1,0 +1,131 @@
+# LogiOps 物流异常协同平台 —— 路径 B：一键容器化（基线 §5.1）
+#
+# ⚠️ 本机实测（附录 D）：Windows 11 未安装 Docker，也没有 WSL 发行版，
+#    因此本文件**未经过 `docker compose up` 验证**，只做过 YAML 语法自检：
+#        cd backend; uv run python -c "import yaml;yaml.safe_load(open(r'..\docker-compose.yml',encoding='utf-8'));print('yaml ok')"
+#    日常开发请用路径 A（scripts/dev.ps1 默认）：本机 MySQL 3306，业务代码零差异。
+#
+# 两条路径只差一个 DATABASE_URL：
+#    路径 A（本机）  mysql+pymysql://logiops:logiops@127.0.0.1:3306/logiops?charset=utf8mb4
+#    路径 B（容器）  mysql+pymysql://logiops:logiops@mysql:3306/logiops?charset=utf8mb4
+#    宿主机从 3307 端口访问容器内 MySQL（避免与本机 3306 冲突）。
+#
+# 启动：
+#    docker compose up -d --build          # mysql + backend + frontend
+#    docker compose logs -f backend
+#    打开 http://localhost:5173 （前端） / http://localhost:8000/docs （后端 OpenAPI）
+# 停止：
+#    docker compose down                   # 数据卷保留
+#    docker compose down -v                # 连数据卷一起删（重新 seed 前用）
+
+# 不使用顶层 version 字段：Compose v2 已废弃，写了会有 warning。
+name: logiops
+
+services:
+  # ---------------------------------------------------------------------------
+  # MySQL 8.0：utf8mb4 + utf8mb4_0900_ai_ci（中文全文索引 ngram 的基础，见基线 §11.6）
+  # ---------------------------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: logiops-mysql
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      # MySQL 8 默认 caching_sha2_password；PyMySQL 需 cryptography（后端依赖已含）
+      - --default-authentication-plugin=caching_sha2_password
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+      # 首次初始化时自动建 logiops 库与 logiops 账号（仅本机演示用弱密码，勿用于生产）
+      MYSQL_DATABASE: logiops
+      MYSQL_USER: logiops
+      MYSQL_PASSWORD: logiops
+    ports:
+      # 宿主机 3307 → 容器 3306：本机已有 MySQL 占用 3306（附录 D-A）
+      - "3307:3306"
+    volumes:
+      - logiops-mysql-data:/var/lib/mysql
+      # scripts/init_db.sql 同时创建 logiops_test 库并授权（幂等，重复执行安全）
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/10-init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - logiops
+
+  # ---------------------------------------------------------------------------
+  # 后端：FastAPI + uvicorn（构建上下文 backend/，多阶段 Dockerfile）
+  # 启动即执行 alembic upgrade head，保证容器内 schema 就绪
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: logiops-backend:local
+    container_name: logiops-backend
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      APP_ENV: local
+      # 容器内用服务名 mysql，不用 127.0.0.1:3307
+      DATABASE_URL: mysql+pymysql://logiops:logiops@mysql:3306/logiops?charset=utf8mb4
+      TEST_DATABASE_URL: mysql+pymysql://logiops:logiops@mysql:3306/logiops_test?charset=utf8mb4
+      SECRET_KEY: ${SECRET_KEY:-dev-only-change-me}
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      # 演示确定性：固定基准日 + 回放时钟 + 回放 AI（基线 §13.1 / §11.3）
+      DEMO_BASE_DATE: 2026-09-30T09:00:00+08:00
+      DEMO_RANDOM_SEED: "20260930"
+      CLOCK_MODE: replay
+      AI_MODE: replay
+      AI_REPLAY_DIR: tests/fixtures/ai
+      # 仅 AI_MODE=live 时才需要；演示默认 replay，留空也能跑全流程
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+    ports:
+      - "8000:8000"
+    # 说明：alembic 尚无迁移脚本时（alembic/versions 为空）本命令等价于"无操作"，
+    #      表结构与 FULLTEXT 索引用 `python -m app.cli init-schema` 兜底创建。
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()\""]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - logiops
+
+  # ---------------------------------------------------------------------------
+  # 前端：Vite 构建产物 → nginx 静态托管，/api 反向代理到 backend（基线 §12.3）
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # 构建期变量；留空则前端用相对路径 /api/v1，由 nginx 代理
+        VITE_API_BASE_URL: ""
+    image: logiops-frontend:local
+    container_name: logiops-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "5173:80"
+    networks:
+      - logiops
+
+volumes:
+  logiops-mysql-data:
+    name: logiops-mysql-data
+
+networks:
+  logiops:
+    name: logiops-net

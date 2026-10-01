@@ -1,0 +1,16 @@
+{
+  "task_type": "DRAFT_NOTICE",
+  "input_hash": null,
+  "match_any": false,
+  "model": "deepseek-chat",
+  "prompt_version": "v1",
+  "tokens_in": 640,
+  "tokens_out": 180,
+  "steps": [],
+  "output": {
+    "subject": "【延误通知】订单 SO20260930021 预计 2026-10-01 13:30 到达",
+    "content": "尊敬的 远洋集团 客户：非常抱歉，您的订单 SO20260930021 在运输途中遇到车辆爆胎，预计 2026-10-01 13:30 到达（原承诺 2026-10-01 09:00），较承诺时间延误 270 分钟。我们已安排专人跟进并优先处理，给您带来不便深表歉意。",
+    "tone": "APOLOGETIC"
+  },
+  "note": "CASE-A 的 T3 录制草稿。"
+}

@@ -1,0 +1,19 @@
+{
+  "task_type": "PARSE_MESSAGE",
+  "input_hash": null,
+  "match_any": false,
+  "model": "deepseek-chat",
+  "prompt_version": "v1",
+  "tokens_in": 812,
+  "tokens_out": 96,
+  "steps": [],
+  "output": {
+    "exception_type": "VEHICLE_BREAKDOWN",
+    "location": "济南",
+    "status": "REPAIRING",
+    "estimated_recovery_at": "2026-09-30T12:00:00Z",
+    "confidence": 0.86,
+    "missing_info": []
+  },
+  "note": "CASE-A 承运商消息「车在济南爆胎了…晚上8点能好」的录制解析结果；input_hash 由 compute_t1_input_hash 计算后写入才会被回放命中。"
+}
