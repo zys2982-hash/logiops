@@ -1200,9 +1200,13 @@ Seed 生成器**必须用 `app/rules` 真算**上述 ETA/延误/等级，不允�
 
 ```text
 POST /demo/actions/tick {minutes:60}          快进时钟；期间自动执行：轨迹生成 → ETA 重算 → 检测 → 审批过期检查 → 自动关闭检查
+POST /demo/actions/set-clock {target_utc}     把虚拟时钟**直接跳到**选定时刻（年月日时分秒，秒级精确）；
+                                              只改时钟不跑业务链（要检测就再点一次「快进 1 分钟」）；
+                                              非法/越界（2020–2100 之外）返回 422，审计记 demo.set_clock
 POST /demo/actions/advance-to-less            快进到"主案例送达并自动关闭"（内部循环 tick 直到 DELIVERED，只推主案例）
 POST /demo/actions/reset                      重建 seed 并重置时钟（演示翻车后 3 秒恢复）
-GET  /demo/state                              {base_date, offset_minutes, scenario, ai_mode, clock_mode}
+GET  /demo/state                              {base_date, offset_minutes, now_utc, clock_mode, ai_mode, ...}
+                                              不变式：**业务时间 = base_date + offset_minutes**（跳转会把锚点设为目标、偏移清零）
 ```
 
 > **AI 模式（replay/live）在界面上只读展示**，不做可点击切换：真实模式由后端 `AI_MODE` / `system_setting ai.mode` 决定，

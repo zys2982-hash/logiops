@@ -1,5 +1,5 @@
 import { get, post } from './request'
-import type { DemoState, DemoTickResult } from '@/types'
+import type { DemoClockJumpResult, DemoState, DemoTickResult } from '@/types'
 
 /** GET /demo/state → {base_date, offset_minutes, now_utc, clock_mode, ai_mode, ...} */
 export function getDemoState(): Promise<DemoState> {
@@ -19,4 +19,9 @@ export function demoAdvanceToLess(): Promise<DemoTickResult> {
 /** POST /demo/actions/reset 重建 seed 并重置时钟 */
 export function demoReset(scenario = 'case-a'): Promise<{ reset: boolean; scenario: string; summary?: unknown }> {
   return post('/demo/actions/reset', { scenario })
+}
+
+/** POST /demo/actions/set-clock 把虚拟时钟直接跳到指定时刻（年月日时分秒，秒级精确） */
+export function demoSetClock(targetUtc: string): Promise<DemoClockJumpResult> {
+  return post<DemoClockJumpResult>('/demo/actions/set-clock', { target_utc: targetUtc })
 }

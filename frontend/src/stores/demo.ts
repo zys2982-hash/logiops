@@ -104,6 +104,34 @@ export const useDemoStore = defineStore('demo', () => {
     }
   }
 
+  async function setClock(targetUtc: string): Promise<void> {
+    loading.value = true
+    try {
+      const result = await demoApi.demoSetClock(targetUtc)
+      state.value = {
+        ...state.value,
+        base_date: result.base_date,
+        offset_minutes: result.offset_minutes,
+        now_utc: result.now_utc,
+      }
+      lastAction.value = `把虚拟时钟跳到 ${formatDateTime(result.now_utc, 'YYYY-MM-DD HH:mm:ss')}`
+      mocked.value = false
+      lastError.value = null
+    } catch (error) {
+      if (!isFixtureFallback(error)) {
+        // 后端明确拒绝（时间非法/越界）：不改本地状态
+        lastError.value = error instanceof Error ? error.message : '时间跳转失败'
+        return
+      }
+      // 本地兜底：直接跳到目标时刻
+      state.value = { ...state.value, base_date: targetUtc, offset_minutes: 0, now_utc: targetUtc }
+      lastAction.value = `把虚拟时钟跳到 ${formatDateTime(targetUtc, 'YYYY-MM-DD HH:mm:ss')}（本地演示）`
+      mocked.value = true
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function reset(scenario = 'case-a'): Promise<void> {
     loading.value = true
     try {
@@ -141,6 +169,7 @@ export const useDemoStore = defineStore('demo', () => {
     refresh,
     tick,
     advanceToLess,
+    setClock,
     reset,
   }
 })

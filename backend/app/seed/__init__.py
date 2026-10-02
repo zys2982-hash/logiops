@@ -432,7 +432,7 @@ def sync_demo_clock_setting(session: Session, workspace_id: int) -> int:
     这样前端横幅除了解析 tick 响应，也能从 ``system_setting`` 读到"业务时间/偏移"。
     """
     repos = Repos(session, workspace_id=workspace_id)
-    repos.settings.set("demo.base_date", get_settings().demo_base_date)
+    repos.settings.set("demo.base_date", clock_state.anchor().isoformat())
     repos.settings.set("demo.clock_offset_minutes", str(clock_state.offset_minutes))
     return clock_state.offset_minutes
 

@@ -982,6 +982,15 @@ export interface DemoTickResult {
   [key: string]: unknown
 }
 
+/** POST /demo/actions/set-clock 的返回：把虚拟时钟直接跳到目标时刻 */
+export interface DemoClockJumpResult {
+  ok: boolean
+  previous_now_utc: string
+  base_date: string
+  offset_minutes: number
+  now_utc: string
+}
+
 /** GET /api/v1/healthz（实测：db 是布尔，另带 app_env/demo_base_date/clock_offset_minutes/model_tables） */
 export interface HealthStatus {
   status: string

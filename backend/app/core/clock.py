@@ -70,6 +70,20 @@ class ClockState:
         self.offset_minutes += int(minutes)
         return self.now()
 
+    def set_now(self, target: datetime) -> datetime:
+        """把业务时钟**直接跳到**指定时刻（演示工具的"时间跳转"，秒级精确）。
+
+        做法：把锚点 ``base`` 设为目标、偏移清零，于是 ``now()`` 精确等于目标；
+        之后 ``advance(minutes)`` 仍在此基础上继续推进。
+        """
+        self.base = ensure_utc(target)
+        self.offset_minutes = 0
+        return self.now()
+
+    def anchor(self) -> datetime:
+        """当前时钟锚点：跳转过就是跳转目标，否则是配置的业务基准日。"""
+        return self.base or default_base_date()
+
 
 state = ClockState()
 
