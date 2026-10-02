@@ -14,19 +14,10 @@ const demo = useDemoStore()
 
 const tickMinutes = ref(60)
 const targetTime = ref('')
-const scenario = ref('case-a')
 const busy = ref(false)
 const timeline = ref<Array<{ time: string; action: string }>>([])
 
 const canControl = computed(() => auth.can(Perm.DEMO_CONTROL))
-
-const scenarios = [
-  { value: 'case-a', label: 'CASE-A 主案例（车辆故障全闭环，CRITICAL）' },
-  { value: 'case-b', label: 'CASE-B 已完成（VIP 单：分析/审批/通知/跟进/关闭）' },
-  { value: 'case-c', label: 'CASE-C 误报（装卸排队，close(reason=INVALID)）' },
-  { value: 'case-d', label: 'CASE-D 边界（延误 25min < 允许 30min，MEDIUM，不违约）' },
-  { value: 'case-e', label: 'CASE-E 高并发感（5 单不同等级/状态）' },
-]
 
 function logAction(action: string): void {
   timeline.value.unshift({ time: new Date().toLocaleTimeString('zh-CN'), action })
@@ -88,22 +79,6 @@ async function tick(): Promise<void> {
   }
 }
 
-async function advance(): Promise<void> {
-  busy.value = true
-  try {
-    await demo.advanceToLess()
-    logAction('POST /demo/actions/advance-to-less')
-    if (demo.lastError) {
-      logAction(`advance 失败：${demo.lastError}`)
-      ElMessage.error(`推进到送达失败：${demo.lastError}`)
-      return
-    }
-    ElMessage.success(demo.lastAction ?? '已推进到送达')
-  } finally {
-    busy.value = false
-  }
-}
-
 async function reset(): Promise<void> {
   try {
     await ElMessageBox.confirm('将重建 seed 并把时钟归零（演示翻车后 3 秒恢复），继续？', '重置演示数据', {
@@ -114,10 +89,10 @@ async function reset(): Promise<void> {
   }
   busy.value = true
   try {
-    await demo.reset(scenario.value)
+    await demo.reset('case-a')
     // 本地 fixture 状态一并重置，保证无后端时也能恢复初始演示数据
     resetMockState()
-    logAction(`POST /demo/actions/reset {scenario: "${scenario.value}"}`)
+    logAction('POST /demo/actions/reset {scenario: "case-a"}')
     ElMessage.success('已重置为 seed 初始态')
   } finally {
     busy.value = false
@@ -186,23 +161,15 @@ onMounted(refresh)
                 提交时按本地时区（Asia/Shanghai）转成 UTC。
               </span>
             </el-form-item>
-            <el-form-item label="重置场景">
-              <el-select v-model="scenario" style="width: 100%">
-                <el-option v-for="option in scenarios" :key="option.value" :label="option.label" :value="option.value" />
-              </el-select>
-            </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="busy" @click="tick">快进 {{ tickMinutes }} 分钟</el-button>
-              <el-button :loading="busy" @click="advance">快进到结案（推进到送达）</el-button>
-              <el-button type="danger" plain :loading="busy" @click="reset">重置到初始态</el-button>
+              <el-button text type="danger" :loading="busy" @click="reset">重置到初始态</el-button>
               <el-button text type="primary" @click="refresh">刷新状态</el-button>
             </el-form-item>
             <div class="u-text-muted" style="line-height: 1.7">
-              1）<b>快进 N 分钟</b>：让虚拟时间走 N 分钟，顺便跑一遍自动链路（全库都会动）。<br />
-              2）<b>跳到该时间</b>：选好年月日时分秒，直接把虚拟时钟设到那一刻（秒级精确；只改时钟，不跑业务链）。
-              跳完想立刻触发一次检测/自动关闭，再点一次「快进 1 分钟」即可。<br />
-              3）<b>快进到结案</b>：一直快进到主案例（带承运商消息那单）送达并自动关闭，中途遇到"等修车 / 等送达后 24h"会直接跳过去（只推这一单）。<br />
-              4）<b>重置到初始态</b>：重建 seed、时钟归零，回到 2026-09-30 01:00 的标准演示起点。
+              1）<b>快进 N 分钟</b>：让虚拟时间走 N 分钟，顺便跑一遍自动链路（轨迹 → ETA 重算 → 检测 → 自动关闭）。<br />
+              2）<b>跳到该时间</b>：选好年月日时分秒，直接把虚拟时钟设到那一刻（秒级精确，只改时钟）。
+              跳完想立刻触发一次检测，再点一次「快进 1 分钟」。
             </div>
           </el-form>
         </PanelCard>
@@ -217,16 +184,6 @@ onMounted(refresh)
               <span>{{ item.action }}</span>
             </li>
           </ul>
-        </PanelCard>
-
-        <PanelCard title="脚本化案例（§13.3）" icon="Film" class="u-mt-12">
-          <el-table :data="scenarios" size="small" border>
-            <el-table-column prop="label" label="案例" min-width="200" />
-          </el-table>
-          <div class="u-text-muted u-mt-8">
-            主案例：SO20260930021 天津→上海 VIP-01，19:00 济南停滞 ≥120min → STALL_OVER_THRESHOLD 建单；
-            承运商消息“车在济南爆胎了…预计晚上 8 点恢复”；expected ETA 22:30，延误 270min，CRITICAL。
-          </div>
         </PanelCard>
       </el-col>
     </el-row>
