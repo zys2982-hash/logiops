@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
@@ -42,7 +42,8 @@ const groups: NavGroup[] = [
     title: '主数据',
     items: [
       { path: '/customers', label: '客户', icon: 'OfficeBuilding', perm: Perm.CUSTOMER_VIEW },
-      { path: '/carriers', label: '承运商', icon: 'Ship', perm: Perm.CARRIER_VIEW },
+      // 承运商（ADR-A17）：只是归属字典，不单独占菜单项；入口在「车辆」页的操作区
+      // 以及订单/异常详情里的只读字段；路由 /carriers 仍然可用（管理员可直达）
       { path: '/vehicles', label: '车辆', icon: 'Van', perm: Perm.VEHICLE_VIEW },
       { path: '/drivers', label: '司机', icon: 'User', perm: Perm.DRIVER_VIEW },
       { path: '/sla-rules', label: 'SLA 规则', icon: 'Timer', perm: Perm.SLA_VIEW },

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
 import PanelCard from '@/components/PanelCard.vue'
@@ -10,6 +11,12 @@ import { useAuthStore } from '@/stores/auth'
 import { vehicleStatusLabel, vehicleStatusType } from '@/utils/format'
 
 const auth = useAuthStore()
+const router = useRouter()
+const canViewCarriers = computed(() => auth.can(Perm.CARRIER_VIEW))
+
+function goCarriers(): void {
+  void router.push('/carriers')
+}
 const canManage = computed(() => auth.can(Perm.VEHICLE_MANAGE))
 
 const query = reactive({ plate_no: '', status: '' as VehicleStatus | '', carrier_id: '' as number | '', page: 1, page_size: 20 })
@@ -131,6 +138,10 @@ onMounted(async () => {
   <div class="page">
     <PanelCard title="车辆主数据" :subtitle="`共 ${result.total} 台（状态影响 ETA 重算：REPAIRING 走 REPAIR_WAIT）`" icon="Van">
       <template #actions>
+        <!-- 承运商不再单独占一个菜单项（ADR-A17）：它是归属字典，入口收在这里 -->
+        <el-button v-if="canViewCarriers" size="small" text type="primary" @click="goCarriers">
+          承运商字典
+        </el-button>
         <el-button v-if="canManage" size="small" type="primary" @click="openCreate">新增车辆</el-button>
         <el-tag v-else size="small" effect="plain">只读（vehicle.manage 才可编辑）</el-tag>
       </template>
