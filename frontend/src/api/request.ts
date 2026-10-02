@@ -105,10 +105,25 @@ export const http: AxiosInstance = axios.create({
 
 /* ------------------------------------------------------------ 请求拦截 */
 
+// 后端契约（基线 §10.1）：分页 page_size ≤ 100，越界会返回 422 VALIDATION_ERROR。
+// 在请求层统一夹紧，避免任何页面写错数字就把整页打成"参数校验失败"（曾发生在车辆页的司机下拉框）。
+const MAX_PAGE_SIZE = 100
+
+function clampPagination(params: unknown): unknown {
+  if (!params || typeof params !== 'object') return params
+  const record = { ...(params as Record<string, unknown>) }
+  const size = Number(record.page_size)
+  if (Number.isFinite(size) && size > MAX_PAGE_SIZE) {
+    record.page_size = MAX_PAGE_SIZE
+  }
+  return record
+}
+
 http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const { token, workspaceId } = authSnapshot()
   if (token) config.headers.set('Authorization', `Bearer ${token}`)
   if (workspaceId) config.headers.set('X-Workspace-Id', String(workspaceId))
+  config.params = clampPagination(config.params)
   return config
 })
 

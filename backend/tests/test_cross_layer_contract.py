@@ -57,3 +57,24 @@ def test_seed_demo_password_matches_docs():
     assert DEMO_PASSWORD == "Demo@12345"
     login_text = LOGIN_VIEW.read_text(encoding="utf-8")
     assert DEMO_PASSWORD in login_text, "登录页没有出现演示口令，前端与 seed 可能已不一致"
+
+
+MAX_PAGE_SIZE = 100
+PAGE_SIZE_RE = re.compile(r"page_size\s*[:=]\s*(\d+)")
+
+
+def test_frontend_never_exceeds_max_page_size():
+    """分页契约（基线 §10.1）：page_size ≤ 100，越界后端返回 422。
+
+    真实事故：车辆页为了填司机下拉框写了 `page_size: 200`，于是一打开车辆页就弹
+    "参数校验失败"（列表其实加载成功了，是并行的下拉框请求 422 冒出来的）。
+    """
+    offenders: list[str] = []
+    for path in FRONTEND_SRC.rglob("*"):
+        if not path.is_file() or path.suffix not in {".ts", ".vue"}:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in PAGE_SIZE_RE.finditer(text):
+            if int(match.group(1)) > MAX_PAGE_SIZE:
+                offenders.append(f"{path.relative_to(ROOT)}: page_size={match.group(1)}")
+    assert not offenders, f"以下位置的分页参数超出契约上限 {MAX_PAGE_SIZE}：{offenders}"

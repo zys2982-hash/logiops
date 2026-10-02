@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
@@ -110,7 +110,7 @@ onMounted(async () => {
   await load()
   const [carrierResult, driverResult] = await Promise.allSettled([
     masterApi.listCarriers({ page: 1, page_size: 100 }),
-    masterApi.listDrivers({ page: 1, page_size: 200 }),
+    masterApi.listDrivers({ page: 1, page_size: 100 }), // 契约上限 100（曾写 200 导致整页 422）
   ])
   if (carrierResult.status === 'fulfilled') carriers.value = carrierResult.value.items
   if (driverResult.status === 'fulfilled') drivers.value = driverResult.value.items
