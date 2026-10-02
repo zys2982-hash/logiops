@@ -150,6 +150,11 @@ class VehicleCreate(BaseModel):
     carrier_id: int | None = None
     status: VehicleStatus = VehicleStatus.IDLE
     current_driver_id: int | None = None
+    current_driver_name: str | None = Field(
+        default=None,
+        max_length=64,
+        description="主驾司机姓名（手输，按承运商匹配；一名司机只能绑定一台车）",
+    )
     current_city: str | None = Field(default=None, max_length=64)
     remark: str | None = Field(default=None, max_length=255)
 
@@ -161,6 +166,9 @@ class VehicleUpdate(BaseModel):
     carrier_id: int | None = None
     status: VehicleStatus | None = None
     current_driver_id: int | None = None
+    current_driver_name: str | None = Field(
+        default=None, max_length=64, description="主驾司机姓名（手输；传 null/空串表示解除绑定）"
+    )
     current_city: str | None = Field(default=None, max_length=64)
     remark: str | None = Field(default=None, max_length=255)
     expected_version: int | None = None

@@ -33,11 +33,13 @@ const form = reactive({
   vehicle_type: '',
   capacity_ton: 0,
   carrier_id: null as number | null,
-  current_driver_id: null as number | null,
+  current_driver_name: '',
   current_city: '',
   status: 'IDLE' as VehicleStatus,
   remark: '',
 })
+/** 主驾司机字段级报错（手输姓名：不存在 / 同名歧义 / 已被别的车绑定 / 跨承运商） */
+const driverError = ref('')
 
 const statusOptions = [
   { value: 'IDLE', label: '空闲' },
@@ -52,8 +54,9 @@ const formDrivers = computed(() =>
 )
 
 function onFormCarrierChange(): void {
-  // 换承运商必须清空主驾，否则会形成跨承运商绑定
-  form.current_driver_id = null
+  // 换承运商必须清空主驾（姓名按承运商匹配，跨承运商就会 422）
+  form.current_driver_name = ''
+  driverError.value = ''
 }
 
 function carrierName(id?: number | null): string {
@@ -61,8 +64,8 @@ function carrierName(id?: number | null): string {
   return carriers.value.find((c) => c.id === id)?.name ?? `#${id}`
 }
 
-function driverName(id?: number | null): string {
-  if (!id) return '—'
+function driverName(id?: number | null, fallback = '—'): string {
+  if (!id) return fallback
   return drivers.value.find((d) => d.id === id)?.name ?? `#${id}`
 }
 
@@ -83,7 +86,17 @@ async function load(): Promise<void> {
 
 function openCreate(): void {
   editingId.value = null
-  Object.assign(form, { plate_no: '', vehicle_type: '', capacity_ton: 0, carrier_id: null, current_driver_id: null, current_city: '', status: 'IDLE', remark: '' })
+  Object.assign(form, {
+    plate_no: '',
+    vehicle_type: '',
+    capacity_ton: 0,
+    carrier_id: null,
+    current_driver_name: '',
+    current_city: '',
+    status: 'IDLE',
+    remark: '',
+  })
+  driverError.value = ''
   dialogVisible.value = true
 }
 
@@ -94,12 +107,26 @@ function openEdit(row: Vehicle): void {
     vehicle_type: row.vehicle_type ?? '',
     capacity_ton: row.capacity_ton ?? 0,
     carrier_id: row.carrier_id ?? null,
-    current_driver_id: row.current_driver_id ?? null,
+    current_driver_name: row.current_driver_id ? driverName(row.current_driver_id, '') : '',
     current_city: row.current_city ?? '',
     status: row.status,
     remark: row.remark ?? '',
   })
+  driverError.value = ''
   dialogVisible.value = true
+}
+
+/** 把后端字段级报错（details.fields）落到对应输入框下面，而不是只弹一个全局 toast */
+function applyFieldError(error: unknown): void {
+  driverError.value = ''
+  const apiError = error as { code?: string; details?: { fields?: { loc?: string; msg?: string }[] } }
+  const fields = apiError?.details?.fields ?? []
+  const hit = fields.find((field) => (field.loc ?? '').includes('current_driver_name'))
+  if (hit?.msg) {
+    driverError.value = hit.msg
+  } else if (apiError?.code === 'VALIDATION_ERROR' && fields[0]?.msg) {
+    driverError.value = fields[0].msg
+  }
 }
 
 async function submit(): Promise<void> {
@@ -108,6 +135,7 @@ async function submit(): Promise<void> {
     return
   }
   saving.value = true
+  driverError.value = ''
   try {
     if (editingId.value) {
       await masterApi.updateVehicle(editingId.value, { ...form })
@@ -118,6 +146,9 @@ async function submit(): Promise<void> {
     }
     dialogVisible.value = false
     await load()
+  } catch (error) {
+    applyFieldError(error)
+    if (!driverError.value) throw error
   } finally {
     saving.value = false
   }
@@ -204,17 +235,20 @@ onMounted(async () => {
             <el-option v-for="carrier in carriers" :key="carrier.id" :label="carrier.name" :value="carrier.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="主驾司机">
-          <el-select
-            v-model="form.current_driver_id"
+        <el-form-item label="主驾司机" :error="driverError">
+          <el-input
+            v-model="form.current_driver_name"
             clearable
             :disabled="form.carrier_id === null"
-            :placeholder="form.carrier_id === null ? '请先选择承运商' : '只列该承运商名下的司机'"
-            style="width: 100%"
-          >
-            <el-option v-for="driver in formDrivers" :key="driver.id" :label="driver.name" :value="driver.id" />
-          </el-select>
-          <span class="u-text-muted">车与司机 1:1 绑定：司机必须与车辆同属一家承运商（后端同样校验）</span>
+            :placeholder="form.carrier_id === null ? '请先选择承运商' : '直接输入司机姓名'"
+            @input="driverError = ''"
+          />
+          <span class="u-text-muted">
+            手输姓名，系统按所选承运商匹配；一名司机只能绑定一台车（不存在／同名／已被别的车绑定都会在下方报错）
+          </span>
+          <span v-if="form.carrier_id !== null" class="u-text-muted">
+            该承运商现有司机：{{ formDrivers.length ? formDrivers.map((d) => d.name).join('、') : '（无，请先到「司机」页新增）' }}
+          </span>
         </el-form-item>
         <el-form-item label="当前城市"><el-input v-model="form.current_city" /></el-form-item>
         <el-form-item label="状态">

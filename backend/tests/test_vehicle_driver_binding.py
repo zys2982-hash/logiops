@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -120,3 +121,145 @@ def test_patch_vehicle_can_clear_driver(client, bootstrap, admin_headers):
     )
     assert response.status_code == 200, response.text
     assert response.json()["current_driver_id"] is None
+
+
+# --- 主驾司机改为"手输姓名"（前端主用方式）：不存在 / 同名 / 已被占用都要有字段级报错 -----
+
+
+def _named_payload(carrier_id: int | None, driver_name: str | None, plate_no: str) -> dict:
+    payload: dict = {"plate_no": plate_no, "status": "IDLE"}
+    if carrier_id is not None:
+        payload["carrier_id"] = carrier_id
+    if driver_name is not None:
+        payload["current_driver_name"] = driver_name
+    return payload
+
+
+def _create_unbound_driver(session: Session, bootstrap, name: str) -> Driver:
+    driver = Driver(
+        workspace_id=bootstrap["workspace_id"],
+        name=name,
+        carrier_id=bootstrap["carrier"].id,
+        status="AVAILABLE",
+    )
+    session.add(driver)
+    session.commit()
+    return driver
+
+
+def test_bind_driver_by_name_success(client, db_session, bootstrap, admin_headers):
+    """输入存在的司机姓名 → 绑定成功，落库的是 driver_id。"""
+    driver = _create_unbound_driver(db_session, bootstrap, "手输司机甲")
+    response = client.post(
+        "/api/v1/vehicles",
+        headers=admin_headers,
+        json=_named_payload(bootstrap["carrier"].id, "手输司机甲", "京Z·60001"),
+    )
+    assert response.status_code in (200, 201), response.text
+    assert response.json()["current_driver_id"] == driver.id
+
+
+def test_bind_driver_by_unknown_name_reports_field_error(client, db_session, bootstrap, admin_headers):
+    """姓名不存在 → 422，且错误定位在 current_driver_name 字段（前端在输入框下显示）。"""
+    response = client.post(
+        "/api/v1/vehicles",
+        headers=admin_headers,
+        json=_named_payload(bootstrap["carrier"].id, "查无此人", "京Z·60002"),
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert error["message"] == "司机不存在"
+    field = error["details"]["fields"][0]
+    assert field["loc"] == "current_driver_name"
+    assert "查无此人" in field["msg"]
+    assert db_session.scalars(select(Vehicle).where(Vehicle.plate_no == "京Z·60002")).first() is None
+
+
+def test_bind_driver_name_already_bound_to_another_vehicle(client, bootstrap, admin_headers):
+    """该司机已被别的车辆绑定 → 422（一人一车）。"""
+    bound_name = bootstrap["driver"].name  # bootstrap 的车辆已绑定这名司机
+    response = client.post(
+        "/api/v1/vehicles",
+        headers=admin_headers,
+        json=_named_payload(bootstrap["carrier"].id, bound_name, "京Z·60003"),
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert error["message"] == "一名司机只能绑定一台车"
+    assert "已绑定车辆" in error["details"]["fields"][0]["msg"]
+
+
+def test_bind_driver_name_ambiguous(client, db_session, bootstrap, admin_headers):
+    """同承运商下有两个同名司机 → 422，提示先改名（避免绑错人）。"""
+    _create_unbound_driver(db_session, bootstrap, "同名司机")
+    _create_unbound_driver(db_session, bootstrap, "同名司机")
+    response = client.post(
+        "/api/v1/vehicles",
+        headers=admin_headers,
+        json=_named_payload(bootstrap["carrier"].id, "同名司机", "京Z·60004"),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["message"] == "司机姓名不唯一"
+
+
+def test_bind_driver_name_requires_carrier(client, bootstrap, admin_headers):
+    """没选承运商就填姓名 → 422，提示先选承运商（同名司机可能属于不同承运商）。"""
+    response = client.post(
+        "/api/v1/vehicles",
+        headers=admin_headers,
+        json=_named_payload(None, bootstrap["driver"].name, "京Z·60005"),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["details"]["fields"][0]["loc"] == "carrier_id"
+
+
+def test_bind_driver_name_matches_within_carrier_only(client, db_session, bootstrap, admin_headers):
+    """姓名只在所选承运商内匹配：别家承运商的同名司机不会被误绑。"""
+    other = _new_carrier(db_session, bootstrap["workspace_id"], "CR-X9", "别家承运商")
+    db_session.add(
+        Driver(workspace_id=bootstrap["workspace_id"], name="别家同名", carrier_id=other.id, status="AVAILABLE")
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/api/v1/vehicles",
+        headers=admin_headers,
+        json=_named_payload(bootstrap["carrier"].id, "别家同名", "京Z·60006"),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["message"] == "司机不存在"
+
+
+def test_clear_driver_with_empty_name(client, bootstrap, admin_headers):
+    """姓名传空串 = 解除绑定。"""
+    response = client.patch(
+        f"/api/v1/vehicles/{bootstrap['vehicle'].id}",
+        headers=admin_headers,
+        json={"current_driver_name": ""},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["current_driver_id"] is None
+
+
+def test_database_unique_index_blocks_double_binding(db_session, bootstrap):
+    """数据库层兜底：一个司机不能绑定第二台车（唯一索引 uq_vehicle_current_driver）。"""
+    from sqlalchemy.exc import IntegrityError
+
+    driver = _create_unbound_driver(db_session, bootstrap, "索引兜底司机")
+    first = Vehicle(
+        workspace_id=bootstrap["workspace_id"], plate_no="京Z·61001", carrier_id=bootstrap["carrier"].id
+    )
+    db_session.add(first)
+    db_session.flush()
+    first.current_driver_id = driver.id
+    db_session.flush()
+
+    second = Vehicle(
+        workspace_id=bootstrap["workspace_id"], plate_no="京Z·61002", carrier_id=bootstrap["carrier"].id
+    )
+    db_session.add(second)
+    db_session.flush()
+    with pytest.raises(IntegrityError):
+        second.current_driver_id = driver.id
+        db_session.flush()
+    db_session.rollback()

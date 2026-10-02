@@ -6,11 +6,12 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 from fastapi import status as http_status
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import PageDep, RequestContext, require
 from app.core.errors import ErrorCode, conflict, not_found, validation_error
 from app.core.permissions import Perm
-from app.models.master import Vehicle
+from app.models.master import Driver, Vehicle
 from app.schemas.common import Page, page_of, parse_sort, patch_payload
 from app.schemas.master import VehicleCreate, VehicleOut, VehicleUpdate
 
@@ -30,42 +31,113 @@ SORTABLE: dict[str, Any] = {
 }
 
 
-def _check_relations(ctx: RequestContext, payload: Any, vehicle: Vehicle | None = None) -> None:
-    carrier_id = getattr(payload, "carrier_id", None)
-    if carrier_id is not None and ctx.repos.carriers.get(carrier_id) is None:
-        raise not_found("承运商不存在", carrier_id=carrier_id)
-    driver_id = getattr(payload, "current_driver_id", None)
-    if driver_id is not None and ctx.repos.drivers.get(driver_id) is None:
-        raise not_found("司机不存在", current_driver_id=driver_id)
+def _resolve_driver(
+    ctx: RequestContext, payload: Any, vehicle: Vehicle | None = None
+) -> tuple[int | None, bool]:
+    """解析并按规则校验"主驾司机"，返回 `(effective_driver_id, 是否显式提供了司机字段)`。
 
-    # 绑定一致性（项目约定：车与司机 1:1 固定绑定，不做排班/分配表；换人由车辆编辑页面维护）：
-    # 主驾司机必须与车辆同属一家承运商，否则会造出"京东的车 + 德邦的司机"这种跨承运商绑定。
-    # 用 model_fields_set 区分"没传该字段"与"显式清空"，避免把清空误判成沿用旧值。
+    支持两种输入（手输姓名为前端主用方式）：
+    - `current_driver_name`：按**承运商内姓名**匹配；不存在、同名歧义、跨承运商、已被别的车绑定都会报错；
+    - `current_driver_id`：兼容既有调用方（测试/脚本）。
+    规则（ADR-A18）：车与司机 **1:1 强绑定**，且必须同属一家承运商。
+    """
     provided = getattr(payload, "model_fields_set", set())
-    effective_carrier = (
-        carrier_id if "carrier_id" in provided else (vehicle.carrier_id if vehicle else None)
-    )
-    effective_driver = (
-        getattr(payload, "current_driver_id", None)
-        if "current_driver_id" in provided
-        else (vehicle.current_driver_id if vehicle else None)
-    )
-    if effective_carrier and effective_driver:
-        driver = ctx.repos.drivers.get(effective_driver)
-        if driver is not None and driver.carrier_id is not None and driver.carrier_id != effective_carrier:
-            carrier = ctx.repos.carriers.get(effective_carrier)
-            driver_carrier = ctx.repos.carriers.get(driver.carrier_id)
+    carrier_provided = "carrier_id" in provided
+    name_provided = "current_driver_name" in provided
+    id_provided = "current_driver_id" in provided
+
+    carrier_id = payload.carrier_id if carrier_provided else (vehicle.carrier_id if vehicle else None)
+    if carrier_provided and carrier_id is not None and ctx.repos.carriers.get(carrier_id) is None:
+        raise not_found("承运商不存在", carrier_id=carrier_id)
+
+    driver_field_provided = name_provided or id_provided
+    location = "current_driver_name" if name_provided else "current_driver_id"
+    raw_name = getattr(payload, "current_driver_name", None)
+
+    if name_provided:
+        name = (raw_name or "").strip()
+        if not name:
+            # 传空串/null = 解除绑定
+            return None, True
+        if carrier_id is None:
             raise validation_error(
-                "主驾司机不属于该车辆所属承运商",
+                "请先选择承运商，再填写主驾司机姓名",
                 fields=[
                     {
-                        "loc": "current_driver_id",
-                        "msg": f"司机 {driver.name} 属于承运商 #{driver.carrier_id}"
-                        f"（{driver_carrier.name if driver_carrier else '—'}），"
-                        f"与车辆承运商 #{effective_carrier}（{carrier.name if carrier else '—'}）不一致",
+                        "loc": "carrier_id",
+                        "msg": "同名司机可能存在于不同承运商，因此填写姓名前必须先确定承运商",
                     }
                 ],
             )
+        carrier = ctx.repos.carriers.get(carrier_id)
+        carrier_label = carrier.name if carrier else f"#{carrier_id}"
+        candidates = ctx.repos.drivers.all(filters=[Driver.carrier_id == carrier_id])
+        matched = [item for item in candidates if (item.name or "").strip() == name]
+        if not matched:
+            raise validation_error(
+                "司机不存在",
+                fields=[
+                    {
+                        "loc": location,
+                        "msg": f"承运商「{carrier_label}」下没有名为「{name}」的司机；"
+                        "请先在「司机」页新增该司机，或检查姓名是否写错",
+                    }
+                ],
+            )
+        if len(matched) > 1:
+            raise validation_error(
+                "司机姓名不唯一",
+                fields=[
+                    {
+                        "loc": location,
+                        "msg": f"承运商「{carrier_label}」下有 {len(matched)} 名司机都叫「{name}」，"
+                        "请先在「司机」页改名以区分后再绑定",
+                    }
+                ],
+            )
+        driver_id: int | None = matched[0].id
+    elif id_provided:
+        driver_id = getattr(payload, "current_driver_id", None)
+    else:
+        driver_id = vehicle.current_driver_id if vehicle else None
+
+    if driver_id is None:
+        return None, driver_field_provided
+
+    driver = ctx.repos.drivers.get(driver_id)
+    if driver is None:
+        raise not_found("司机不存在", current_driver_id=driver_id)
+
+    if carrier_id and driver.carrier_id is not None and driver.carrier_id != carrier_id:
+        carrier = ctx.repos.carriers.get(carrier_id)
+        driver_carrier = ctx.repos.carriers.get(driver.carrier_id)
+        raise validation_error(
+            "主驾司机不属于该车辆所属承运商",
+            fields=[
+                {
+                    "loc": location,
+                    "msg": f"司机 {driver.name} 属于承运商 #{driver.carrier_id}"
+                    f"（{driver_carrier.name if driver_carrier else '—'}），"
+                    f"与车辆承运商 #{carrier_id}（{carrier.name if carrier else '—'}）不一致",
+                }
+            ],
+        )
+
+    # 一人一车：该司机不能已经绑定在别的车辆上
+    bound_vehicles = ctx.repos.vehicles.all(filters=[Vehicle.current_driver_id == driver_id])
+    others = [item for item in bound_vehicles if vehicle is None or item.id != vehicle.id]
+    if others:
+        raise validation_error(
+            "一名司机只能绑定一台车",
+            fields=[
+                {
+                    "loc": location,
+                    "msg": f"司机「{driver.name}」已绑定车辆 {others[0].plate_no}"
+                    "（一名司机只能绑定一台车）；如需换车，请先解除原车辆的绑定",
+                }
+            ],
+        )
+    return driver_id, driver_field_provided
 
 
 @router.get("", response_model=Page[VehicleOut], summary="车辆列表（?plate_no&status&carrier_id&sort&page）")
@@ -100,7 +172,7 @@ def list_vehicles(
 def create_vehicle(ctx: ManageCtx, payload: VehicleCreate) -> VehicleOut:
     if ctx.repos.vehicles.get_by(plate_no=payload.plate_no) is not None:
         raise conflict(ErrorCode.DUPLICATE_ENTITY, "车牌号已存在", field="plate_no")
-    _check_relations(ctx, payload)
+    driver_id, _ = _resolve_driver(ctx, payload, None)
 
     vehicle = Vehicle(
         workspace_id=ctx.workspace_id,
@@ -109,16 +181,29 @@ def create_vehicle(ctx: ManageCtx, payload: VehicleCreate) -> VehicleOut:
         capacity_ton=payload.capacity_ton,
         carrier_id=payload.carrier_id,
         status=str(payload.status),
-        current_driver_id=payload.current_driver_id,
+        current_driver_id=driver_id,
         current_city=payload.current_city,
         remark=payload.remark,
     )
-    ctx.repos.vehicles.add(vehicle)
+    try:
+        ctx.repos.vehicles.add(vehicle)
+    except IntegrityError as exc:  # 唯一索引兜底（应用层校验之外的最后一道）
+        ctx.session.rollback()
+        raise conflict(
+            ErrorCode.DUPLICATE_ENTITY,
+            "该司机已被其他车辆绑定（一名司机只能绑定一台车）",
+            field="current_driver_id",
+        ) from exc
     ctx.audit(
         "vehicle.create",
         resource_type="vehicle",
         resource_id=vehicle.id,
-        after={"plate_no": vehicle.plate_no, "status": vehicle.status, "carrier_id": vehicle.carrier_id},
+        after={
+            "plate_no": vehicle.plate_no,
+            "status": vehicle.status,
+            "carrier_id": vehicle.carrier_id,
+            "current_driver_id": vehicle.current_driver_id,
+        },
     )
     return VehicleOut.from_model(vehicle)
 
@@ -138,13 +223,24 @@ def update_vehicle(ctx: ManageCtx, vehicle_id: int, payload: VehicleUpdate) -> V
             expected_version=payload.expected_version,
             current_version=vehicle.version,
         )
-    _check_relations(ctx, payload, vehicle)
+    driver_id, driver_provided = _resolve_driver(ctx, payload, vehicle)
     changes = patch_payload(payload)
+    changes.pop("current_driver_name", None)  # 姓名只用于解析；落库记的是 driver_id
+    if driver_provided:
+        changes["current_driver_id"] = driver_id
     before = {key: getattr(vehicle, key) for key in changes}
     for key, value in changes.items():
         setattr(vehicle, key, value)
     vehicle.version = int(vehicle.version or 1) + 1
-    ctx.repos.vehicles.save(vehicle)
+    try:
+        ctx.repos.vehicles.save(vehicle)
+    except IntegrityError as exc:  # 唯一索引兜底
+        ctx.session.rollback()
+        raise conflict(
+            ErrorCode.DUPLICATE_ENTITY,
+            "该司机已被其他车辆绑定（一名司机只能绑定一台车）",
+            field="current_driver_id",
+        ) from exc
     ctx.audit("vehicle.update", resource_type="vehicle", resource_id=vehicle.id, before=before, after=changes)
     return VehicleOut.from_model(vehicle)
 

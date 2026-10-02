@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import (
@@ -48,7 +48,12 @@ class Carrier(Base, PkMixin, WorkspaceScopedMixin, TimestampMixin, VersionMixin,
 
 class Vehicle(Base, PkMixin, WorkspaceScopedMixin, TimestampMixin, VersionMixin, SoftDeleteMixin):
     __tablename__ = "vehicle"
-    __table_args__ = (UniqueConstraint("workspace_id", "plate_no", name="uq_vehicle_ws_plate"),)
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "plate_no", name="uq_vehicle_ws_plate"),
+        # 一名司机只能绑定一台车（ADR-A18）。可空列上的唯一索引在 MySQL/SQLite 都允许多个 NULL，
+        # 所以"未绑定主驾"的车辆不受影响。应用层已有友好报错，这里是数据库层兜底。
+        Index("uq_vehicle_current_driver", "current_driver_id", unique=True),
+    )
 
     plate_no: Mapped[str] = mapped_column(String(16), nullable=False)
     vehicle_type: Mapped[str | None] = mapped_column(String(32))
