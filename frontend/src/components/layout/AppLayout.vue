@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
@@ -34,7 +34,7 @@ const groups: NavGroup[] = [
     items: [
       { path: '/dashboard', label: '总览', icon: 'DataBoard', perm: Perm.DASHBOARD_VIEW },
       { path: '/exceptions', label: '异常中心', icon: 'Warning', perm: Perm.EXCEPTION_VIEW },
-      { path: '/orders', label: '运输订单', icon: 'Van', perm: Perm.ORDER_VIEW },
+      { path: '/orders', label: '运输订单', icon: 'Tickets', perm: Perm.ORDER_VIEW },
       { path: '/knowledge', label: '知识库', icon: 'Notebook', perm: Perm.KNOWLEDGE_VIEW },
     ],
   },
@@ -43,7 +43,7 @@ const groups: NavGroup[] = [
     items: [
       { path: '/customers', label: '客户', icon: 'OfficeBuilding', perm: Perm.CUSTOMER_VIEW },
       { path: '/carriers', label: '承运商', icon: 'Ship', perm: Perm.CARRIER_VIEW },
-      { path: '/vehicles', label: '车辆', icon: 'Truck', perm: Perm.VEHICLE_VIEW },
+      { path: '/vehicles', label: '车辆', icon: 'Van', perm: Perm.VEHICLE_VIEW },
       { path: '/drivers', label: '司机', icon: 'User', perm: Perm.DRIVER_VIEW },
       { path: '/sla-rules', label: 'SLA 规则', icon: 'Timer', perm: Perm.SLA_VIEW },
     ],

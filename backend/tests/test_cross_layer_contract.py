@@ -78,3 +78,35 @@ def test_frontend_never_exceeds_max_page_size():
             if int(match.group(1)) > MAX_PAGE_SIZE:
                 offenders.append(f"{path.relative_to(ROOT)}: page_size={match.group(1)}")
     assert not offenders, f"以下位置的分页参数超出契约上限 {MAX_PAGE_SIZE}：{offenders}"
+
+
+ICONS_DIR = ROOT / "frontend" / "node_modules" / "@element-plus" / "icons-vue" / "dist" / "types" / "components"
+# 侧边栏/卡片用 PascalCase 名字全局注册图标；包内文件名是 kebab-case
+ICON_USAGE_RE = re.compile(r"(?:icon\s*[:=]\s*['\"]|:\s*icon[^\n]*?['\"])([A-Z][A-Za-z0-9]*)['\"]")
+
+
+def _kebab(name: str) -> str:
+    return re.sub(r"(?<!^)(?=[A-Z])", "-", name).lower()
+
+
+@pytest.mark.skipif(not ICONS_DIR.exists(), reason="未安装前端依赖（node_modules 缺失）")
+def test_frontend_icon_names_exist():
+    """前端引用的 Element Plus 图标名必须真实存在。
+
+    真实事故：侧边栏"车辆"写成 `icon: 'Truck'`，而图标库里只有 `Van` ——
+    名字解析不到时 `<component :is>` 静默渲染为空，界面没有任何报错，只是图标不见了。
+    """
+    available = {
+        path.name.replace(".vue.d.ts", "")
+        for path in ICONS_DIR.iterdir()
+        if path.name.endswith(".vue.d.ts")
+    }
+    used: dict[str, str] = {}
+    for path in FRONTEND_SRC.rglob("*.vue"):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for match in ICON_USAGE_RE.finditer(text):
+            used.setdefault(match.group(1), str(path.relative_to(ROOT)))
+    missing = sorted(name for name in used if _kebab(name) not in available)
+    assert not missing, "以下图标名在 @element-plus/icons-vue 中不存在（会静默不渲染）：" + ", ".join(
+        f"{name}（{used[name]}）" for name in missing
+    )

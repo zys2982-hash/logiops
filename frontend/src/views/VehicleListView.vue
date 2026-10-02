@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
@@ -119,7 +119,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <PanelCard title="车辆主数据" :subtitle="`共 ${result.total} 台（状态影响 ETA 重算：REPAIRING 走 REPAIR_WAIT）`" icon="Truck">
+    <PanelCard title="车辆主数据" :subtitle="`共 ${result.total} 台（状态影响 ETA 重算：REPAIRING 走 REPAIR_WAIT）`" icon="Van">
       <template #actions>
         <el-button v-if="canManage" size="small" type="primary" @click="openCreate">新增车辆</el-button>
         <el-tag v-else size="small" effect="plain">只读（vehicle.manage 才可编辑）</el-tag>
