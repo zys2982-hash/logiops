@@ -169,6 +169,7 @@ class OrderService:
                 if vehicle_id is not None:
                     self.repos.vehicles.get_or_404(vehicle_id, "车辆不存在")
                     order.vehicle_id = vehicle_id
+                self._assert_dispatch_consistency(order)
                 bump_version(order)
                 self.repos.orders.save(order)
 
@@ -185,6 +186,52 @@ class OrderService:
         return order
 
     # --- 派车 -------------------------------------------------------------
+    def _assert_dispatch_consistency(self, order: Order) -> None:
+        """派车一致性（业务约束）：**车与司机必须属于所选承运商**。
+
+        前端已做级联联动（先选承运商 → 再选它名下的车/司机），但约束必须在后端兜住：
+        否则直接调 API 就能造出"承运商 A + 承运商 B 的车"这种矛盾数据，
+        SLA/追责/结算都会跟着错。字段可空的车辆（carrier_id 为空）视为不限承运商。
+        """
+        if order.carrier_id is None:
+            return
+        selected_carrier = self.repos.carriers.get(order.carrier_id)
+        selected_name = selected_carrier.name if selected_carrier else "—"
+        if order.vehicle_id:
+            vehicle = self.repos.vehicles.get(order.vehicle_id)
+            if (
+                vehicle is not None
+                and vehicle.carrier_id is not None
+                and vehicle.carrier_id != order.carrier_id
+            ):
+                vehicle_carrier = self.repos.carriers.get(vehicle.carrier_id)
+                raise validation_error(
+                    "车辆不属于所选承运商（应先选承运商，再选该承运商名下的车辆）",
+                    fields=[
+                        {
+                            "loc": "vehicle_id",
+                            "msg": f"车辆 {vehicle.plate_no} 属于承运商 #{vehicle.carrier_id}"
+                            f"（{vehicle_carrier.name if vehicle_carrier else '—'}），"
+                            f"与所选承运商 #{order.carrier_id}（{selected_name}）不一致",
+                        }
+                    ],
+                )
+        if order.driver_id:
+            driver = self.repos.drivers.get(order.driver_id)
+            if driver is not None and driver.carrier_id is not None and driver.carrier_id != order.carrier_id:
+                driver_carrier = self.repos.carriers.get(driver.carrier_id)
+                raise validation_error(
+                    "司机不属于所选承运商",
+                    fields=[
+                        {
+                            "loc": "driver_id",
+                            "msg": f"司机 {driver.name} 属于承运商 #{driver.carrier_id}"
+                            f"（{driver_carrier.name if driver_carrier else '—'}），"
+                            f"与所选承运商 #{order.carrier_id}（{selected_name}）不一致",
+                        }
+                    ],
+                )
+
     def dispatch(
         self,
         order_id: int,
@@ -214,6 +261,7 @@ class OrderService:
             order.driver_id = driver.id
         if order.vehicle_id is None and order.carrier_id is None:
             raise validation_error("派车必须提供 carrier_id 或 vehicle_id")
+        self._assert_dispatch_consistency(order)
 
         dispatched_at = to_naive_utc(order.dispatched_at) or now_naive()
         match, _ = eta_flow.resolve_promised_at(self.repos, order)

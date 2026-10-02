@@ -9,6 +9,7 @@ import TrackingTimeline from '@/components/TrackingTimeline.vue'
 import { masterApi, orderApi } from '@/api'
 import { Perm } from '@/types'
 import type {
+  Carrier,
   Customer,
   Driver,
   ExceptionListItem,
@@ -32,6 +33,7 @@ const relatedExceptions = ref<ExceptionListItem[]>([])
 const vehicles = ref<Vehicle[]>([])
 const customers = ref<Customer[]>([])
 const drivers = ref<Driver[]>([])
+const carriers = ref<Carrier[]>([])
 const slaRules = ref<SlaRule[]>([])
 const loading = ref(false)
 const saving = ref(false)
@@ -39,7 +41,36 @@ const saving = ref(false)
 const canManage = computed(() => auth.can(Perm.ORDER_MANAGE))
 const canTrack = computed(() => auth.can(Perm.TRACKING_WRITE))
 
-const dispatchForm = reactive({ vehicle_id: null as number | null, carrier_id: null as number | null })
+/** 派车三步级联：先选承运商（合同主体）→ 再选它名下的车与司机 */
+const dispatchForm = reactive({
+  carrier_id: null as number | null,
+  vehicle_id: null as number | null,
+  driver_id: null as number | null,
+})
+
+const dispatchVehicles = computed(() =>
+  dispatchForm.carrier_id === null
+    ? []
+    : vehicles.value.filter((vehicle) => vehicle.carrier_id === dispatchForm.carrier_id),
+)
+const dispatchDrivers = computed(() =>
+  dispatchForm.carrier_id === null
+    ? []
+    : drivers.value.filter((driver) => driver.carrier_id === dispatchForm.carrier_id),
+)
+
+function onCarrierChange(): void {
+  // 换承运商必须清空下游，否则会出现"承运商 A + 承运商 B 的车"（后端也会 422 拦住）
+  dispatchForm.vehicle_id = null
+  dispatchForm.driver_id = null
+}
+
+function onVehicleChange(): void {
+  // 选中车辆后自动带出它的当前司机（仍可手改；不匹配则留空）
+  const vehicle = dispatchVehicles.value.find((item) => item.id === dispatchForm.vehicle_id)
+  const current = vehicle?.current_driver_id ?? null
+  dispatchForm.driver_id = current && dispatchDrivers.value.some((d) => d.id === current) ? current : null
+}
 /** 实测订单是扁平字段 + 内嵌 sla 快照，优先用后端返回的 sla.rule_name */
 const slaRuleName = computed(
   () =>
@@ -72,23 +103,26 @@ async function load(): Promise<void> {
     ])
     if (trackingResult.status === 'fulfilled') tracking.value = trackingResult.value
     if (exceptionResult.status === 'fulfilled') relatedExceptions.value = exceptionResult.value
-    dispatchForm.vehicle_id = order.value.vehicle_id ?? null
     dispatchForm.carrier_id = order.value.carrier_id ?? null
+    dispatchForm.vehicle_id = order.value.vehicle_id ?? null
+    dispatchForm.driver_id = order.value.driver_id ?? null
   } finally {
     loading.value = false
   }
 }
 
 async function loadOptions(): Promise<void> {
-  const [vehicleResult, customerResult, driverResult, slaResult] = await Promise.allSettled([
+  const [vehicleResult, customerResult, driverResult, carrierResult, slaResult] = await Promise.allSettled([
     masterApi.listVehicles({ page: 1, page_size: 100 }),
     masterApi.listCustomers({ page: 1, page_size: 100 }),
     masterApi.listDrivers({ page: 1, page_size: 100 }),
+    masterApi.listCarriers({ page: 1, page_size: 100 }),
     orderApi.listSlaRules({ page: 1, page_size: 50 }),
   ])
   if (vehicleResult.status === 'fulfilled') vehicles.value = vehicleResult.value.items
   if (customerResult.status === 'fulfilled') customers.value = customerResult.value.items
   if (driverResult.status === 'fulfilled') drivers.value = driverResult.value.items
+  if (carrierResult.status === 'fulfilled') carriers.value = carrierResult.value.items
   if (slaResult.status === 'fulfilled') slaRules.value = slaResult.value.items
 }
 
@@ -98,8 +132,9 @@ async function dispatch(): Promise<void> {
   try {
     await orderApi.updateOrder(order.value.id, {
       expected_version: order.value.version,
-      vehicle_id: dispatchForm.vehicle_id,
       carrier_id: dispatchForm.carrier_id,
+      vehicle_id: dispatchForm.vehicle_id,
+      driver_id: dispatchForm.driver_id,
     })
     ElMessage.success('派车信息已更新（按订单状态机流转，后端重算承诺到达）')
     await load()
@@ -184,26 +219,65 @@ onMounted(async () => {
         </el-col>
 
         <el-col :md="10">
-          <PanelCard v-if="canManage" title="派车操作" subtitle="PATCH /orders/{id}（填 vehicle 按状态机流转）" icon="SetUp" class="u-mb-12">
+          <PanelCard v-if="canManage" title="派车操作" subtitle="先选承运商 → 再选它名下的车与司机（PATCH /orders/{id}）" icon="SetUp" class="u-mb-12">
             <el-form label-width="80px" size="small">
-              <el-form-item label="车辆">
-                <el-select v-model="dispatchForm.vehicle_id" clearable filterable style="width: 100%">
+              <el-form-item label="承运商">
+                <el-select
+                  v-model="dispatchForm.carrier_id"
+                  clearable
+                  filterable
+                  placeholder="① 先选承运商"
+                  style="width: 100%"
+                  @change="onCarrierChange"
+                >
                   <el-option
-                    v-for="vehicle in vehicles"
+                    v-for="carrier in carriers"
+                    :key="carrier.id"
+                    :label="`${carrier.name}（${carrier.code}）`"
+                    :value="carrier.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="车辆">
+                <el-select
+                  v-model="dispatchForm.vehicle_id"
+                  clearable
+                  filterable
+                  :disabled="dispatchForm.carrier_id === null"
+                  :placeholder="dispatchForm.carrier_id === null ? '请先选择承运商' : '② 选该承运商名下的车辆'"
+                  style="width: 100%"
+                  @change="onVehicleChange"
+                >
+                  <el-option
+                    v-for="vehicle in dispatchVehicles"
                     :key="vehicle.id"
-                    :label="`${vehicle.plate_no}（${vehicle.status}）`"
+                    :label="`${vehicle.plate_no}（${vehicle.status}${vehicle.current_city ? ' · ' + vehicle.current_city : ''}）`"
                     :value="vehicle.id"
                   />
                 </el-select>
               </el-form-item>
-              <el-form-item label="承运商">
-                <el-select v-model="dispatchForm.carrier_id" clearable filterable style="width: 100%">
-                  <el-option v-for="vehicle in vehicles.filter((v) => v.carrier_id)" :key="`c-${vehicle.carrier_id}`" :label="`承运商 #${vehicle.carrier_id}`" :value="vehicle.carrier_id as number" />
+              <el-form-item label="司机">
+                <el-select
+                  v-model="dispatchForm.driver_id"
+                  clearable
+                  filterable
+                  :disabled="dispatchForm.carrier_id === null"
+                  :placeholder="dispatchForm.carrier_id === null ? '请先选择承运商' : '③ 选该承运商的司机（选车后自动带出）'"
+                  style="width: 100%"
+                >
+                  <el-option
+                    v-for="driver in dispatchDrivers"
+                    :key="driver.id"
+                    :label="`${driver.name}（${driver.status}）`"
+                    :value="driver.id"
+                  />
                 </el-select>
               </el-form-item>
               <el-form-item>
                 <el-button type="primary" size="small" :loading="saving" @click="dispatch">保存派车</el-button>
-                <span class="u-text-muted">写操作带 expected_version，409 提示“已被他人更新”</span>
+                <span class="u-text-muted">
+                  车与司机必须属于所选承运商（后端同样校验，跨承运商组合会 422）
+                </span>
               </el-form-item>
             </el-form>
           </PanelCard>
