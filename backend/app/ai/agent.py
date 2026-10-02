@@ -19,7 +19,7 @@ from app.ai.providers import Provider, ProviderResult, ToolCall
 from app.ai.tools import ToolContext, ToolOutcome, call_tool
 from app.core.clock import utcnow_naive
 
-MAX_LOOP_STEPS = 8
+MAX_LOOP_STEPS = 14
 TOTAL_TIMEOUT_SECONDS = 90
 MAX_VALIDATION_FAILURES = 2
 
@@ -191,6 +191,8 @@ def run_agent(
             )
         if refresh_prompt is not None:
             state.prompt = refresh_prompt(state)
+        # 临近步数上限时提示模型收口（live 模式下工具较多，避免把预算全花在查数据上）
+        state.context["force_final"] = steps_used >= max_steps - 2
 
         turn_started = monotonic()
         try:

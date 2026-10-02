@@ -135,7 +135,14 @@ def test_carrier_crud_and_filter(client, admin_headers, bootstrap):
 # --- 车辆 ---------------------------------------------------------------------
 def test_vehicle_crud_and_relation_checks(client, admin_headers, bootstrap):
     carrier_id = bootstrap["carrier"].id
-    driver_id = bootstrap["driver"].id
+    # 车与司机 1:1：不能复用 bootstrap 那台车已绑定的司机，先建一名新司机
+    driver_created = client.post(
+        "/api/v1/drivers",
+        headers=admin_headers,
+        json={"name": "车辆 CRUD 测试司机", "carrier_id": carrier_id, "status": "AVAILABLE"},
+    )
+    assert driver_created.status_code == 201, driver_created.text
+    driver_id = driver_created.json()["id"]
     created = client.post(
         "/api/v1/vehicles",
         headers=admin_headers,

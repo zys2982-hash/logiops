@@ -158,8 +158,11 @@ def test_llm_unavailable_marks_failed_with_recognizable_error(db_session, repos,
 
 
 def test_step_budget_terminates_loop(db_session, repos, case_a, tmp_path):
+    from app.ai.agent import MAX_LOOP_STEPS
+
     call = ToolCall("get_order", {"order_id": case_a["order_id"]})
-    provider = ScriptedProvider([tool_turn([call])] * 4)
+    # 多给几轮脚本：确保是"步数预算"终止循环，而不是脚本回合不够
+    provider = ScriptedProvider([tool_turn([call])] * (MAX_LOOP_STEPS + 2))
     with pytest.raises(AiOutputInvalid) as exc:
         execute_analysis(db_session, repos, case_a["analysis_id"], provider=provider)
     assert "步数" in exc.value.message
@@ -167,7 +170,7 @@ def test_step_budget_terminates_loop(db_session, repos, case_a, tmp_path):
     assert analysis.status == "FAILED"
     assert analysis.error_code == "AI_OUTPUT_INVALID"
     tool_and_llm = [s for s in _steps(repos, analysis.id) if s.step_type in {"TOOL", "LLM"}]
-    assert len(tool_and_llm) <= 8
+    assert len(tool_and_llm) <= MAX_LOOP_STEPS
 
 
 def test_timeout_degrades_to_llm_unavailable(db_session, repos, case_a, tmp_path):

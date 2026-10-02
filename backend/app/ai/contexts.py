@@ -69,6 +69,16 @@ def build_t2_context(
         "exception_type": _kv(case.get("type")),
         "current_level": _kv(case.get("level")),
         "order_no": _kv(order.get("order_no")),
+        # 实体主键（真实模型必须靠这些 id 调工具；只给业务编号会让它拿订单号当主键猜）
+        "exception_id": _kv(case.get("id")),
+        "order_id": _kv(order.get("id")),
+        "customer_id": _kv(customer.get("id")),
+        "vehicle_id": _kv(vehicle.get("id")),
+        "id_hint": (
+            "以上 id 是数据库主键（整数）。调用 get_order / get_customer / get_customer_sla / "
+            "get_vehicle / get_exception_history 时**只能**传这些 id；"
+            "订单号、车牌、异常单号等业务编号仅用于文案表述。"
+        ),
         "origin_city": _kv(order.get("origin_city")),
         "dest_city": _kv(order.get("dest_city")),
         "customer_name": _kv(customer.get("name")),

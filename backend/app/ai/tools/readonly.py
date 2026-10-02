@@ -53,37 +53,37 @@ class ToolDefinition:
 TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
     ToolDefinition(
         name="get_order",
-        description="订单上下文：订单号/状态/客户/起终点/里程/承诺送达/当前ETA",
+        description="订单上下文：订单号/状态/客户/起终点/里程/承诺送达/ETA（order_id 用数据库主键 int）",
         parameters={"order_id": "int"},
         required=("order_id",),
     ),
     ToolDefinition(
         name="get_tracking_events",
-        description="轨迹时间线：最近事件（时间/城市/类型/来源），limit≤50",
+        description="轨迹时间线：最近事件（时间/城市/类型/来源），limit≤50（order_id 必须是数据库主键 int）",
         parameters={"order_id": "int", "limit": "int"},
         required=("order_id",),
     ),
     ToolDefinition(
         name="get_customer",
-        description="客户上下文：名称/等级/脱敏联系方式/通知偏好",
+        description="客户上下文：名称/等级/脱敏联系方式/通知偏好（customer_id 必须是数据库主键 int）",
         parameters={"customer_id": "int"},
         required=("customer_id",),
     ),
     ToolDefinition(
         name="get_customer_sla",
-        description="SLA 规则：命中规则/偏移小时/允许延迟/承诺送达/延误分钟/是否违约",
+        description="SLA 规则：命中规则/偏移小时/允许延迟/承诺送达/延误分钟/是否违约（customer_id 用主键 int）",
         parameters={"customer_id": "int", "order_id": "int"},
         required=("customer_id",),
     ),
     ToolDefinition(
         name="get_vehicle",
-        description="车辆状态：车牌/状态/承运商/当前城市",
+        description="车辆状态：车牌/状态/承运商/当前城市（vehicle_id 必须是数据库主键 int，不是车牌）",
         parameters={"vehicle_id": "int"},
         required=("vehicle_id",),
     ),
     ToolDefinition(
         name="get_exception_history",
-        description="历史异常：近 N 天条数/未结数/平均处理时长/最近 5 条摘要（days≤90）",
+        description="历史异常：近 N 天条数/未结数/平均处理时长/最近 5 条摘要（days≤90；customer_id 用主键 int）",
         parameters={"customer_id": "int", "order_id": "int", "days": "int"},
         required=("customer_id",),
     ),

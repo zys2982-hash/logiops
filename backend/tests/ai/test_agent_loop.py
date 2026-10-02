@@ -39,7 +39,9 @@ def _good_output() -> dict:
 
 
 def test_loop_limits_are_frozen():
-    assert MAX_LOOP_STEPS == 8
+    # 14 = 1 次决策 LLM + 最多 7 个只读工具 + 最终输出 LLM + 少量重试余量
+    # （原为 8：回放 fixture 只录了 3 个工具够用，但 live 模式下模型会查满 7 个工具而超限）
+    assert MAX_LOOP_STEPS == 14
     assert TOTAL_TIMEOUT_SECONDS == 90
     assert MAX_VALIDATION_FAILURES == 2
 

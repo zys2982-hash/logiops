@@ -250,13 +250,15 @@ try {
 # ---------------------------------------------------------------------------
 # 5) 启动后端 / 前端
 # ---------------------------------------------------------------------------
-# ⚠️ `--reload-dir app`：只监视 app/ 目录。
-# 若监视整个 backend/，pytest 在执行期间反复创建/删除临时 SQLite 文件会触发 reload 风暴
-# （服务一直在重启 → 接口 000、机器变卡）。测试产物现在由 conftest 统一放到系统临时目录。
+# ⚠️ `--reload-dir app`：只监视 app/ 目录；`--reload-exclude __pycache__` 与 PYTHONDONTWRITEBYTECODE
+# 是为了避免"导入模块写字节码 → 触发 reload → 正在跑的 AI 分析被杀"（实测踩过：
+# live 模式下分析进行到一半服务重启，接口连接被重置）。
+# 若监视整个 backend/，pytest 反复创建/删除临时 SQLite 文件同样会触发 reload 风暴。
 $backendCmd = "Set-Location -LiteralPath '$BackendDir'; " +
     "`$env:DATABASE_URL='$DatabaseUrl'; " +
+    "`$env:PYTHONDONTWRITEBYTECODE='1'; " +
     "`$host.UI.RawUI.WindowTitle='LogiOps backend'; " +
-    "uv run uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port $BackendPort"
+    "uv run uvicorn app.main:app --reload --reload-dir app --reload-exclude __pycache__ --host 127.0.0.1 --port $BackendPort"
 $frontendCmd = "Set-Location -LiteralPath '$FrontendDir'; " +
     "`$host.UI.RawUI.WindowTitle='LogiOps frontend'; " +
     "corepack pnpm dev --port $FrontendPort"

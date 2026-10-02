@@ -4,9 +4,9 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
-# pytest 临时产物（本机 TEMP 未指向系统临时目录时会落在工程内）
-pytest-of-*/
-tmp*/
+# pytest 临时产物（本机 TEMP 未指向系统临时目录时会落在工程内；目录与文件都要忽略）
+pytest-of-*
+tmp*
 logiops-tests/
 artifacts/tests-tmp/
 .ruff_cache/

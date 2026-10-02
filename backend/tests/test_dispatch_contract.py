@@ -192,8 +192,16 @@ def test_dispatch_rejects_unbound_vehicle_without_driver(client, bootstrap, admi
 def test_dispatch_on_unbound_vehicle_establishes_binding(
     client, db_session, bootstrap, admin_headers, operator_headers
 ):
-    """未绑定主驾的车辆 + 指定同承运商司机 → 派车成功，并把绑定关系自动建立起来。"""
+    """未绑定主驾的车辆 + 指定同承运商**且未绑定别车**的司机 → 派车成功，并自动建立绑定。"""
     vehicle = _unbound_vehicle(client, admin_headers, bootstrap, plate_no="京Z·70002")
+    fresh_driver = Driver(
+        workspace_id=bootstrap["workspace_id"],
+        name="待绑定司机",
+        carrier_id=bootstrap["carrier"].id,
+        status="AVAILABLE",
+    )
+    db_session.add(fresh_driver)
+    db_session.commit()
     order = _create_order(client, admin_headers, bootstrap["customers"]["vip"].id)
 
     response = client.patch(
@@ -203,11 +211,32 @@ def test_dispatch_on_unbound_vehicle_establishes_binding(
             "expected_version": order["version"],
             "carrier_id": bootstrap["carrier"].id,
             "vehicle_id": vehicle["id"],
-            "driver_id": bootstrap["driver"].id,
+            "driver_id": fresh_driver.id,
         },
     )
     assert response.status_code == 200, response.text
-    assert response.json()["driver_id"] == bootstrap["driver"].id
+    assert response.json()["driver_id"] == fresh_driver.id
 
     refreshed = client.get(f"/api/v1/vehicles/{vehicle['id']}", headers=admin_headers).json()
-    assert refreshed["current_driver_id"] == bootstrap["driver"].id, "派车后应自动建立车-司机绑定"
+    assert refreshed["current_driver_id"] == fresh_driver.id, "派车后应自动建立车-司机绑定"
+
+
+def test_dispatch_autobind_rejects_driver_already_bound(client, bootstrap, admin_headers, operator_headers):
+    """未绑定主驾的车辆 + **已绑定别车**的司机 → 422（一人一车），而不是数据库唯一索引报 500。"""
+    vehicle = _unbound_vehicle(client, admin_headers, bootstrap, plate_no="京Z·70003")
+    order = _create_order(client, admin_headers, bootstrap["customers"]["normal"].id)
+
+    response = client.patch(
+        f"/api/v1/orders/{order['id']}",
+        headers=operator_headers,
+        json={
+            "expected_version": order["version"],
+            "carrier_id": bootstrap["carrier"].id,
+            "vehicle_id": vehicle["id"],
+            "driver_id": bootstrap["driver"].id,  # 该司机已绑定 bootstrap 的车辆
+        },
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert "已绑定其他车辆" in error["message"]
+    assert any("driver_id" in field["loc"] for field in error["details"]["fields"])

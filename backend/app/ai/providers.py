@@ -82,6 +82,16 @@ def parse_json_object(text: str | None) -> dict[str, Any] | None:
     return None
 
 
+def _looks_complete_json(text: str | None) -> bool:
+    """粗判模型文本是否是"看起来完整"的 JSON（括号配平），用于识别被截断的输出。"""
+    if not text:
+        return False
+    stripped = text.strip()
+    if not (stripped.startswith("{") and stripped.endswith("}")):
+        return False
+    return stripped.count("{") == stripped.count("}") and stripped.count("[") == stripped.count("]")
+
+
 def tool_calls_from_payload(payload: dict[str, Any]) -> list[ToolCall]:
     """兼容 {"tool_call": {...}} 与 {"tool_calls": [...]} 两种模型输出形态。"""
     raw: Any = payload.get("tool_calls")
@@ -154,6 +164,15 @@ class LiveProvider:
         )
         payload = parse_json_object(response.text)
         calls = tool_calls_from_payload(payload or {})
+        if not payload and not calls and not _looks_complete_json(response.text):
+            # 输出被 max_tokens 截断的典型特征：JSON 未闭合。给出可执行的修复提示，
+            # 否则下一轮模型只会重复同样超长的输出。
+            state.context["truncated_hint"] = (
+                "上一轮输出**被截断**（JSON 未闭合，通常因为篇幅过长）：请大幅压缩 summary 与 rationale，"
+                "只保留 1–3 条建议与 3–5 条证据引用，确保输出是一个完整闭合的 JSON 对象。"
+            )
+        else:
+            state.context.pop("truncated_hint", None)
         if calls:
             return ProviderResult(
                 tool_calls=calls,
@@ -175,6 +194,14 @@ class LiveProvider:
     def _build_user(self, state: AgentState, repair_errors: list[str]) -> str:
         sections = [state.prompt]
         sections.append("## 已执行的只读工具结果\n" + observation_text(state))
+        if state.context.get("force_final"):
+            sections.append(
+                "## 步数即将用尽\n"
+                "请**立刻**只输出最终 JSON 对象，不要再调用任何工具。"
+                "已有信息足以完成分析；缺失的信息写进 open_questions。"
+            )
+        if state.context.get("truncated_hint"):
+            sections.append("## 输出被截断\n" + str(state.context["truncated_hint"]))
         if repair_errors:
             sections.append(
                 "## 上一轮输出未通过校验，请修正后重新输出完整 JSON\n"

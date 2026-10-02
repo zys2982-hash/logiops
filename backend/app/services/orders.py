@@ -1,4 +1,4 @@
-﻿"""订单服务：派车、改基础信息、轨迹写入（同步 ETA 重算 → 异常检测）、送达、取消、自动关闭。
+"""订单服务：派车、改基础信息、轨迹写入（同步 ETA 重算 → 异常检测）、送达、取消、自动关闭。
 
 状态机（基线文档 §8.1）全部通过 common.apply_transition 走 plan_transition，禁止裸赋值。
 """
@@ -22,6 +22,7 @@ from app.models.enums import (
     TrackingSource,
     VehicleStatus,
 )
+from app.models.master import Vehicle
 from app.models.transport import Order, TrackingEvent
 from app.repositories import Repos
 from app.rules import sla as sla_rules
@@ -278,6 +279,24 @@ class OrderService:
         if auto_bind:
             driver = self.repos.drivers.get(order.driver_id)
             if driver is not None:
+                # 一人一车：该司机不能已经绑定在别的车辆上
+                # （应用层先拦，否则会落到 vehicle.current_driver_id 唯一索引 → IntegrityError 500）
+                bound_elsewhere = [
+                    item
+                    for item in self.repos.vehicles.all(filters=[Vehicle.current_driver_id == driver.id])
+                    if item.id != vehicle.id
+                ]
+                if bound_elsewhere:
+                    raise validation_error(
+                        "该司机已绑定其他车辆（一台车只能有一位主驾）",
+                        fields=[
+                            {
+                                "loc": "driver_id",
+                                "msg": f"司机 {driver.name} 已绑定车辆 {bound_elsewhere[0].plate_no}；"
+                                "请先在「车辆」页解除该车辆的绑定，再为其分配新车",
+                            }
+                        ],
+                    )
                 vehicle.current_driver_id = driver.id
                 bump_version(vehicle)
                 self.repos.vehicles.save(vehicle)

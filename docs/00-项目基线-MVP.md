@@ -226,7 +226,7 @@ LLM_TEMPERATURE_NOTICE=0.3
 LLM_TIMEOUT_SECONDS=60
 LLM_MAX_RETRIES=2
 LLM_MAX_INPUT_TOKENS=8000
-LLM_MAX_OUTPUT_TOKENS=1500
+LLM_MAX_OUTPUT_TOKENS=4000
 LLM_DAILY_COST_LIMIT_CNY=20
 
 DETECT_STALL_MINUTES=120
@@ -1057,7 +1057,7 @@ T2 输出 → 后端把 suggestions 转成 approval(PENDING)（1 条建议 = 1 �
 ```text
 模型      LLM_MODEL 默认 deepseek-chat（OpenAI 兼容端点，JSON 友好、中文好、便宜）
 可替换    改 LLM_BASE_URL/LLM_MODEL 即可换 qwen-plus / gpt-4o-mini，代码零改动
-成本上限  单次 ≤8k in / 1.5k out；演示默认 AI_MODE=replay（0 成本）；live 模式设每日 ¥20 上限，超限直接降级
+成本上限  单次 ≤8k in / 4k out；演示默认 AI_MODE=replay（0 成本）；live 模式设每日 ¥20 上限，超限直接降级
 脱敏      写 prompt 前经 core/masking.py：手机号 → 138****0001，邮箱 → a***@x.com，不发送内部主键之外的敏感字段
 日志      每次调用记录 model/prompt_version/tokens/latency/raw_output（原始文本入库便于复盘，API 不返回内部 id 细节）
 合规声明  seed 数据全为虚构（客户名、车牌、电话均为假数据）；如接真实企业数据，需先做数据出境与保密评审（本作品不涉及）
@@ -1363,7 +1363,7 @@ AI 流程   使用本系统，同样计时点（AI 分析完成即 T2 的辅助�
 | A3 | 风险等级由规则表决定，LLM 只给解释与建议 | 可解释、可测、可审计；原稿硬要求 | 规则需人工维护 | 纯 LLM 定级（不可解释、不可复现） |
 | A4 | 知识检索用 MySQL ngram 全文，不用向量库 | 语料小、可解释、零额外服务 | 语义召回弱于 embedding | Qdrant + embedding（多一个服务，收益不成比例）；保留接口便于升级 |
 | A5 | AI 全只读 + approval 审批单 + 后端执行器 | 一次性解决原稿"写操作需人工确认"与 `create_followup_task` 的矛盾 | 多一张表与一次交互 | AI 直接调写工具（不可审计、无法追责） |
-| A6 | 不使用 LangGraph，手写有界 tool 循环（≤8 步/90s） | 单场景线性流程，手写更透明、可断言步序 | 复杂编排能力有限 | LangGraph（为框架而框架，面试反而被追问为什么需要图） |
+| A6 | 不使用 LangGraph，手写有界 tool 循环（≤14 步/90s） | 单场景线性流程，手写更透明、可断言步序 | 复杂编排能力有限 | LangGraph（为框架而框架，面试反而被追问为什么需要图） |
 | A7 | 前端轮询而非 SSE/WebSocket | 5 行代码、与同步栈一致、断线易恢复 | 有 1.5s 延迟 | SSE/WS（要处理连接生命周期，收益低） |
 | A8 | 固定基准日 + ReplayClock | Demo 与测试完全确定性 | 需额外一层时钟抽象（约 30 行） | 直接用 `now()`（每次演示数据都不同，无法 diff） |
 | A9 | 存 UTC，展示 Asia/Shanghai | 避免时区类 bug，面试加分 | 前端需一层转换 | 全存本地时间（简单但埋雷） |

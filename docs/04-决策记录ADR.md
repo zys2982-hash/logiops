@@ -13,7 +13,7 @@
 | A3 | 风险等级由规则表决定，LLM 只解释与建议 | 可解释、可测、可审计 | 规则需人工维护 |
 | A4 | 知识检索用 MySQL ngram 全文，不用向量库 | 语料小、零额外服务 | 语义召回弱于 embedding |
 | A5 | AI 全只读 + approval + 后端执行器 | 解决原稿"写操作需人工确认"与写工具的矛盾 | 多一张表与一次交互 |
-| A6 | 不用 LangGraph，手写有界 tool 循环（≤8 步/90s） | 单场景线性流程，步序可断言 | 复杂编排能力有限 |
+| A6 | 不用 LangGraph，手写有界 tool 循环（≤14 步/90s） | 单场景线性流程，步序可断言 | 复杂编排能力有限 |
 | A7 | 前端轮询（1.5s）而非 SSE/WS | 5 行代码、与同步栈一致、断线易恢复 | 有 1.5s 延迟 |
 | A8 | 固定基准日 + ReplayClock | Demo 与测试完全确定性 | 多一层时钟抽象（约 30 行） |
 | A9 | 存 UTC，展示 Asia/Shanghai | 避免时区类 bug | 前端多一层转换 |
@@ -67,7 +67,7 @@ uv run pytest tests/unit -q -k "risk"
 # A5：AI 无写工具（AI 层不得 import Repository/Session）
 Get-ChildItem app\ai -Recurse -Filter *.py | Select-String -Pattern "from app\.repositories|import Session" | ForEach-Object { "VIOLATION $($_.Path):$($_.LineNumber)" }
 
-# A6：有界循环步数上限（≤8）与超时
+# A6：有界循环步数上限（≤14）与超时
 uv run pytest tests/ai -q -k "step or timeout"
 
 # A8/A13：确定性 —— 同一 Demo 两次运行结果一致
@@ -86,6 +86,6 @@ uv run pytest tests/api -q -k "error"
 ## 5. 评审提示（面试常见追问）
 
 - "为什么不用向量库？" → 语料 5 篇 / 约 40 chunk，ngram 全文足够且可解释；接口保留可换（A4）。
-- "为什么不用 LangGraph？" → 单场景线性流程，手写循环 8 步上限更透明、步序可断言（A6）。
+- "为什么不用 LangGraph？" → 单场景线性流程，手写循环 14 步上限更透明、步序可断言（A6）。
 - "为什么同步栈？" → 演示规模下瓶颈不在 DB；异步会显著抬高学习与排错成本（A1）。
 - "LLM 会不会瞎编 ETA？" → 不会：等级由规则算，草稿事实逐字段比对，越界即拦截降级（§11.1 第 2/3 条 + S3/S4）。

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
     llm_max_input_tokens: int = 8000
-    llm_max_output_tokens: int = 1500
+    llm_max_output_tokens: int = 4000
     llm_daily_cost_limit_cny: float = 20.0
 
     # 规则阈值
