@@ -136,8 +136,10 @@ jobs:
       - name: 安装依赖（pnpm-lock.yaml 必须提交，保证可复现）
         run: corepack pnpm install --frozen-lockfile
 
-      - name: 类型检查（vue-tsc；脚本不存在时跳过）
-        run: corepack pnpm run type-check --if-present
+      - name: 类型检查（vue-tsc）
+        # 注意：必须用 `pnpm run <script>`；`pnpm run <script> --if-present` 会把 --if-present
+        # 透传给 vue-tsc，导致 "error TS5023: Unknown compiler option '--if-present'"
+        run: corepack pnpm run type-check
 
       - name: 构建（vite build）
         run: corepack pnpm run build

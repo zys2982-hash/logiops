@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import tempfile
 from collections.abc import Iterator
@@ -60,10 +61,8 @@ def engine():
 def pytest_sessionfinish(session, exitstatus) -> None:  # noqa: ARG001
     """收尾清理：本进程的 SQLite 测试库用完即删（避免 backend/ 堆满 .db 文件）。"""
     if os.environ["TEST_DATABASE_URL"].startswith("sqlite") and TEST_DB_PATH.exists():
-        try:
+        with contextlib.suppress(OSError):  # pragma: no cover - Windows 偶发占用
             TEST_DB_PATH.unlink()
-        except OSError:  # pragma: no cover - Windows 偶发占用
-            pass
 
 
 @pytest.fixture()
