@@ -153,7 +153,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
     <template v-else>
       <div class="progress-title">
         <span>工具调用步骤（{{ steps.length }}/{{ STEP_LIMIT }}）</span>
-        <span v-if="analysis?.is_replay" class="u-text-muted">回放模式（replay fixture）</span>
+        <span v-if="analysis?.is_replay" class="u-text-muted">来源：预录样本（replay fixture）</span>
       </div>
       <div
         v-for="(step, index) in steps"

@@ -13,10 +13,15 @@ onMounted(() => {
 <template>
   <div class="demo-banner">
     <el-icon><InfoFilled /></el-icon>
-    <span>
-      AI 模式：
-      <b>{{ demo.isReplay ? '回放（replay）' : '实时（live）' }}</b>
-    </span>
+    <el-tooltip
+      placement="bottom"
+      raw-content
+      content="本次演示的 AI 分析读取<b>预录样本</b>（后端 AI_MODE=replay），不调用真实大模型，结果可复现。<br/>要改成真实调用，请在后端 .env 设 AI_MODE=live 并重启。"
+    >
+      <span class="banner-source">
+        AI 分析来源：<b>{{ demo.isReplay ? '回放样本（replay）' : '真实大模型（live）' }}</b>
+      </span>
+    </el-tooltip>
     <el-divider direction="vertical" />
     <span>
       业务时间：
@@ -55,5 +60,12 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 提示这是"来源说明"，不是可点击的模式开关 */
+.banner-source {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
 }
 </style>

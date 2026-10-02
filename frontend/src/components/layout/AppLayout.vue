@@ -117,9 +117,9 @@ async function handleLogout(): Promise<void> {
           <el-button text :icon="ui.sidebarCollapsed ? 'Expand' : 'Fold'" @click="ui.toggleSidebar()" />
           <span class="topbar-title">{{ route.meta.title ?? '' }}</span>
           <el-tag v-if="demo.isReplay" size="small" type="warning" effect="plain" class="u-nowrap">
-            AI 回放模式
+            AI 来源：回放样本
           </el-tag>
-          <el-tag v-else size="small" type="danger" effect="plain" class="u-nowrap">AI 实时模式</el-tag>
+          <el-tag v-else size="small" type="danger" effect="plain" class="u-nowrap">AI 来源：真实大模型</el-tag>
         </div>
         <div class="topbar-right">
           <span class="u-text-muted">业务时间 {{ demo.businessTimeText }}</span>

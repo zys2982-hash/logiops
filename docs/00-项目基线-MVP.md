@@ -1119,7 +1119,7 @@ T2 输出 → 后端把 suggestions 转成 approval(PENDING)（1 条建议 = 1 �
 3) 写操作全部带 expected_version；收到 409 时提示"数据已被他人更新，已为你刷新"
 4) 权限：路由守卫 + 按钮级 `v-if=can('exception.handle')`；无权限按钮直接不渲染（而非点了报错）
 5) 时间统一用 utils/datetime.ts 把 UTC 转 Asia/Shanghai；相对时间用 dayjs relativeTime 中文
-6) 演示态：顶部横幅显示 "AI 模式：回放 / 实时"、"业务时间：2026-09-30 19:05"，让面试官一眼知道这是可控 demo
+6) 演示态：顶部横幅显示 "AI 分析来源：回放样本"、"业务时间：2026-09-30 19:05"，让面试官一眼知道这是可控 demo 且 AI 走回放样本（诚实标注，不谎称实时调用）
 ```
 
 ### 12.3 前端工程约定
