@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import PanelCard from '@/components/PanelCard.vue'
 import { masterApi } from '@/api'
 import { Perm } from '@/types'
-import type { Carrier, Driver, DriverStatus, Page } from '@/types'
+import type { Carrier, Driver, DriverStatus, Page, Vehicle } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { driverStatusLabel, driverStatusType, maskPhone } from '@/utils/format'
 
@@ -15,6 +15,8 @@ const canManage = computed(() => auth.can(Perm.DRIVER_MANAGE))
 const query = reactive({ q: '', status: '' as DriverStatus | '', carrier_id: '' as number | '', page: 1, page_size: 20 })
 const result = ref<Page<Driver>>({ items: [], total: 0, page: 1, page_size: 20 })
 const carriers = ref<Carrier[]>([])
+/** 反向展示"车-司机 1:1 绑定"：司机列表里能看到他被绑在哪台车 */
+const vehicles = ref<Vehicle[]>([])
 const loading = ref(false)
 
 const dialogVisible = ref(false)
@@ -31,6 +33,12 @@ const statusOptions = [
 function carrierName(id?: number | null): string {
   if (!id) return '—'
   return carriers.value.find((c) => c.id === id)?.name ?? `#${id}`
+}
+
+/** 该司机当前绑定的车辆（项目约定：一人一车，绑错会被后端 422 拦住） */
+function boundVehiclePlate(driverId: number): string {
+  const vehicle = vehicles.value.find((item) => item.current_driver_id === driverId)
+  return vehicle ? vehicle.plate_no : '未绑定'
 }
 
 async function load(): Promise<void> {
@@ -89,12 +97,12 @@ async function submit(): Promise<void> {
 
 onMounted(async () => {
   await load()
-  try {
-    const page = await masterApi.listCarriers({ page: 1, page_size: 100 })
-    carriers.value = page.items
-  } catch {
-    carriers.value = []
-  }
+  const [carrierResult, vehicleResult] = await Promise.allSettled([
+    masterApi.listCarriers({ page: 1, page_size: 100 }),
+    masterApi.listVehicles({ page: 1, page_size: 100 }),
+  ])
+  carriers.value = carrierResult.status === 'fulfilled' ? carrierResult.value.items : []
+  vehicles.value = vehicleResult.status === 'fulfilled' ? vehicleResult.value.items : []
 })
 </script>
 
@@ -132,6 +140,9 @@ onMounted(async () => {
           <template #default="{ row }">{{ carrierName(row.carrier_id) }}</template>
         </el-table-column>
         <el-table-column prop="license_no" label="驾驶证号" width="140" />
+        <el-table-column label="当前车辆" min-width="120">
+          <template #default="{ row }">{{ boundVehiclePlate(row.id) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="110" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="driverStatusType(row.status)">{{ driverStatusLabel(row.status) }}</el-tag>

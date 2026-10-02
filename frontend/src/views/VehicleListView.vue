@@ -39,6 +39,16 @@ const statusOptions = [
   { value: 'OFFLINE', label: '离线' },
 ]
 
+/** 车与司机 1:1 绑定：主驾下拉只列所选承运商名下的司机（后端也会 422 拦住跨承运商绑定） */
+const formDrivers = computed(() =>
+  form.carrier_id === null ? [] : drivers.value.filter((driver) => driver.carrier_id === form.carrier_id),
+)
+
+function onFormCarrierChange(): void {
+  // 换承运商必须清空主驾，否则会形成跨承运商绑定
+  form.current_driver_id = null
+}
+
 function carrierName(id?: number | null): string {
   if (!id) return '—'
   return carriers.value.find((c) => c.id === id)?.name ?? `#${id}`
@@ -151,7 +161,7 @@ onMounted(async () => {
         <el-table-column label="承运商" min-width="140">
           <template #default="{ row }">{{ carrierName(row.carrier_id) }}</template>
         </el-table-column>
-        <el-table-column label="当前司机" min-width="120">
+        <el-table-column label="主驾司机" min-width="120">
           <template #default="{ row }">{{ driverName(row.current_driver_id) }}</template>
         </el-table-column>
         <el-table-column label="当前城市" width="110">
@@ -179,14 +189,21 @@ onMounted(async () => {
         <el-form-item label="车型"><el-input v-model="form.vehicle_type" /></el-form-item>
         <el-form-item label="载重(t)"><el-input-number v-model="form.capacity_ton" :min="0" :step="0.5" /></el-form-item>
         <el-form-item label="承运商">
-          <el-select v-model="form.carrier_id" clearable style="width: 100%">
+          <el-select v-model="form.carrier_id" clearable style="width: 100%" @change="onFormCarrierChange">
             <el-option v-for="carrier in carriers" :key="carrier.id" :label="carrier.name" :value="carrier.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="当前司机">
-          <el-select v-model="form.current_driver_id" clearable style="width: 100%">
-            <el-option v-for="driver in drivers" :key="driver.id" :label="driver.name" :value="driver.id" />
+        <el-form-item label="主驾司机">
+          <el-select
+            v-model="form.current_driver_id"
+            clearable
+            :disabled="form.carrier_id === null"
+            :placeholder="form.carrier_id === null ? '请先选择承运商' : '只列该承运商名下的司机'"
+            style="width: 100%"
+          >
+            <el-option v-for="driver in formDrivers" :key="driver.id" :label="driver.name" :value="driver.id" />
           </el-select>
+          <span class="u-text-muted">车与司机 1:1 绑定：司机必须与车辆同属一家承运商（后端同样校验）</span>
         </el-form-item>
         <el-form-item label="当前城市"><el-input v-model="form.current_city" /></el-form-item>
         <el-form-item label="状态">

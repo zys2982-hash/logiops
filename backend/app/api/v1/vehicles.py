@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi import status as http_status
 
 from app.api.deps import PageDep, RequestContext, require
-from app.core.errors import ErrorCode, conflict, not_found
+from app.core.errors import ErrorCode, conflict, not_found, validation_error
 from app.core.permissions import Perm
 from app.models.master import Vehicle
 from app.schemas.common import Page, page_of, parse_sort, patch_payload
@@ -30,13 +30,42 @@ SORTABLE: dict[str, Any] = {
 }
 
 
-def _check_relations(ctx: RequestContext, payload: Any) -> None:
+def _check_relations(ctx: RequestContext, payload: Any, vehicle: Vehicle | None = None) -> None:
     carrier_id = getattr(payload, "carrier_id", None)
     if carrier_id is not None and ctx.repos.carriers.get(carrier_id) is None:
         raise not_found("承运商不存在", carrier_id=carrier_id)
     driver_id = getattr(payload, "current_driver_id", None)
     if driver_id is not None and ctx.repos.drivers.get(driver_id) is None:
         raise not_found("司机不存在", current_driver_id=driver_id)
+
+    # 绑定一致性（项目约定：车与司机 1:1 固定绑定，不做排班/分配表；换人由车辆编辑页面维护）：
+    # 主驾司机必须与车辆同属一家承运商，否则会造出"京东的车 + 德邦的司机"这种跨承运商绑定。
+    # 用 model_fields_set 区分"没传该字段"与"显式清空"，避免把清空误判成沿用旧值。
+    provided = getattr(payload, "model_fields_set", set())
+    effective_carrier = (
+        carrier_id if "carrier_id" in provided else (vehicle.carrier_id if vehicle else None)
+    )
+    effective_driver = (
+        getattr(payload, "current_driver_id", None)
+        if "current_driver_id" in provided
+        else (vehicle.current_driver_id if vehicle else None)
+    )
+    if effective_carrier and effective_driver:
+        driver = ctx.repos.drivers.get(effective_driver)
+        if driver is not None and driver.carrier_id is not None and driver.carrier_id != effective_carrier:
+            carrier = ctx.repos.carriers.get(effective_carrier)
+            driver_carrier = ctx.repos.carriers.get(driver.carrier_id)
+            raise validation_error(
+                "主驾司机不属于该车辆所属承运商",
+                fields=[
+                    {
+                        "loc": "current_driver_id",
+                        "msg": f"司机 {driver.name} 属于承运商 #{driver.carrier_id}"
+                        f"（{driver_carrier.name if driver_carrier else '—'}），"
+                        f"与车辆承运商 #{effective_carrier}（{carrier.name if carrier else '—'}）不一致",
+                    }
+                ],
+            )
 
 
 @router.get("", response_model=Page[VehicleOut], summary="车辆列表（?plate_no&status&carrier_id&sort&page）")
@@ -109,7 +138,7 @@ def update_vehicle(ctx: ManageCtx, vehicle_id: int, payload: VehicleUpdate) -> V
             expected_version=payload.expected_version,
             current_version=vehicle.version,
         )
-    _check_relations(ctx, payload)
+    _check_relations(ctx, payload, vehicle)
     changes = patch_payload(payload)
     before = {key: getattr(vehicle, key) for key in changes}
     for key, value in changes.items():
