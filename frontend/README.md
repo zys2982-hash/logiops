@@ -75,7 +75,7 @@ corepack pnpm preview
 | `/knowledge` | 知识库 | 文档与分片浏览、分片内搜索、重建索引（`knowledge.manage`） |
 | `/audit` | 审计日志 | action/resource/actor 筛选 + 详情抽屉（before/after JSON） |
 | `/members` | 成员与角色 | 成员增删改角色（`member.manage`）+ 角色×操作矩阵表 |
-| `/demo` | Demo 控制台 | tick / advance-to-less / reset / AI 模式展示 / 本地操作记录 |
+| `/demo` | 演示工具 | 虚拟时钟：快进 tick / 快进到结案 / 重置 seed；AI 模式只读展示；操作记录 |
 | `/:pathMatch(.*)*` | 404 | 未实现路由兜底 |
 
 路由守卫（`src/router/index.ts`）：未登录访问业务路由 → 跳 `/login?redirect=...`；已登录访问公开页 → 跳 `/dashboard`；`meta.perm` 不满足 → 提示并回总览。

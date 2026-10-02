@@ -90,12 +90,6 @@ async function reset(): Promise<void> {
   }
 }
 
-function switchAiMode(mode: 'replay' | 'live'): void {
-  demo.state = { ...demo.state, ai_mode: mode }
-  logAction(`本地切换 AI 模式 → ${mode}（正式环境由 system_setting ai.mode 控制）`)
-  ElMessage.info(`界面已切换为 ${mode === 'replay' ? '回放' : '实时'} 模式展示；后端模式由 /demo/state 返回`)
-}
-
 onMounted(refresh)
 </script>
 
@@ -106,13 +100,13 @@ onMounted(refresh)
       :closable="false"
       show-icon
       class="u-mb-12"
-      title="Demo 控制台（仅本地演示）"
-      description="权限：APP_ENV=local 且 ADMIN+ 才有 demo.control（后端 /demo 路由统一依赖 require(Perm.DEMO_CONTROL)）。推进时钟会触发轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查 → 自动关闭检查。"
+      title="演示工具（仅本地演示）"
+      description="这一页只做两件事：① 快进/重置「虚拟时钟」——系统里的业务时间默认停在基准日不动，推一下它才往前流（推进即触发：轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查 → 自动关闭检查）；② 一键重置回到 seed 初始态（演示翻车 3 秒恢复）。权限：APP_ENV=local 且 ADMIN+ 才有 demo.control。AI 模式（回放/实时）为只读展示，切换请改后端 AI_MODE。"
     />
 
     <el-row :gutter="12">
       <el-col :md="14">
-        <PanelCard title="时钟与场景控制" icon="MagicStick">
+        <PanelCard title="虚拟时间控制（快进 / 重置）" icon="MagicStick">
           <template #actions>
             <el-tag v-if="!canControl" size="small" effect="plain">当前角色无 demo.control</el-tag>
             <el-tag v-else size="small" type="success" effect="plain">可控制</el-tag>
@@ -143,24 +137,23 @@ onMounted(refresh)
                 <el-option v-for="option in scenarios" :key="option.value" :label="option.label" :value="option.value" />
               </el-select>
             </el-form-item>
-            <el-form-item label="AI 模式">
-              <el-radio-group :model-value="demo.aiMode" @change="(value: string | number | boolean | undefined) => switchAiMode(value === 'live' ? 'live' : 'replay')">
-                <el-radio-button value="replay">回放 replay</el-radio-button>
-                <el-radio-button value="live">实时 live</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="busy" @click="tick">推进 {{ tickMinutes }} 分钟</el-button>
-              <el-button :loading="busy" @click="advance">推进到送达（advance-to-less）</el-button>
-              <el-button type="danger" plain :loading="busy" @click="reset">重置 seed</el-button>
+              <el-button type="primary" :loading="busy" @click="tick">快进 {{ tickMinutes }} 分钟</el-button>
+              <el-button :loading="busy" @click="advance">快进到结案（推进到送达）</el-button>
+              <el-button type="danger" plain :loading="busy" @click="reset">重置到初始态</el-button>
               <el-button text type="primary" @click="refresh">刷新状态</el-button>
             </el-form-item>
+            <div class="u-text-muted" style="line-height: 1.7">
+              1）<b>快进 N 分钟</b>：让虚拟时间走 N 分钟，顺便跑一遍自动链路（全库都会动）。<br />
+              2）<b>快进到结案</b>：一直快进到主案例（带承运商消息那单）送达并自动关闭，中途遇到"等修车 / 等送达后 24h"会直接跳过去（只推这一单）。<br />
+              3）<b>重置到初始态</b>：重建 seed、时钟归零，回到 2026-09-30 01:00 的标准演示起点。
+            </div>
           </el-form>
         </PanelCard>
       </el-col>
 
       <el-col :md="10">
-        <PanelCard title="本地操作记录" subtitle="最近 20 次控制台动作" icon="Clock">
+        <PanelCard title="本地操作记录" subtitle="最近 20 次操作" icon="Clock">
           <el-empty v-if="timeline.length === 0" description="暂无操作" :image-size="50" />
           <ul class="action-list">
             <li v-for="(item, index) in timeline" :key="index">

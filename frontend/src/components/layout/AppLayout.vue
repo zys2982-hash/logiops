@@ -54,7 +54,7 @@ const groups: NavGroup[] = [
     items: [
       { path: '/members', label: '成员与角色', icon: 'UserFilled', perm: Perm.MEMBER_VIEW },
       { path: '/audit', label: '审计日志', icon: 'Document', perm: Perm.AUDIT_VIEW },
-      { path: '/demo', label: 'Demo 控制台', icon: 'MagicStick' },
+      { path: '/demo', label: '演示工具', icon: 'MagicStick' },
     ],
   },
 ]

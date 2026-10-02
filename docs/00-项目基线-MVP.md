@@ -1093,7 +1093,7 @@ T2 输出 → 后端把 suggestions 转成 approval(PENDING)（1 条建议 = 1 �
 /knowledge                    知识库文档与分片查看（点击回到原文小节）
 /audit                        审计日志（筛选 + 详情抽屉）
 /members                      成员与角色
-/demo                         Demo 控制台（tick/advance/reset/AI 模式切换，仅本地）
+/demo                         演示工具（虚拟时钟：快进 tick / 快进到结案 / 重置 seed；AI 模式为只读展示，仅本地）
 ```
 
 ### 12.2 异常详情页布局（演示主战场）
@@ -1196,14 +1196,17 @@ Seed 生成器**必须用 `app/rules` 真算**上述 ETA/延误/等级，不允�
 前端 mock fixture 需与本表一致，保证"无后端兜底视图"和真实接口讲同一个故事。
 （`docs/01`–`06`、README、前端 fixture 中的 CASE-A 数字若与本表冲突，一律以本表为准。）
 
-### 13.4 Demo 控制接口
+### 13.4 演示工具接口（页面：`/demo`「演示工具」）
 
 ```text
-POST /demo/actions/tick {minutes:60}          推进时钟；期间自动执行：轨迹生成 → ETA 重算 → 检测 → 审批过期检查 → 自动关闭检查
-POST /demo/actions/advance-to-less            一步推到"送达并自动关闭"（内部循环 tick 直到 DELIVERED）
+POST /demo/actions/tick {minutes:60}          快进时钟；期间自动执行：轨迹生成 → ETA 重算 → 检测 → 审批过期检查 → 自动关闭检查
+POST /demo/actions/advance-to-less            快进到"主案例送达并自动关闭"（内部循环 tick 直到 DELIVERED，只推主案例）
 POST /demo/actions/reset                      重建 seed 并重置时钟（演示翻车后 3 秒恢复）
 GET  /demo/state                              {base_date, offset_minutes, scenario, ai_mode, clock_mode}
 ```
+
+> **AI 模式（replay/live）在界面上只读展示**，不做可点击切换：真实模式由后端 `AI_MODE` / `system_setting ai.mode` 决定，
+> 避免"点了没反应"的误导（早前版本有一个只改前端显示的假开关，已移除）。
 
 ---
 
@@ -1292,7 +1295,7 @@ AI 分析（replay）≤ 2s     AI 分析（live）≤ 60s       前端首屏 �
            故意指给面试官看：草稿里的 ETA/单号与系统一致；现场演示"喂假事实 → 被拦截"
 3:40–4:20  逐条审批：把 AI 建议的 ETA 从 22:30 手工改成 22:45 → 展示 diff → 批准
            → 后端执行：ETA 更新、跟进任务创建、通知入草稿、审计入账（一屏看到 4 条结果）
-4:20–4:50  Demo 控制台 tick 推进：车辆恢复 → ETA 重算 → 订单送达 → 24h 后异常自动关闭
+4:20–4:50  演示工具 tick 推进：车辆恢复 → ETA 重算 → 订单送达 → 24h 后异常自动关闭
            打开操作记录与审计：谁、何时、基于什么（MANUAL/APPROVED_AI/SYSTEM）
 4:50–5:00  效率对比表（真实实测）：信息收集 / 分析 / 确认 / 全流程耗时，传统 vs AI 辅助
            收尾一句：这个项目的价值不是"用了大模型"，而是"把 LLM 关进了可信的边界里"

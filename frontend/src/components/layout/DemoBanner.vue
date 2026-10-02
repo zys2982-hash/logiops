@@ -29,7 +29,7 @@ onMounted(() => {
     <span>时钟偏移 {{ demo.offsetMinutes }} 分钟</span>
     <el-tag v-if="demo.mocked" size="small" type="warning" effect="plain">本地演示数据</el-tag>
     <span class="banner-actions">
-      <router-link to="/demo">Demo 控制台</router-link>
+      <router-link to="/demo">演示工具</router-link>
       <el-button size="small" text type="primary" :loading="demo.loading" @click="demo.refresh()">
         刷新
       </el-button>
