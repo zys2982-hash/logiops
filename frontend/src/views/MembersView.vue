@@ -183,7 +183,7 @@ onMounted(load)
 
     <el-dialog v-model="dialogVisible" title="添加成员" width="460px">
       <el-form label-width="80px">
-        <el-form-item label="邮箱"><el-input v-model="form.email" placeholder="operator@demo.logiops" /></el-form-item>
+        <el-form-item label="邮箱"><el-input v-model="form.email" placeholder="operator@logiops.dev" /></el-form-item>
         <el-form-item label="姓名"><el-input v-model="form.name" placeholder="可选" /></el-form-item>
         <el-form-item label="角色">
           <el-select v-model="form.role" style="width: 100%">

@@ -9,14 +9,16 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const form = reactive({ email: 'admin@demo.logiops', password: 'Demo@12345' })
+const form = reactive({ email: 'admin@logiops.dev', password: 'Demo@12345' })
 const submitting = ref(false)
 
+// 演示账号域名必须与后端 seed（backend/app/seed/catalog.py）完全一致，否则点按钮会 401。
+// 这条跨层约定由 backend/tests/test_cross_layer_contract.py 守护。
 const demoAccounts = [
-  { email: 'owner@demo.logiops', role: 'OWNER' },
-  { email: 'admin@demo.logiops', role: 'ADMIN' },
-  { email: 'operator@demo.logiops', role: 'OPERATOR' },
-  { email: 'viewer@demo.logiops', role: 'VIEWER' },
+  { email: 'owner@logiops.dev', role: 'OWNER' },
+  { email: 'admin@logiops.dev', role: 'ADMIN' },
+  { email: 'operator@logiops.dev', role: 'OPERATOR' },
+  { email: 'viewer@logiops.dev', role: 'VIEWER' },
 ]
 
 function pick(email: string): void {
@@ -56,7 +58,7 @@ async function submit(): Promise<void> {
 
       <el-form label-position="top" @submit.prevent="submit">
         <el-form-item label="邮箱">
-          <el-input v-model="form.email" placeholder="admin@demo.logiops" autocomplete="username" />
+          <el-input v-model="form.email" placeholder="admin@logiops.dev" autocomplete="username" />
         </el-form-item>
         <el-form-item label="密码">
           <el-input

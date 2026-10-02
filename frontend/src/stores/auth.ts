@@ -96,7 +96,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       // 后端未就绪时也允许以本地 fixture 身份进入（request 层已兜底）；
       // 真的 401 会被拦截器登出。
-      if (!user.value) user.value = { id: 0, email: 'local@demo.logiops', name: '本地演示用户', status: 'ACTIVE' }
+      if (!user.value) user.value = { id: 0, email: 'local@logiops.dev', name: '本地演示用户', status: 'ACTIVE' }
       if (!role.value) role.value = 'ADMIN'
       profileLoaded.value = true
       return null
