@@ -167,16 +167,24 @@ onMounted(refresh)
               <span class="u-text-muted u-mt-8">（tick 会触发全链路自动执行）</span>
             </el-form-item>
             <el-form-item label="跳转到时间">
-              <el-date-picker
-                v-model="targetTime"
-                type="datetime"
-                placeholder="选择年月日时分秒"
-                format="YYYY-MM-DD HH:mm:ss"
-                value-format="YYYY-MM-DD HH:mm:ss"
-                :disabled="!canControl"
-                style="width: 100%"
-              />
-              <span class="u-text-muted">按本地时区（Asia/Shanghai）选择；提交时转成 UTC 设为虚拟时钟的当前时刻</span>
+              <div class="jump-row">
+                <el-date-picker
+                  v-model="targetTime"
+                  type="datetime"
+                  placeholder="点这里选年月日时分秒"
+                  format="YYYY-MM-DD HH:mm:ss"
+                  value-format="YYYY-MM-DD HH:mm:ss"
+                  :disabled="!canControl"
+                  @keyup.enter="jumpToTime"
+                />
+                <el-button type="warning" :loading="busy" :disabled="!canControl" @click="jumpToTime">
+                  跳到该时间 →
+                </el-button>
+              </div>
+              <span class="u-text-muted">
+                操作两步：① 在弹出面板里选好年月日时分秒并点面板右下角「确定」；② 点右侧「跳到该时间 →」执行。
+                提交时按本地时区（Asia/Shanghai）转成 UTC。
+              </span>
             </el-form-item>
             <el-form-item label="重置场景">
               <el-select v-model="scenario" style="width: 100%">
@@ -185,7 +193,6 @@ onMounted(refresh)
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="busy" @click="tick">快进 {{ tickMinutes }} 分钟</el-button>
-              <el-button :loading="busy" @click="jumpToTime">跳到该时间</el-button>
               <el-button :loading="busy" @click="advance">快进到结案（推进到送达）</el-button>
               <el-button type="danger" plain :loading="busy" @click="reset">重置到初始态</el-button>
               <el-button text type="primary" @click="refresh">刷新状态</el-button>
@@ -227,6 +234,17 @@ onMounted(refresh)
 </template>
 
 <style scoped>
+/* 时间选择器与"跳到该时间"按钮必须紧挨着，否则用户找不到执行入口 */
+.jump-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.jump-row :deep(.el-date-editor) {
+  flex: 1;
+}
+
 .action-list {
   margin: 0;
   padding-left: 16px;
