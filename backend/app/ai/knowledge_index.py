@@ -176,8 +176,15 @@ def reindex_all(
     *,
     directory: Path | str | None = None,
     engine: Any = None,
+    ensure_index: bool = False,
 ) -> dict[str, Any]:
-    """重建知识库索引；可重复执行（checksum 幂等）。"""
+    """重建知识库索引；可重复执行（checksum 幂等）。
+
+    注意 `ensure_index`：默认 **False**。索引 DDL（ALTER TABLE ADD FULLTEXT）属于 schema 阶段，
+    由 alembic 迁移或 `python -m app.cli init-schema` 负责；在数据写入路径里做会与自己的
+    未提交事务抢元数据锁而**自锁死**（MySQL lock_wait_timeout 默认一年，实测卡死 36 分钟）。
+    只有确认调用方已提交事务、且确实要补索引时，才显式传 True。
+    """
     repos = Repos(session, workspace_id)
     summary: dict[str, Any] = {
         "docs": 0,
@@ -235,14 +242,17 @@ def reindex_all(
         summary["chunks"] += len(parsed.chunks)
 
     session.flush()
-    bind = engine if engine is not None else session.get_bind()
-    if bind is not None and getattr(bind, "dialect", None) is not None and bind.dialect.name == "mysql":
-        try:  # pragma: no cover - 需要 MySQL
-            from app.cli import ensure_fulltext_index
+    if ensure_index:
+        # 显式补索引时，先把本会话的事务提交掉，释放它持有的元数据锁，否则 ALTER 会自锁死
+        session.commit()
+        bind = engine if engine is not None else session.get_bind()
+        if bind is not None and getattr(bind, "dialect", None) is not None and bind.dialect.name == "mysql":
+            try:  # pragma: no cover - 需要 MySQL
+                from app.cli import ensure_fulltext_index
 
-            ensure_fulltext_index(bind)
-        except Exception as exc:  # noqa: BLE001 - 索引失败不阻塞（检索会退化 LIKE）
-            summary["errors"].append(f"fulltext: {exc}")
+                ensure_fulltext_index(bind)
+            except Exception as exc:  # noqa: BLE001 - 索引失败不阻塞（检索会退化 LIKE）
+                summary["errors"].append(f"fulltext: {exc}")
     return summary
 
 

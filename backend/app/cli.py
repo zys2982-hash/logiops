@@ -22,9 +22,13 @@ MYSQL_FULLTEXT_DDL = (
     "ADD FULLTEXT INDEX ft_knowledge_chunk_content (content) WITH PARSER ngram"
 )
 
+# ALTER TABLE 需要排他元数据锁：若调用方自己还有未提交事务持有该表的锁，会自锁死等
+# （MySQL lock_wait_timeout 默认 31536000 秒 = 一年）。这里强制 5 秒超时，失败只告警。
+FULLTEXT_LOCK_WAIT_SECONDS = 5
+
 
 def ensure_fulltext_index(engine: Engine) -> None:
-    """MySQL 专有：中文全文索引（ngram）。已存在则忽略。"""
+    """MySQL 专有：中文全文索引（ngram）。已存在则忽略；拿不到锁就放弃（检索退化 LIKE）。"""
     if engine.dialect.name != "mysql":
         return
     with engine.connect() as connection:
@@ -39,10 +43,15 @@ def ensure_fulltext_index(engine: Engine) -> None:
             print("   FULLTEXT 索引已存在")
             return
         try:
+            connection.execute(text(f"SET SESSION lock_wait_timeout = {FULLTEXT_LOCK_WAIT_SECONDS}"))
+            connection.execute(
+                text(f"SET SESSION innodb_lock_wait_timeout = {FULLTEXT_LOCK_WAIT_SECONDS}")
+            )
             connection.execute(text(MYSQL_FULLTEXT_DDL))
             connection.commit()
             print("   已创建 FULLTEXT 索引（ngram）")
-        except Exception as exc:  # pragma: no cover - 依赖 MySQL 版本
+        except Exception as exc:  # pragma: no cover - 依赖 MySQL 版本/锁竞争
+            connection.rollback()
             print(f"   [warn] FULLTEXT 索引创建失败（将退化为 LIKE 检索）：{exc}")
 
 
