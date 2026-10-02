@@ -425,3 +425,226 @@ export function formatDuration(ms?: number | null): string {
   if (ms < 1000) return `${ms} ms`
   return `${(ms / 1000).toFixed(1)} s`
 }
+
+/* ------------------------------------------------------------ 审计日志（§9.3）
+ * 后端存的是机器码（auth.login / vehicle.update …），这里翻译成业务人员能看懂的中文；
+ * 未收录的代码原样返回，界面上再以小字显示原始值，保证"不隐藏事实"。
+ */
+
+export const AUDIT_ACTION_MAP: Record<string, string> = {
+  // 登录与安全
+  'auth.login': '登录系统',
+  'auth.logout': '退出登录',
+  'auth.register': '注册账号',
+  'security.permission_denied': '越权操作被拒绝',
+  'security.cross_tenant_denied': '跨工作区访问被拒绝',
+  'security.no_workspace': '未带工作区标识被拒绝',
+  // 订单
+  'order.created': '创建订单',
+  'order.dispatched': '派车发运',
+  'order.updated': '修改订单',
+  'order.delivered': '订单送达',
+  'order.closed': '订单结案',
+  'order.cancelled': '订单取消',
+  'order.eta_updated': '手工更新预计到达',
+  'order.eta_recalculated': '系统重算预计到达',
+  'order.tracking_appended': '录入轨迹',
+  // 异常
+  'exception.detected': '系统发现异常',
+  'exception.created_manual': '人工建异常单',
+  'exception.create': '创建异常单',
+  'exception.confirmed': '确认异常',
+  'exception.confirm': '确认异常',
+  'exception.updated': '修改异常单',
+  'exception.merged': '异常单合并',
+  'exception.message_added': '录入承运商消息',
+  'exception.message_parsed': '解析承运商消息',
+  'exception.analysis_requested': '发起 AI 分析',
+  'exception.analysis_ready': 'AI 分析完成',
+  'exception.analysis_failed': 'AI 分析失败',
+  'exception.analysis_retried': '重试 AI 分析',
+  'exception.analysis_reused': '复用已有 AI 分析',
+  'exception.resolved': '异常风险解除',
+  'exception.closed': '关闭异常单',
+  'exception.close': '关闭异常单',
+  'exception.forced_close': '强制关闭异常单',
+  'exception.force_close': '强制关闭异常单',
+  // 审批（HITL）
+  'approval.created_from_analysis': 'AI 建议生成审批单',
+  'approval.decide': '审批决定',
+  'approval.approve': '批准审批单',
+  'approval.approved': '审批单已批准',
+  'approval.rejected': '驳回审批单',
+  'approval.execute': '执行审批结果',
+  'approval.executed': '审批结果已执行',
+  'approval.execute_failed': '执行审批结果失败',
+  'approval.retried': '重试执行审批结果',
+  'approval.expired': '审批单已过期',
+  // AI / 跟进 / 通知
+  'ai_analysis.ready': 'AI 分析完成',
+  'followup.created': '生成跟进任务',
+  'followup.updated': '修改跟进任务',
+  'followup.done': '完成跟进任务',
+  'notification.created': '生成通知',
+  'notification.updated': '修改通知',
+  'notification.sent_mock': '发送通知（演示环境模拟发送）',
+  'notification.skipped': '跳过通知（未达条件）',
+  // 主数据
+  'vehicle.create': '新增车辆',
+  'vehicle.update': '修改车辆',
+  'vehicle.delete': '删除车辆',
+  'driver.create': '新增司机',
+  'driver.update': '修改司机',
+  'driver.delete': '删除司机',
+  'carrier.create': '新增承运商',
+  'carrier.update': '修改承运商',
+  'carrier.delete': '删除承运商',
+  'customer.create': '新增客户',
+  'customer.update': '修改客户',
+  'customer.delete': '删除客户',
+  'sla_rule.create': '新增 SLA 规则',
+  'sla_rule.update': '修改 SLA 规则',
+  'knowledge.reindex': '重建知识库索引',
+  // 工作区与成员
+  'workspace.create': '创建工作区',
+  'workspace.delete': '删除工作区',
+  'workspace.member_add': '添加成员',
+  'workspace.member_remove': '移除成员',
+  'workspace.member_update_role': '调整成员角色',
+  // 演示工具
+  'demo.tick': '快进虚拟时钟',
+  'demo.set_clock': '调整虚拟时钟到指定时间',
+  'demo.advance_to_delivered': '快进到主案例送达',
+}
+
+export function auditActionLabel(action?: string | null): string {
+  if (!action) return '—'
+  return AUDIT_ACTION_MAP[action] ?? action
+}
+
+export const AUDIT_ACTION_OPTIONS = Object.entries(AUDIT_ACTION_MAP)
+  .map(([value, label]) => ({ value, label }))
+  .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'))
+
+export const AUDIT_RESOURCE_MAP: Record<string, string> = {
+  user: '账号',
+  workspace: '工作区',
+  workspace_member: '成员',
+  customer: '客户',
+  carrier: '承运商',
+  vehicle: '车辆',
+  driver: '司机',
+  sla_rule: 'SLA 规则',
+  order: '订单',
+  tracking_event: '轨迹',
+  exception_case: '异常单',
+  carrier_message: '承运商消息',
+  ai_analysis: 'AI 分析',
+  approval: '审批单',
+  followup_task: '跟进任务',
+  notification: '通知',
+  knowledge_doc: '知识库文档',
+  system_setting: '系统设置',
+}
+
+export function auditResourceLabel(type?: string | null): string {
+  if (!type) return '—'
+  return AUDIT_RESOURCE_MAP[type] ?? type
+}
+
+export const AUDIT_RESOURCE_OPTIONS = Object.entries(AUDIT_RESOURCE_MAP).map(([value, label]) => ({
+  value,
+  label,
+}))
+
+export const AUDIT_SOURCE_MAP: Record<string, Labeled> = {
+  MANUAL: { label: '人工操作', type: 'success' },
+  APPROVED_AI: { label: 'AI 建议（人工批准后执行）', type: 'warning' },
+  SYSTEM: { label: '系统自动', type: 'info' },
+}
+
+export function auditSourceLabel(source?: string | null): string {
+  if (!source) return '—'
+  return AUDIT_SOURCE_MAP[source]?.label ?? source
+}
+
+export function auditSourceType(source?: string | null): TagType {
+  return source ? (AUDIT_SOURCE_MAP[source]?.type ?? 'info') : 'info'
+}
+
+export const AUDIT_ACTOR_TYPE_MAP: Record<string, string> = {
+  USER: '用户',
+  AI: 'AI',
+  SYSTEM: '系统',
+}
+
+export function auditActorTypeLabel(type?: string | null): string {
+  if (!type) return '—'
+  return AUDIT_ACTOR_TYPE_MAP[type] ?? type
+}
+
+/** before/after 里的字段名 → 中文 */
+export const AUDIT_FIELD_MAP: Record<string, string> = {
+  plate_no: '车牌号',
+  vehicle_type: '车型',
+  capacity_ton: '载重(吨)',
+  carrier_id: '承运商',
+  current_driver_id: '主驾司机',
+  current_driver_name: '主驾司机',
+  current_city: '当前城市',
+  status: '状态',
+  remark: '备注',
+  driver_id: '司机',
+  vehicle_id: '车辆',
+  order_id: '订单',
+  exception_id: '异常单',
+  minutes: '推进分钟数',
+  target_utc: '目标时间',
+  now_utc: '业务时间',
+  base_date: '基准日',
+  previous_now_utc: '原业务时间',
+  email: '邮箱',
+  name: '名称',
+  phone: '电话',
+  role: '角色',
+  license_no: '驾驶证号',
+  reason: '原因',
+  note: '说明',
+  level: '等级',
+  risk_score: '风险分',
+  eta_at: '预计到达时间',
+  amount: '金额',
+}
+
+export function auditFieldLabel(key: string): string {
+  return AUDIT_FIELD_MAP[key] ?? key
+}
+
+/** 审计值 → 人类可读文本（null/布尔/对象都有明确写法，长文本截断） */
+export function auditValueText(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '（空）'
+  if (typeof value === 'boolean') return value ? '是' : '否'
+  if (typeof value === 'object') {
+    const text = JSON.stringify(value, null, 0) ?? ''
+    return text.length > 80 ? `${text.slice(0, 80)}…` : text
+  }
+  const text = String(value)
+  return text.length > 80 ? `${text.slice(0, 80)}…` : text
+}
+
+/** 把 before/after 两个对象拼成"字段变化"列表（只列真正变化的字段） */
+export function auditFieldChanges(
+  before?: Record<string, unknown> | null,
+  after?: Record<string, unknown> | null,
+): Array<{ field: string; label: string; before: string; after: string }> {
+  const keys = Array.from(new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})]))
+  return keys
+    .filter((key) => JSON.stringify(before?.[key] ?? null) !== JSON.stringify(after?.[key] ?? null))
+    .map((key) => ({
+      field: key,
+      label: auditFieldLabel(key),
+      before: auditValueText(before?.[key]),
+      after: auditValueText(after?.[key]),
+    }))
+}
+
