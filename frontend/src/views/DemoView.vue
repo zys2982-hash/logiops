@@ -15,12 +15,13 @@ const demo = useDemoStore()
 const tickMinutes = ref(60)
 const targetTime = ref('')
 const busy = ref(false)
-const timeline = ref<Array<{ time: string; action: string }>>([])
+/** 操作记录：界面只显示大白话（action），接口路径放进悬浮提示（api）供核对 */
+const timeline = ref<Array<{ time: string; action: string; api?: string }>>([])
 
 const canControl = computed(() => auth.can(Perm.DEMO_CONTROL))
 
-function logAction(action: string): void {
-  timeline.value.unshift({ time: new Date().toLocaleTimeString('zh-CN'), action })
+function logAction(action: string, api?: string): void {
+  timeline.value.unshift({ time: new Date().toLocaleTimeString('zh-CN'), action, api })
   timeline.value = timeline.value.slice(0, 20)
 }
 
@@ -28,7 +29,7 @@ async function refresh(): Promise<void> {
   await demo.refresh()
   // 默认把选择器填成当前业务时间，方便"微调式"跳转；已选过就不覆盖
   if (!targetTime.value) fillTargetFromNow()
-  logAction('GET /demo/state')
+  logAction('刷新了当前状态', 'GET /demo/state')
 }
 
 function fillTargetFromNow(): void {
@@ -49,7 +50,10 @@ async function jumpToTime(): Promise<void> {
   busy.value = true
   try {
     await demo.setClock(targetUtc)
-    logAction(`POST /demo/actions/set-clock {target_utc: "${targetUtc}"}`)
+    logAction(
+      `把虚拟时钟跳到 ${formatDateTime(targetUtc, 'YYYY-MM-DD HH:mm:ss')}（北京时间）`,
+      `POST /demo/actions/set-clock {target_utc: "${targetUtc}"}`,
+    )
     if (demo.lastError) {
       logAction(`时间跳转失败：${demo.lastError}`)
       ElMessage.error(`时间跳转失败：${demo.lastError}`)
@@ -66,11 +70,14 @@ async function tick(): Promise<void> {
   busy.value = true
   try {
     await demo.tick(tickMinutes.value)
-    logAction(`POST /demo/actions/tick {minutes: ${tickMinutes.value}}`)
+    logAction(
+      `快进 ${tickMinutes.value} 分钟（顺带跑了一轮轨迹/重算/检测/自动关闭）`,
+      `POST /demo/actions/tick {minutes: ${tickMinutes.value}}`,
+    )
     // 后端明确拒绝时（例如状态机 409）不谎报成功，错误提示已由拦截器给出
     if (demo.lastError) {
-      logAction(`tick 失败：${demo.lastError}`)
-      ElMessage.error(`推进失败：${demo.lastError}`)
+      logAction(`快进失败：${demo.lastError}`)
+      ElMessage.error(`快进失败：${demo.lastError}`)
       return
     }
     ElMessage.success(demo.lastAction ?? '时钟已推进')
@@ -92,7 +99,7 @@ async function reset(): Promise<void> {
     await demo.reset('case-a')
     // 本地 fixture 状态一并重置，保证无后端时也能恢复初始演示数据
     resetMockState()
-    logAction('POST /demo/actions/reset {scenario: "case-a"}')
+    logAction('重置为初始演示数据（数据重建、时钟归零）', 'POST /demo/actions/reset {scenario: "case-a"}')
     ElMessage.success('已重置为 seed 初始态')
   } finally {
     busy.value = false
@@ -176,10 +183,10 @@ onMounted(refresh)
       </el-col>
 
       <el-col :md="10">
-        <PanelCard title="本地操作记录" subtitle="最近 20 次操作" icon="Clock">
-          <el-empty v-if="timeline.length === 0" description="暂无操作" :image-size="50" />
+        <PanelCard title="操作记录" subtitle="最近 20 次；鼠标移上去可看对应接口" icon="Clock">
+          <el-empty v-if="timeline.length === 0" description="还没有操作" :image-size="50" />
           <ul class="action-list">
-            <li v-for="(item, index) in timeline" :key="index">
+            <li v-for="(item, index) in timeline" :key="index" :title="item.api ?? ''">
               <span class="u-mono u-text-muted">{{ item.time }}</span>
               <span>{{ item.action }}</span>
             </li>
