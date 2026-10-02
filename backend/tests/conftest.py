@@ -4,6 +4,9 @@
 - 默认用 SQLite（临时文件）跑测试，无需 MySQL；设置 TEST_DATABASE_URL 即切 MySQL（CI 用）。
 - 每个用例重建全部表，保证隔离与可复现。
 - 业务时钟默认 replay，业务基准时间 = 配置的 DEMO_BASE_DATE。
+- **测试产物固定落在系统临时目录的 `logiops-tests/` 下**（见下方 TEMP 兜底）：
+  否则 TEMP 被指到仓库内时，pytest 会在 backend/ 反复写文件，而 `uvicorn --reload`
+  监视该目录就会触发 reload 风暴（服务一直重启 → 接口 000、机器变卡）。
 """
 
 from __future__ import annotations
@@ -15,7 +18,44 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
 
-TEST_DB_PATH = Path(tempfile.gettempdir()) / f"logiops_test_{os.getpid()}.sqlite3"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_test_tmp_root() -> Path:
+    """选一个**不在 reload 监视范围内**的测试临时根目录。
+
+    `tempfile.gettempdir()` 会跟着 TEMP/TMP 走；如果它指向仓库（开发机上常见），
+    pytest 的 SQLite 库与 tmp_path 都会落进 backend/，从而触发 uvicorn reload 风暴。
+    某些环境（含沙箱）不允许写系统临时目录，所以最后回落到仓库内 `artifacts/tests-tmp`
+    —— 它被 .gitignore 忽略，且 uvicorn 只监视 `app/`，不会引起重启。
+    """
+    current = Path(tempfile.gettempdir()).resolve()
+    inside_repo = current == REPO_ROOT or REPO_ROOT in current.parents
+    candidates: list[Path] = []
+    if not inside_repo:
+        candidates.append(current / "logiops-tests")
+    candidates.append(Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Temp" / "logiops-tests")
+    candidates.append(REPO_ROOT / "artifacts" / "tests-tmp")
+    for root in candidates:
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+            probe = root / ".write-probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+            return root
+        except OSError:
+            continue
+    raise RuntimeError("找不到可写的测试临时目录（试过：%s）" % ", ".join(str(p) for p in candidates))
+
+
+TEST_TMP_ROOT = _resolve_test_tmp_root()
+# 同时覆盖环境变量与 tempfile 的缓存，保证 pytest 自己的 basetemp 也跟着走
+os.environ["TEMP"] = str(TEST_TMP_ROOT)
+os.environ["TMP"] = str(TEST_TMP_ROOT)
+os.environ["TMPDIR"] = str(TEST_TMP_ROOT)
+tempfile.tempdir = str(TEST_TMP_ROOT)
+
+TEST_DB_PATH = TEST_TMP_ROOT / f"logiops_test_{os.getpid()}.sqlite3"
 os.environ.setdefault("TEST_DATABASE_URL", f"sqlite+pysqlite:///{TEST_DB_PATH.as_posix()}")
 # 应用自身也要指向测试库（TestClient 走 app.db.session.get_db）
 os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]

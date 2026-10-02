@@ -7,6 +7,8 @@ venv/
 # pytest 临时产物（本机 TEMP 未指向系统临时目录时会落在工程内）
 pytest-of-*/
 tmp*/
+logiops-tests/
+artifacts/tests-tmp/
 .ruff_cache/
 .mypy_cache/
 htmlcov/

@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     LogiOps 一键开发启动（Windows PowerShell 7）。
 
@@ -250,10 +250,13 @@ try {
 # ---------------------------------------------------------------------------
 # 5) 启动后端 / 前端
 # ---------------------------------------------------------------------------
+# ⚠️ `--reload-dir app`：只监视 app/ 目录。
+# 若监视整个 backend/，pytest 在执行期间反复创建/删除临时 SQLite 文件会触发 reload 风暴
+# （服务一直在重启 → 接口 000、机器变卡）。测试产物现在由 conftest 统一放到系统临时目录。
 $backendCmd = "Set-Location -LiteralPath '$BackendDir'; " +
     "`$env:DATABASE_URL='$DatabaseUrl'; " +
     "`$host.UI.RawUI.WindowTitle='LogiOps backend'; " +
-    "uv run uvicorn app.main:app --reload --host 127.0.0.1 --port $BackendPort"
+    "uv run uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port $BackendPort"
 $frontendCmd = "Set-Location -LiteralPath '$FrontendDir'; " +
     "`$host.UI.RawUI.WindowTitle='LogiOps frontend'; " +
     "corepack pnpm dev --port $FrontendPort"
@@ -263,7 +266,7 @@ if (-not $SkipBackend) {
     if ($Background) {
         $job = Start-Job -Name 'logiops-backend' -ScriptBlock {
             param($dir, $cmd) Set-Location -LiteralPath $dir; Invoke-Expression $cmd
-        } -ArgumentList $BackendDir, "uv run uvicorn app.main:app --reload --host 127.0.0.1 --port $BackendPort"
+        } -ArgumentList $BackendDir, "uv run uvicorn app.main:app --reload --reload-dir app --host 127.0.0.1 --port $BackendPort"
         $started += "后端 job: logiops-backend (id=$($job.Id))"
     } else {
         Start-Process -FilePath 'pwsh' -WorkingDirectory $RepoRoot `
