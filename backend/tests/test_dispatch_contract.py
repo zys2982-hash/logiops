@@ -1,4 +1,4 @@
-﻿"""派车契约测试（Lead 维护）：承运商 / 车辆 / 司机 三者必须自洽。
+"""派车契约测试（Lead 维护）：承运商 / 车辆 / 司机 三者必须自洽。
 
 业务规则：**承运商是合同与追责主体，车辆与司机必须属于所选承运商**。
 前端已做"先选承运商 → 再选它名下的车/司机"的级联，但直接调 API 也必须被拦住，
@@ -97,3 +97,117 @@ def test_dispatch_accepts_consistent_triple(client, db_session, bootstrap, admin
     assert body["driver_id"] == bootstrap["driver"].id
     # 承诺时间在派车时按 SLA 规则算出（这票是 VIP → 24h）
     assert body["promised_delivery_at"] is not None
+
+
+# --- 强绑定（ADR-A18）：车辆在运营时由其固定主驾驾驶 ---------------------------
+
+
+def _other_driver_of_same_carrier(db_session, bootstrap) -> int:
+    """同承运商、但不是这台车固定主驾的另一个司机。"""
+    driver = Driver(
+        workspace_id=bootstrap["workspace_id"],
+        name="同公司另一名司机",
+        carrier_id=bootstrap["carrier"].id,
+        status="AVAILABLE",
+    )
+    db_session.add(driver)
+    db_session.commit()
+    return driver.id
+
+
+def _unbound_vehicle(client, admin_headers, bootstrap, plate_no: str = "京Z·70001") -> dict:
+    """造一台未绑定主驾的车（接口允许 current_driver_id 为空）。"""
+    response = client.post(
+        "/api/v1/vehicles",
+        headers=admin_headers,
+        json={"plate_no": plate_no, "carrier_id": bootstrap["carrier"].id, "status": "IDLE"},
+    )
+    assert response.status_code in (200, 201), response.text
+    return response.json()
+
+
+def test_dispatch_rejects_driver_that_is_not_bound_driver(
+    client, db_session, bootstrap, admin_headers, operator_headers
+):
+    """车辆有固定主驾时，换成同承运商的另一名司机也不行（强绑定）。"""
+    order = _create_order(client, admin_headers, bootstrap["customers"]["normal"].id)
+    other_driver_id = _other_driver_of_same_carrier(db_session, bootstrap)
+
+    response = client.patch(
+        f"/api/v1/orders/{order['id']}",
+        headers=operator_headers,
+        json={
+            "expected_version": order["version"],
+            "carrier_id": bootstrap["carrier"].id,
+            "vehicle_id": bootstrap["vehicle"].id,
+            "driver_id": other_driver_id,
+        },
+    )
+    assert response.status_code == 422, response.text
+    error = response.json()["error"]
+    assert "固定绑定" in error["message"]
+    assert any("driver_id" in field["loc"] for field in error["details"]["fields"])
+    assert "固定主驾" in error["details"]["fields"][0]["msg"]
+
+
+def test_dispatch_auto_fills_bound_driver_when_driver_omitted(
+    client, bootstrap, admin_headers, operator_headers
+):
+    """只给车辆（不给司机）→ 自动带入该车的固定主驾（"选了车，司机就是它"）。"""
+    order = _create_order(client, admin_headers, bootstrap["customers"]["vip"].id)
+
+    response = client.patch(
+        f"/api/v1/orders/{order['id']}",
+        headers=operator_headers,
+        json={
+            "expected_version": order["version"],
+            "carrier_id": bootstrap["carrier"].id,
+            "vehicle_id": bootstrap["vehicle"].id,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["driver_id"] == bootstrap["vehicle"].current_driver_id
+    assert body["driver_id"] == bootstrap["driver"].id
+
+
+def test_dispatch_rejects_unbound_vehicle_without_driver(client, bootstrap, admin_headers, operator_headers):
+    """未绑定主驾的车辆 + 不指定司机 → 422（在用车辆必须有主驾）。"""
+    vehicle = _unbound_vehicle(client, admin_headers, bootstrap)
+    order = _create_order(client, admin_headers, bootstrap["customers"]["normal"].id)
+
+    response = client.patch(
+        f"/api/v1/orders/{order['id']}",
+        headers=operator_headers,
+        json={
+            "expected_version": order["version"],
+            "carrier_id": bootstrap["carrier"].id,
+            "vehicle_id": vehicle["id"],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert "尚未绑定主驾" in response.json()["error"]["message"]
+
+
+def test_dispatch_on_unbound_vehicle_establishes_binding(
+    client, db_session, bootstrap, admin_headers, operator_headers
+):
+    """未绑定主驾的车辆 + 指定同承运商司机 → 派车成功，并把绑定关系自动建立起来。"""
+    vehicle = _unbound_vehicle(client, admin_headers, bootstrap, plate_no="京Z·70002")
+    order = _create_order(client, admin_headers, bootstrap["customers"]["vip"].id)
+
+    response = client.patch(
+        f"/api/v1/orders/{order['id']}",
+        headers=operator_headers,
+        json={
+            "expected_version": order["version"],
+            "carrier_id": bootstrap["carrier"].id,
+            "vehicle_id": vehicle["id"],
+            "driver_id": bootstrap["driver"].id,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["driver_id"] == bootstrap["driver"].id
+
+    refreshed = client.get(f"/api/v1/vehicles/{vehicle['id']}", headers=admin_headers).json()
+    assert refreshed["current_driver_id"] == bootstrap["driver"].id, "派车后应自动建立车-司机绑定"

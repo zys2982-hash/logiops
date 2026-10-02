@@ -1,4 +1,4 @@
-"""订单服务：派车、改基础信息、轨迹写入（同步 ETA 重算 → 异常检测）、送达、取消、自动关闭。
+﻿"""订单服务：派车、改基础信息、轨迹写入（同步 ETA 重算 → 异常检测）、送达、取消、自动关闭。
 
 状态机（基线文档 §8.1）全部通过 common.apply_transition 走 plan_transition，禁止裸赋值。
 """
@@ -169,7 +169,7 @@ class OrderService:
                 if vehicle_id is not None:
                     self.repos.vehicles.get_or_404(vehicle_id, "车辆不存在")
                     order.vehicle_id = vehicle_id
-                self._assert_dispatch_consistency(order)
+                self._apply_vehicle_driver_binding(order)
                 bump_version(order)
                 self.repos.orders.save(order)
 
@@ -186,12 +186,17 @@ class OrderService:
         return order
 
     # --- 派车 -------------------------------------------------------------
-    def _assert_dispatch_consistency(self, order: Order) -> None:
-        """派车一致性（业务约束）：**车与司机必须属于所选承运商**。
+    def _apply_vehicle_driver_binding(self, order: Order, *, auto_bind: bool = True) -> None:
+        """派车时的两级约束（业务规则，前端联动只是辅助）：
 
-        前端已做级联联动（先选承运商 → 再选它名下的车/司机），但约束必须在后端兜住：
-        否则直接调 API 就能造出"承运商 A + 承运商 B 的车"这种矛盾数据，
-        SLA/追责/结算都会跟着错。字段可空的车辆（carrier_id 为空）视为不限承运商。
+        **① 归属一致**：车与司机必须属于订单所选承运商；
+        **② 强绑定**（项目约定 ADR-A18）：车辆在运营时由其固定主驾驾驶——
+          - 车辆已有绑定主驾：`order.driver_id` 必须等于它；未指定则**自动带入**；
+          - 车辆未绑定主驾且指定了同承运商司机：**自动建立绑定**（车与司机 1:1）；
+          - 车辆未绑定主驾且未指定司机：422（"在用车辆必须有主驾"）。
+
+        直接调 API 也绕不过去：否则会造出"承运商 A + 承运商 B 的车"或
+        "津A·12345 的固定主驾是李四、却派给王五"这类矛盾数据。
         """
         if order.carrier_id is None:
             return
@@ -232,6 +237,51 @@ class OrderService:
                     ],
                 )
 
+        # ② 车与司机的强绑定
+        if not order.vehicle_id:
+            return
+        vehicle = self.repos.vehicles.get(order.vehicle_id)
+        if vehicle is None:
+            return
+        bound_driver_id = vehicle.current_driver_id
+        if bound_driver_id is not None:
+            if order.driver_id is None:
+                order.driver_id = bound_driver_id  # 自动带入固定主驾（"选了车，司机就是它"）
+                return
+            if order.driver_id != bound_driver_id:
+                bound_driver = self.repos.drivers.get(bound_driver_id)
+                raise validation_error(
+                    "车辆与司机是固定绑定关系（该车辆在运营时由其固定主驾驾驶）",
+                    fields=[
+                        {
+                            "loc": "driver_id",
+                            "msg": f"车辆 {vehicle.plate_no} 的固定主驾是"
+                            f"{bound_driver.name if bound_driver else f'#{bound_driver_id}'}，"
+                            f"与所选司机不一致；如需换人，请先在「车辆」页修改绑定（或先解除绑定）",
+                        }
+                    ],
+                )
+            return
+
+        # 车辆还没有主驾：在用车辆必须有主驾 —— 有司机就建立绑定，没有就拒绝
+        if order.driver_id is None:
+            raise validation_error(
+                "该车辆尚未绑定主驾（在用车辆必须有固定司机）",
+                fields=[
+                    {
+                        "loc": "vehicle_id",
+                        "msg": f"车辆 {vehicle.plate_no} 未绑定主驾；请在「车辆」页绑定，"
+                        "或在派车时指定该承运商名下的司机（系统会自动建立绑定）",
+                    }
+                ],
+            )
+        if auto_bind:
+            driver = self.repos.drivers.get(order.driver_id)
+            if driver is not None:
+                vehicle.current_driver_id = driver.id
+                bump_version(vehicle)
+                self.repos.vehicles.save(vehicle)
+
     def dispatch(
         self,
         order_id: int,
@@ -261,7 +311,7 @@ class OrderService:
             order.driver_id = driver.id
         if order.vehicle_id is None and order.carrier_id is None:
             raise validation_error("派车必须提供 carrier_id 或 vehicle_id")
-        self._assert_dispatch_consistency(order)
+        self._apply_vehicle_driver_binding(order)
 
         dispatched_at = to_naive_utc(order.dispatched_at) or now_naive()
         match, _ = eta_flow.resolve_promised_at(self.repos, order)

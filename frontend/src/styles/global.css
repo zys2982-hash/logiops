@@ -56,6 +56,12 @@ body {
   font-size: 12px;
 }
 
+/* 表单里的警示提示（例如"该司机未绑定车辆，无法派车"） */
+.u-text-warn {
+  color: #e6a23c;
+  font-size: 12px;
+}
+
 .u-nowrap {
   white-space: nowrap;
 }

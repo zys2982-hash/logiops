@@ -65,11 +65,19 @@ function onCarrierChange(): void {
   dispatchForm.driver_id = null
 }
 
-function onVehicleChange(): void {
-  // 选中车辆后自动带出它的当前司机（仍可手改；不匹配则留空）
-  const vehicle = dispatchVehicles.value.find((item) => item.id === dispatchForm.vehicle_id)
-  const current = vehicle?.current_driver_id ?? null
-  dispatchForm.driver_id = current && dispatchDrivers.value.some((d) => d.id === current) ? current : null
+/** 该司机固定绑定的车牌（用于下拉选项提示） */
+function boundPlateOf(driverId: number | null): string {
+  if (driverId === null) return ''
+  return vehicles.value.find((vehicle) => vehicle.current_driver_id === driverId)?.plate_no ?? ''
+}
+
+/**
+ * 强绑定（ADR-A18）：车与司机 1:1 固定绑定，所以"选司机 → 车辆自动导入"。
+ * 反方向不需要再让用户选车辆：车辆下拉是只读的，避免出现"车 A + 司机 B"这种矛盾组合。
+ */
+function onDriverChange(): void {
+  const bound = vehicles.value.find((vehicle) => vehicle.current_driver_id === dispatchForm.driver_id)
+  dispatchForm.vehicle_id = bound?.id ?? null
 }
 /** 实测订单是扁平字段 + 内嵌 sla 快照，优先用后端返回的 sla.rule_name */
 const slaRuleName = computed(
@@ -219,7 +227,13 @@ onMounted(async () => {
         </el-col>
 
         <el-col :md="10">
-          <PanelCard v-if="canManage" title="派车操作" subtitle="先选承运商 → 再选它名下的车与司机（PATCH /orders/{id}）" icon="SetUp" class="u-mb-12">
+          <PanelCard
+            v-if="canManage"
+            title="派车操作"
+            subtitle="先选承运商 → 再选司机；车辆由司机自动导入（车与司机是固定绑定）"
+            icon="SetUp"
+            class="u-mb-12"
+          >
             <el-form label-width="80px" size="small">
               <el-form-item label="承运商">
                 <el-select
@@ -238,15 +252,30 @@ onMounted(async () => {
                   />
                 </el-select>
               </el-form-item>
-              <el-form-item label="车辆">
+              <el-form-item label="司机">
                 <el-select
-                  v-model="dispatchForm.vehicle_id"
+                  v-model="dispatchForm.driver_id"
                   clearable
                   filterable
                   :disabled="dispatchForm.carrier_id === null"
-                  :placeholder="dispatchForm.carrier_id === null ? '请先选择承运商' : '② 选该承运商名下的车辆'"
+                  :placeholder="dispatchForm.carrier_id === null ? '请先选择承运商' : '② 选司机（括注为其固定车辆）'"
                   style="width: 100%"
-                  @change="onVehicleChange"
+                  @change="onDriverChange"
+                >
+                  <el-option
+                    v-for="driver in dispatchDrivers"
+                    :key="driver.id"
+                    :label="`${driver.name}（${driver.status}${boundPlateOf(driver.id) ? ' · ' + boundPlateOf(driver.id) : ' · 未绑定车辆'}）`"
+                    :value="driver.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="车辆">
+                <el-select
+                  v-model="dispatchForm.vehicle_id"
+                  disabled
+                  :placeholder="dispatchForm.driver_id === null ? '选择司机后自动带入' : '该司机未绑定车辆'"
+                  style="width: 100%"
                 >
                   <el-option
                     v-for="vehicle in dispatchVehicles"
@@ -255,28 +284,22 @@ onMounted(async () => {
                     :value="vehicle.id"
                   />
                 </el-select>
-              </el-form-item>
-              <el-form-item label="司机">
-                <el-select
-                  v-model="dispatchForm.driver_id"
-                  clearable
-                  filterable
-                  :disabled="dispatchForm.carrier_id === null"
-                  :placeholder="dispatchForm.carrier_id === null ? '请先选择承运商' : '③ 选该承运商的司机（选车后自动带出）'"
-                  style="width: 100%"
-                >
-                  <el-option
-                    v-for="driver in dispatchDrivers"
-                    :key="driver.id"
-                    :label="`${driver.name}（${driver.status}）`"
-                    :value="driver.id"
-                  />
-                </el-select>
+                <span v-if="dispatchForm.driver_id !== null && dispatchForm.vehicle_id === null" class="u-text-warn">
+                  该司机没有绑定车辆：请先到「车辆」页把车辆绑定给他，再进行派车
+                </span>
               </el-form-item>
               <el-form-item>
-                <el-button type="primary" size="small" :loading="saving" @click="dispatch">保存派车</el-button>
+                <el-button
+                  type="primary"
+                  size="small"
+                  :loading="saving"
+                  :disabled="dispatchForm.vehicle_id === null"
+                  @click="dispatch"
+                >
+                  保存派车
+                </el-button>
                 <span class="u-text-muted">
-                  车与司机必须属于所选承运商（后端同样校验，跨承运商组合会 422）
+                  车与司机是固定绑定（ADR-A18）：选司机 → 车辆自动导入；后端同样强制，换人需先改绑定
                 </span>
               </el-form-item>
             </el-form>
