@@ -69,6 +69,28 @@ def get_settings() -> Settings:
     return Settings()
 
 
+AI_MODES: tuple[str, ...] = ("replay", "live")
+
+
+def set_ai_mode(mode: str) -> str:
+    """运行时切换 AI 模式（顶部横幅开关用）。
+
+    - 立即生效：``get_settings()`` 是 lru_cache 单例，``build_provider`` 每次读它的
+      ``ai_replay_enabled``，所以改完下一个分析就走新模式，**不需要重启**；
+    - 不写库：重启后回到 ``.env`` 的 ``AI_MODE``（避免"库里写着 live、实际跑 replay"的错觉）；
+    - 只接受 replay / live，其余抛 ``ValueError``（由接口层转 422）。
+    """
+    normalized = (mode or "").strip().lower()
+    if normalized not in AI_MODES:
+        raise ValueError(f"ai_mode 只能是 {AI_MODES} 之一，收到 {mode!r}")
+    get_settings().ai_mode = normalized
+    return normalized
+
+
+def current_ai_mode() -> str:
+    return get_settings().ai_mode.lower()
+
+
 def reset_settings_cache() -> None:
     """测试用：清掉 lru_cache 重新读环境变量。"""
     get_settings.cache_clear()

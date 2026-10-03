@@ -26,6 +26,7 @@ export const useDemoStore = defineStore('demo', () => {
   const loading = ref(false)
   const lastAction = ref<string | null>(null)
   const lastError = ref<string | null>(null)
+  const lastWarning = ref<string | null>(null)
   const mocked = ref(false)
 
   const aiMode = computed(() => state.value.ai_mode ?? 'replay')
@@ -132,6 +133,30 @@ export const useDemoStore = defineStore('demo', () => {
     }
   }
 
+  /** 运行时切换 AI 模式（顶部横幅开关）：立即生效，后端重启后回到 .env 的 AI_MODE */
+  async function setAiMode(mode: 'replay' | 'live'): Promise<void> {
+    loading.value = true
+    try {
+      const result = await demoApi.demoSetAiMode(mode)
+      state.value = { ...state.value, ai_mode: result.ai_mode }
+      lastAction.value = mode === 'live' ? 'AI 切到真实大模型（live）' : 'AI 切到回放样本（replay）'
+      lastWarning.value = result.warning ?? null
+      lastError.value = null
+      mocked.value = false
+    } catch (error) {
+      if (!isFixtureFallback(error)) {
+        lastError.value = error instanceof Error ? error.message : 'AI 模式切换失败'
+        return
+      }
+      state.value = { ...state.value, ai_mode: mode }
+      lastAction.value = `AI 模式切换为 ${mode}（本地演示）`
+      lastWarning.value = null
+      mocked.value = true
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function reset(scenario = 'case-a'): Promise<void> {
     loading.value = true
     try {
@@ -158,6 +183,7 @@ export const useDemoStore = defineStore('demo', () => {
     loading,
     lastAction,
     lastError,
+    lastWarning,
     mocked,
     aiMode,
     clockMode,
@@ -170,6 +196,7 @@ export const useDemoStore = defineStore('demo', () => {
     tick,
     advanceToLess,
     setClock,
+    setAiMode,
     reset,
   }
 })

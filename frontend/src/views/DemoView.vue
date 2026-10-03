@@ -117,7 +117,7 @@ onMounted(refresh)
       show-icon
       class="u-mb-12"
       title="演示工具（仅本地演示）"
-      description="这一页只做两件事：① 快进/重置「虚拟时钟」——系统里的业务时间默认停在基准日不动，推一下它才往前流（推进即触发：轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查 → 自动关闭检查）；② 一键重置回到 seed 初始态（演示翻车 3 秒恢复）。权限：APP_ENV=local 且 ADMIN+ 才有 demo.control。下方「AI 分析来源」是只读说明（回放样本 / 真实大模型），切换请改后端 AI_MODE。"
+      description="这一页只做两件事：① 快进/重置「虚拟时钟」——系统里的业务时间默认停在基准日不动，推一下它才往前流（推进即触发：轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查 → 自动关闭检查）；② 一键重置回到 seed 初始态（演示翻车 3 秒恢复）。权限：APP_ENV=local 且 ADMIN+ 才有 demo.control。AI 模式（回放样本 / 真实大模型）在顶部横幅上直接切换。"
     />
 
     <el-row :gutter="12">
@@ -133,11 +133,6 @@ onMounted(refresh)
             <el-descriptions-item label="基准日">{{ demo.baseDateText }}</el-descriptions-item>
             <el-descriptions-item label="时钟偏移">{{ demo.offsetMinutes }} 分钟</el-descriptions-item>
             <el-descriptions-item label="clock_mode">{{ demo.clockMode }}</el-descriptions-item>
-            <el-descriptions-item label="AI 分析来源">
-              <el-tag size="small" :type="demo.isReplay ? 'warning' : 'danger'" effect="plain">
-                {{ demo.isReplay ? '回放样本（replay）' : '真实大模型（live）' }}
-              </el-tag>
-            </el-descriptions-item>
             <el-descriptions-item label="workspace_id">{{ demo.state.workspace_id ?? '—' }}</el-descriptions-item>
             <el-descriptions-item label="now_utc">{{ formatDateTime(demo.state.now_utc, 'YYYY-MM-DD HH:mm:ss') }}</el-descriptions-item>
             <el-descriptions-item label="seed_available">{{ demo.state.seed_available ?? '—' }}</el-descriptions-item>

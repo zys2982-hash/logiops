@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import ContextDep, require
 from app.core.clock import now_utc, parse_dt
 from app.core.clock import state as clock_state
-from app.core.config import get_settings
+from app.core.config import get_settings, set_ai_mode
 from app.core.errors import AppError, ErrorCode, validation_error
 from app.core.permissions import Perm
 
@@ -31,6 +31,14 @@ class SetClockRequest(BaseModel):
         min_length=1,
         max_length=64,
         description="目标业务时间（ISO 8601，可带 Z 或时区偏移；如 2026-10-05T06:30:00Z）",
+    )
+
+
+class SetAiModeRequest(BaseModel):
+    ai_mode: str = Field(
+        min_length=2,
+        max_length=16,
+        description="AI 模式：replay（读预录样本，可复现、0 成本）或 live（真实调用大模型）",
     )
 
 
@@ -54,6 +62,43 @@ def demo_state(ctx: ContextDep) -> dict:
         "ai_mode": settings.ai_mode,
         "workspace_id": ctx.workspace_id,
         "seed_available": _seed_module() is not None,
+    }
+
+
+@router.post("/actions/set-ai-mode", summary="切换 AI 模式（回放样本 / 真实大模型），立即生效")
+def demo_set_ai_mode(ctx: ContextDep, payload: SetAiModeRequest) -> dict:
+    """运行时切换 AI 模式，不需要重启后端。
+
+    说明：切换只作用于**当前进程**（`get_settings()` 单例），也就是下一个分析就生效；
+    重启后回到 ``.env`` 的 ``AI_MODE``（故意不写库，避免"库里 live、实际 replay"的错觉）。
+    """
+    settings = get_settings()
+    before = settings.ai_mode
+    try:
+        mode = set_ai_mode(payload.ai_mode)
+    except ValueError as exc:
+        raise validation_error(
+            "AI 模式非法",
+            fields=[{"loc": "ai_mode", "msg": str(exc)}],
+        ) from exc
+
+    warning = None
+    if mode == "live" and not settings.llm_api_key:
+        warning = "已切到 live，但未配置 LLM_API_KEY：分析会失败并降级为确定性模板，请先在后端 .env 填写 key 并重启"
+
+    ctx.audit(
+        "demo.set_ai_mode",
+        resource_type="workspace",
+        resource_id=ctx.workspace_id,
+        before={"ai_mode": before},
+        after={"ai_mode": mode},
+    )
+    return {
+        "ok": True,
+        "ai_mode": mode,
+        "previous_ai_mode": before,
+        "runtime_only": True,
+        "warning": warning,
     }
 
 

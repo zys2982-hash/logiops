@@ -25,3 +25,16 @@ export function demoReset(scenario = 'case-a'): Promise<{ reset: boolean; scenar
 export function demoSetClock(targetUtc: string): Promise<DemoClockJumpResult> {
   return post<DemoClockJumpResult>('/demo/actions/set-clock', { target_utc: targetUtc })
 }
+
+/** POST /demo/actions/set-ai-mode 运行时切换 AI 模式（replay 回放样本 / live 真实大模型） */
+export interface DemoAiModeResult {
+  ok: boolean
+  ai_mode: string
+  previous_ai_mode?: string
+  runtime_only?: boolean
+  warning?: string | null
+}
+
+export function demoSetAiMode(aiMode: 'replay' | 'live'): Promise<DemoAiModeResult> {
+  return post<DemoAiModeResult>('/demo/actions/set-ai-mode', { ai_mode: aiMode })
+}
