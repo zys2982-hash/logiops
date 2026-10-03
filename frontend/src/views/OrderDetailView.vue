@@ -338,15 +338,12 @@ async function endIncident(): Promise<void> {
 
 /**
  * 车辆已修复（信号级闭环）：只解除这张单上的「车辆故障」问题（车辆状态恢复、该因子不再计分），
- * **异常单继续存在**。与「结束异常」的区别：后者是整单结束。
+ * **异常单继续存在**。一键生效、说明可选（用户反馈："订单那里的异常修复了以后，直接把那 1 分移除就行"）。
+ * 另：在订单时间线录「维修完成（REPAIR_END）」也会把车辆改回在途 —— 那样因子会在读取时**自动移除**。
  */
 async function clearVehicleIssue(): Promise<void> {
   if (!clearIssueForm.exception_id) {
     ElMessage.warning('请选择要解除车辆故障的异常')
-    return
-  }
-  if (!clearIssueForm.note.trim()) {
-    ElMessage.warning('请填写说明（会写进时间线与审计）')
     return
   }
   const target = breakdownExceptions.value.find((item) => item.id === clearIssueForm.exception_id)
@@ -357,7 +354,7 @@ async function clearVehicleIssue(): Promise<void> {
   exceptionSaving.value = true
   try {
     await exceptionApi.clearVehicleIssue(clearIssueForm.exception_id, {
-      note: clearIssueForm.note.trim(),
+      note: clearIssueForm.note.trim() || '车辆已修复（订单页一键解除车辆故障问题）',
       expected_version: target.version,
     })
     ElMessage.success('已解除「车辆故障」问题，异常继续跟进（分数已按现状重算）')
@@ -372,7 +369,8 @@ async function clearVehicleIssue(): Promise<void> {
 }
 
 /** 归档（关闭）已解决的异常：CLOSED 是终态，关掉后该订单才能再录入新异常 */
-async function archiveIncident(): Promise<void> {  if (!archiveForm.exception_id) {
+async function archiveIncident(): Promise<void> {
+  if (!archiveForm.exception_id) {
     ElMessage.warning('请选择要归档的异常')
     return
   }

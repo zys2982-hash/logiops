@@ -256,33 +256,20 @@ function onHeadCommand(command: string | number | object): void {
 
 /**
  * 车辆已修复（信号级闭环）：只解除这张单上的「车辆故障」问题，**异常单继续**。
- * 与「结束异常」的区别：后者是整单 RESOLVED（风险卡切成历史判定），前者只去掉车辆故障那 1 分。
+ * 一键生效、不再弹确认框（用户反馈："为什么非要在这里再进行确认一次"）——
+ * 若订单侧已录「维修完成（REPAIR_END）」或车辆状态已改回，因子会在读取时**自动移除**，连这个按钮都不用点。
  */
 async function clearVehicleIssue(): Promise<void> {
   if (!exception.value) return
-  let note = ''
-  try {
-    const result = await ElMessageBox.prompt(
-      '车辆已修复：只解除「车辆故障」问题（车辆状态恢复、该因子不再计分），异常单继续跟进',
-      '车辆已修复',
-      {
-        inputPlaceholder: '例如：轮胎已更换，车辆恢复在途',
-        inputValidator: (value) => (value && value.trim().length > 0 ? true : '请填写说明（会写进时间线与审计）'),
-      },
-    )
-    note = result.value ?? ''
-  } catch {
+  const version = exception.value.version
+  if (typeof version !== 'number') {
+    ElMessage.warning('异常版本信息缺失，请刷新后重试')
     return
   }
   actionLoading.value = true
   try {
-    const version = exception.value.version
-    if (typeof version !== 'number') {
-      ElMessage.warning('异常版本信息缺失，请刷新后重试')
-      return
-    }
     await exceptionApi.clearVehicleIssue(exception.value.id, {
-      note,
+      note: '车辆已修复（页面一键解除车辆故障问题）',
       expected_version: version,
     })
     ElMessage.success('已解除「车辆故障」问题，异常继续跟进（分数已按现状重算）')

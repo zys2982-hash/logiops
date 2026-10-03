@@ -132,6 +132,42 @@ def test_clear_vehicle_issue_drops_one_point_and_keeps_case_open(
     assert again.json()["status"] == "PROCESSING"
 
 
+def test_repair_end_tracking_removes_factor_automatically(
+    client, db_session, bootstrap, operator_headers, admin_headers
+):
+    """订单侧录「维修完成（REPAIR_END）」→ 车辆改回在途 → 异常读取时因子**自动移除**（不用点任何按钮）。
+
+    用户口径：「订单那里的异常修复了以后，这里直接把汽车故障的那一分移除就可以呀」——
+    所以自动路径必须成立：事实变了（车修好），因子随读取自愈。
+    """
+    order = _order_with_vehicle(
+        client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
+    )
+    case = _breakdown_case(client, operator_headers, bootstrap, order["id"], delay_minutes=25)
+    assert "VEHICLE_BREAKDOWN" in _codes(case)
+
+    tracked = client.post(
+        f"{ORDERS}/{order['id']}/tracking-events",
+        headers=operator_headers,
+        json={
+            "event_type": "REPAIR_END",
+            "city": "济南",
+            "speed_kmh": 40,
+            "source": "OPERATOR",
+            "occurred_at": bootstrap["base_time"].isoformat(),
+        },
+    )
+    assert tracked.status_code in (200, 201), tracked.text
+    assert _fresh(db_session, Vehicle, bootstrap["vehicle"].id).status == "IN_TRANSIT", "维修完成 → 车辆回在途"
+
+    # 没有调用 clear-vehicle-issue：读取异常详情时按"车辆现状"自动去掉该因子
+    detail = client.get(f"{EXCEPTIONS}/{case['id']}", headers=operator_headers).json()
+    assert "VEHICLE_BREAKDOWN" not in _codes(detail), detail["risk_factors"]
+    assert detail["status"] == "DETECTED", "异常单不受影响，仍在待确认"
+    stored = _fresh(db_session, ExceptionCase, case["id"])
+    assert "VEHICLE_BREAKDOWN" not in [f.get("code") for f in (stored.risk_factors_json or [])], "自愈要落库"
+
+
 def test_capped_score_may_not_drop_but_factor_disappears(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
