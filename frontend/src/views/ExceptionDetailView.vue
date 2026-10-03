@@ -61,6 +61,11 @@ const canForceClose = computed(() => auth.can(Perm.EXCEPTION_FORCE_CLOSE))
 const pendingApprovals = computed(() => approvals.value.filter((a) => a.status === 'PENDING'))
 const decidedApprovals = computed(() => approvals.value.filter((a) => a.status !== 'PENDING'))
 
+/** 已结束（已解决/已关闭）→ 风险卡改为"历史判定"，不再声称是当前风险 */
+const isEnded = computed(() =>
+  ['RESOLVED', 'CLOSED'].includes(String(exception.value?.status ?? '')),
+)
+
 /** 本页异常自身作为时间线上的"异常条目"（开始 + 已结束时追加结束那条） */
 const timelineIncidents = computed<TimelineIncident[]>(() => {
   const current = exception.value
@@ -554,7 +559,20 @@ onMounted(async () => {
 
           <SlaImpactCard :exception="exception" @updated="refreshAfterWrite" />
 
-          <PanelCard title="风险等级" subtitle="规则逐项加权，LLM 无权修改" icon="WarnTriangleFilled">
+          <PanelCard
+            :title="isEnded ? '风险等级（历史判定）' : '风险等级（当前）'"
+            :subtitle="isEnded ? '该异常已结束，以下为结束时的判定依据' : '规则逐项加权，LLM 无权修改'"
+            icon="WarnTriangleFilled"
+          >
+            <el-alert
+              v-if="isEnded"
+              type="success"
+              :closable="false"
+              show-icon
+              class="u-mb-8"
+              :title="`该异常已${exceptionStatusLabel(exception.status)}，当前无风险等级`"
+              description="下面的等级与因子是异常结束那一刻的判定依据（留痕用），不代表当前风险。"
+            />
             <div class="risk-head u-mb-8">
               <RiskTag :level="exception.level" :score="exception.risk_score" show-score size="large" />
               <span class="u-text-muted">0→低 / 1-2→中 / 3→高 / 4→严重（封顶）</span>
