@@ -23,6 +23,7 @@ import type {
   ExceptionEvent,
   FollowupTask,
   Notification,
+  TimelineIncident,
   TrackingEvent,
 } from '@/types'
 import { useAuthStore } from '@/stores/auth'
@@ -59,6 +60,25 @@ const canForceClose = computed(() => auth.can(Perm.EXCEPTION_FORCE_CLOSE))
 
 const pendingApprovals = computed(() => approvals.value.filter((a) => a.status === 'PENDING'))
 const decidedApprovals = computed(() => approvals.value.filter((a) => a.status !== 'PENDING'))
+
+/** 本页异常自身作为时间线上的"异常条目"（开始 + 已结束时追加结束那条） */
+const timelineIncidents = computed<TimelineIncident[]>(() => {
+  const current = exception.value
+  if (!current) return []
+  const endedAt = current.resolved_at ?? current.closed_at ?? null
+  return [
+    {
+      id: current.id,
+      case_no: current.case_no,
+      type: current.type,
+      level: current.level,
+      status: current.status,
+      startedAt: current.occurred_at,
+      endedAt,
+      endedLabel: String(current.status) === 'CLOSED' ? '已关闭' : '已解决',
+    },
+  ]
+})
 
 /** 右侧流程标签页当前页（默认 AI 分析） */
 const activeTab = ref('ai')
@@ -528,7 +548,7 @@ onMounted(async () => {
           <TrackingTimeline
             id="evidence-timeline"
             :events="trackingEvents"
-            :exception-at="exception.occurred_at"
+            :incidents="timelineIncidents"
             :loading="loading"
           />
 

@@ -3,7 +3,9 @@
  * 运输轨迹时间线 = 轨迹事件 + 在途异常，按时间倒序混排。
  *
  * 配色规则（业务口径）：
- * - 轨迹：送达=绿、开始维修=红、停滞窗口内=橙、其余=灰
+ * - 轨迹：送达=绿、开始维修=红、其余=灰
+ *   （**已删除"异常标记"**：那是前端按事件类型/时间窗口"猜"出来的，与异常中心无关，
+ *     且订单页 / 异常页会给出不同结果。与异常有关的展示统一走下面的"异常条目"。）
  * - 异常开始：**未结束=红点**、已结束=灰点
  * - 异常结束：灰点（只有已结束的异常才有这一条）
  */
@@ -25,12 +27,10 @@ import type { TimelineIncident, TrackingEvent } from '@/types'
 const props = withDefaults(
   defineProps<{
     events: TrackingEvent[]
-    /** 异常发生时间，用于给"异常窗口"内的事件加标记 */
-    exceptionAt?: string | null
     incidents?: TimelineIncident[]
     loading?: boolean
   }>(),
-  { exceptionAt: null, incidents: () => [], loading: false },
+  { incidents: () => [], loading: false },
 )
 
 const router = useRouter()
@@ -51,13 +51,6 @@ const entries = computed<Entry[]>(() => {
   return list.sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
 })
 
-const anomalyTypes = new Set(['STOP', 'REPAIR_START'])
-
-function isAnomaly(event: TrackingEvent): boolean {
-  if (!props.exceptionAt) return anomalyTypes.has(event.event_type)
-  return Date.parse(event.occurred_at) >= Date.parse(props.exceptionAt) - 30 * 60 * 1000
-}
-
 function isOpenIncident(incident: TimelineIncident): boolean {
   return OPEN_STATUSES.has(String(incident.status ?? ''))
 }
@@ -68,7 +61,6 @@ function dotColor(entry: Entry): string {
   const event = entry.event
   if (event.event_type === 'REPAIR_START') return '#f56c6c'
   if (event.event_type === 'DELIVER') return '#67c23a'
-  if (isAnomaly(event)) return '#e6a23c'
   return '#909399'
 }
 
@@ -104,7 +96,6 @@ const subtitle = computed(() => {
           <div class="event-title">
             <b>{{ trackingEventLabel(entry.event.event_type) }}</b>
             <span>{{ entry.event.city ?? '—' }}</span>
-            <el-tag v-if="isAnomaly(entry.event)" size="small" type="danger" effect="plain">异常标记</el-tag>
           </div>
           <div class="u-text-muted">
             {{ entry.event.address ?? '—' }} · 来源 {{ trackingSourceLabel(entry.event.source) }}
