@@ -103,6 +103,14 @@ function isChanged(key: string): boolean {
   return diffChanged.value.includes(key)
 }
 
+/** 长文本字段（变更原因、通知正文等）需要多行输入与限高展示，单行输入框没法编辑 */
+const LONG_TEXT_KEYS = new Set(['reason', 'rationale', 'content', 'subject', 'note', 'remark', 'title'])
+
+function isLongText(key: string, value: unknown): boolean {
+  if (LONG_TEXT_KEYS.has(key)) return true
+  return typeof value === 'string' && value.length > 40
+}
+
 function displayValue(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
   if (DATE_FIELDS.has(key) && typeof value === 'string') return formatDateTime(value)
@@ -211,15 +219,22 @@ function retryExecute(): void {
     <div v-if="aiRationale" class="u-text-muted u-mb-8">AI 依据：{{ aiRationale }}</div>
 
     <el-table :data="fields.map((key) => ({ key }))" size="small" border class="diff-table">
-      <el-table-column label="字段" width="130">
+      <el-table-column label="字段" width="120">
         <template #default="{ row }">{{ FIELD_LABELS[row.key] ?? row.key }}</template>
       </el-table-column>
-      <el-table-column label="AI 原始值（ai_payload）">
+      <el-table-column label="AI 原始值（ai_payload）" min-width="220">
         <template #default="{ row }">
-          <span :class="{ 'diff-ai': isChanged(row.key) }">{{ displayValue(row.key, aiValueOf(row.key)) }}</span>
+          <div
+            v-if="isLongText(row.key, aiValueOf(row.key))"
+            class="diff-longtext"
+            :class="{ 'diff-ai': isChanged(row.key) }"
+          >
+            {{ displayValue(row.key, aiValueOf(row.key)) }}
+          </div>
+          <span v-else :class="{ 'diff-ai': isChanged(row.key) }">{{ displayValue(row.key, aiValueOf(row.key)) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="人工值（final_payload）">
+      <el-table-column label="人工值（final_payload）" min-width="240">
         <template #default="{ row }">
           <template v-if="editing">
             <el-date-picker
@@ -230,10 +245,25 @@ function retryExecute(): void {
               style="width: 190px"
               @update:model-value="(value: string | null) => onDateChange(row.key, value)"
             />
+            <!-- 长文本（变更原因等）用多行文本域，单行输入框没法编辑 -->
+            <el-input
+              v-else-if="isLongText(row.key, draft[row.key])"
+              v-model="draft[row.key] as string"
+              type="textarea"
+              :autosize="{ minRows: 3, maxRows: 12 }"
+              size="small"
+            />
             <el-input v-else v-model="draft[row.key] as string" size="small" />
           </template>
           <template v-else>
-            <span :class="{ 'diff-final': isChanged(row.key) }">
+            <div
+              v-if="isLongText(row.key, finalValueOf(row.key))"
+              class="diff-longtext"
+              :class="{ 'diff-final': isChanged(row.key) }"
+            >
+              {{ displayValue(row.key, finalValueOf(row.key)) }}
+            </div>
+            <span v-else :class="{ 'diff-final': isChanged(row.key) }">
               {{ displayValue(row.key, finalValueOf(row.key)) }}
             </span>
           </template>
@@ -285,6 +315,15 @@ function retryExecute(): void {
 
 .diff-table {
   margin-bottom: 6px;
+}
+
+/* 长文本：保留换行、限高可滚动，避免把卡片撑成"一条竖线" */
+.diff-longtext {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+  line-height: 1.6;
 }
 
 .approval-foot {
