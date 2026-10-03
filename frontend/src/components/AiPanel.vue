@@ -220,7 +220,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
         </ul>
 
         <h4 class="block-title">证据来源（点击可跳原文）</h4>
-        <EvidenceList :refs="output.evidence_refs" />
+        <EvidenceList :refs="output.evidence_refs" :order-id="exception.order_id" :exception-id="exception.id" />
 
         <div class="u-text-muted u-mt-12 u-mono">
           model={{ analysis?.model ?? '—' }} · prompt={{ analysis?.prompt_version ?? '—' }} · tokens={{
