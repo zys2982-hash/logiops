@@ -11,4 +11,4 @@
 
 from __future__ import annotations
 
-__all__ = ["errors", "guard", "knowledge_index", "prompts", "replay", "runner", "schemas", "tools"]
+__all__ = ["errors", "guard", "prompts", "replay", "runner", "schemas", "tools"]

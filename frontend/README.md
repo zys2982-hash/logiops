@@ -55,7 +55,7 @@ corepack pnpm preview
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `VITE_BACKEND_ORIGIN` | `http://127.0.0.1:8000` | dev server 的 `/api` 代理目标（`vite.config.ts` 读取的是 `process.env.VITE_BACKEND_ORIGIN`）。 |
-| `VITE_USE_MOCKS` | `true` | 是否允许本地 fixture 兜底；设为 `false` 则后端未就绪时页面显示真实错误。 |
+| `VITE_USE_MOCKS` | `false` | 是否允许本地 fixture 兜底。**默认关闭**：真实错误（含 404）必须暴露；仅在无后端时想看骨架，才在 `.env.local` 显式设 `true`。生产构建设为 `true` 会**直接构建失败**。 |
 
 后端地址：`http://127.0.0.1:8000`，请求前缀统一 `/api/v1`（`src/api/request.ts` 的 `baseURL`）。
 
@@ -161,12 +161,13 @@ src/
 
 后端接口可能尚未实现（返回 404 / 网络不可达 / 5xx）时，`src/api/request.ts` 会自动回落到 `src/mocks/registry.ts`：
 
-- 触发条件：网络错误、HTTP 404、5xx（`AI_OUTPUT_INVALID`/`LLM_UNAVAILABLE` 除外）；可用 `VITE_USE_MOCKS=false` 关闭。
-  **401/403/409 这类后端明确回答的错误不会兜底**（否则会掩盖真实问题：例如 token 失效时应提示重新登录，而不是显示演示数据）。
-- 兜底数据：`src/mocks/fixtures.ts` —— CASE-A 主案例（权威数值：延误 300 分钟 / `sla_breached=true` / `risk_score=4` / CRITICAL）、50 条列表数据、8 步 AI 分析、3 张待决策审批单（含 diff 形状）、承运商消息原文/解析对照、通知、跟进任务、操作记录、审计、知识库分片、Dashboard。
+- 触发条件：**显式** `VITE_USE_MOCKS=true` 且出现网络错误或 5xx（`AI_OUTPUT_INVALID`/`LLM_UNAVAILABLE` 除外）。
+  **404 永不兜底**——本系统里 404 有语义（跨租户越权、资源不存在），兜底会把真实结果渲染成假数据；
+  **401/403/409 这类后端明确回答的错误也不兜底**（否则会掩盖真实问题：例如 token 失效时应提示重新登录，而不是显示演示数据）。
+- 兜底数据：`src/mocks/fixtures.ts` —— CASE-A 主案例（权威数值：延误 300 分钟 / `sla_breached=true` / `risk_score=4` / CRITICAL）、50 条列表数据、8 步 AI 分析（后端上限 14 步）、3 张待决策审批单（含 diff 形状）、承运商消息原文/解析对照、通知、跟进任务、操作记录、审计、知识库分片、Dashboard。
 - 兜底行为：`POST /exceptions/{id}/analyze` 返回 `analysis_id` 后，`GET /ai-analyses/{id}` 会按轮询次数**逐条点亮 steps**（每 1.5s 一步，约 10.5s 后 `READY`），用于验证前端轮询与进度渲染链路。真实后端在 `AI_MODE=replay` 下分析是**同步完成**的（202 响应里就是 `READY`），因此真实模式看不到逐条点亮——这符合 §12.2-1"不做假动画"的要求。
 - 首次兜底会提示一次"后端未就绪，已使用本地演示数据（fixture）渲染页面"；横幅还会显示"本地演示数据"标签。
-- 注意：fixture 全部为虚构数据，**接入真实后端后应在生产构建中关闭兜底**（`VITE_USE_MOCKS=false`）。
+- 注意：fixture 全部为虚构数据；**默认关闭**，只有显式 `VITE_USE_MOCKS=true` 才会启用（生产构建禁止开启）。
 
 ---
 

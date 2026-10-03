@@ -63,6 +63,9 @@ os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 os.environ.setdefault("CLOCK_MODE", "replay")
 os.environ.setdefault("AI_MODE", "replay")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
+# 默认关闭 AI 分析限流（否则同一条用例里连续两次分析会被 429 挡下）；
+# 限流本身的测试见 tests/test_rate_limit.py（自行打开窗口并重置状态）。
+os.environ.setdefault("RATE_LIMIT_AI_ANALYZE_SECONDS", "0")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

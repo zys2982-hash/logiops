@@ -233,8 +233,8 @@ def test_invalid_json_repaired_successfully(db_session, repos, case_a):
 
 def test_prompt_refresh_exposes_tool_observations(db_session, repos, case_a, tmp_path):
     """工具执行后重建 prompt：live 模式的第二回合能看到工具观测与知识片段。"""
-    from app.ai.knowledge_index import reindex_all
     from app.ai.replay import default_t2_plan
+    from app.services.knowledge_index import reindex_all
 
     reindex_all(db_session)
     facts = read_models.exception_facts(repos, case_a["exception_id"])

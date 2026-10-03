@@ -256,9 +256,14 @@ FastAPI Router（薄：鉴权 → 调 Service → 序列化）
 
 1. Router 不写业务逻辑、不直接访问 Repository，只做鉴权/参数/编排。
 2. Repository 不写业务判断，只做查询与持久化。
-3. AI 层**只有 `ai/tools/` 里的只读工具**能触达 Service；AI 模块禁止 import Repository 与 Session。
+3. AI 层**只有 `ai/tools/` 里的只读工具**能触达 Service；**整个 `app/ai/` 包禁止 import Repository / Session 类型**
+   （`session` 只能由外部注入；`app/ai/runner.py` 里是 `session: Any`），静态检查覆盖整个包（`tests/ai/test_tools.py`）。
+   会写库的**知识库索引重建**因此不在 AI 包内，已移到 `app/services/knowledge_index.py`。
 4. 所有写操作只能由 `services/` 下的执行器完成，且必须携带 `actor`（用户）与 `source`（MANUAL / APPROVED_AI / SYSTEM）。
-5. 状态变更只能通过 `services/state_machine.py` 的 `transition()`，禁止直接对 `status` 赋值。
+5. **ORDER / EXCEPTION 两个业务状态机**的状态变更只能通过 `services/state_machine.py` 的 `transition()`
+   （`common.apply_transition`），禁止直接对 `status` 赋值。适用范围仅限这两个实体：
+   `approval / ai_analysis / notification / followup / vehicle / driver` 的 status 是任务级枚举、无流转表，
+   由各自服务按业务规则直接赋值——措辞与实现保持一致的边界，写清楚比假装更硬更重要。
    → 用一个 pytest 用例 + 自定义检查脚本（`backend/scripts/check_layering.py`）守这条线，面试时是可讲的加分项。
 
 ---
@@ -760,7 +765,9 @@ Seed 主案例（`SO20260930021`）：延误 270min → 基础分 2；VIP +1；V
           details 里带机器可读字段（例如 {"from":"ANALYZING","to":"DETECTED"})
 幂等      写操作（PATCH / resolve / close / approve）必须带 expected_version，不匹配 → 409 OPTIMISTIC_LOCK_CONFLICT
 请求追踪  响应头 X-Request-Id（同时写入审计日志）
-限流      演示级：AI 分析接口按用户 1 次/5 秒（429 RATE_LIMITED），其余不限制
+限流      演示级（**已实现**）：AI 分析/重跑接口按"工作区+用户"1 次/5 秒 → 429 RATE_LIMITED，其余不限制。
+          实现为进程内滑动窗口（`app/core/ratelimit.py`，符合 ADR「不引入 Redis/MQ」）；
+          窗口可配 `RATE_LIMIT_AI_ANALYZE_SECONDS`（0 = 关闭，测试默认关闭）。多副本部署时各副本独立计数。
 OpenAPI  /docs 与 /openapi.json 均可用，导出为 docs/openapi.json 作为交付物
 ```
 
@@ -939,7 +946,7 @@ POST /api/v1/approvals/51/approve
 ### 11.1 边界与原则（硬约束）
 
 ```text
-1) AI 只读：Tool 全部只读；AI 模块禁止 import Repository/Session（有静态检查）
+1) AI 只读：Tool 全部只读；**整个 `app/ai/` 包禁止 import Repository/Session 类型**（静态检查覆盖全包；会写库的索引重建已移到 `app/services/knowledge_index.py`）
 2) AI 不决定 level：level 由 §8.6 规则计算，LLM 只能给 root_cause/摘要/建议
 3) AI 不编事实：通知草稿中出现的 ETA/订单号/客户名/延误分钟必须来自 Tool 返回，校验阶段逐字段比对
 4) AI 的所有输出必须过 Pydantic schema；失败 → 修复重试 1 次 → 仍失败 → 任务 FAILED + 降级

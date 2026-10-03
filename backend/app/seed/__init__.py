@@ -378,7 +378,7 @@ def _summary(ctx: SeedContext, *, scenario: str, cleared: dict[str, int]) -> dic
 # --- 知识库（AI 智能体提供入口，失败不阻塞） ----------------------------------
 def _reindex_knowledge(session: Session, workspace_id: int) -> dict[str, Any]:
     try:
-        from app.ai.knowledge_index import reindex_all  # type: ignore[import-not-found]
+        from app.services.knowledge_index import reindex_all  # type: ignore[import-not-found]
 
         signature = inspect.signature(reindex_all)
         params = signature.parameters
@@ -396,7 +396,7 @@ def _reindex_knowledge(session: Session, workspace_id: int) -> dict[str, Any]:
             return dict(result)
         return {"indexed": 0}
     except ImportError as exc:
-        return {"indexed": 0, "warning": f"app.ai.knowledge_index 未实现：{exc}"}
+        return {"indexed": 0, "warning": f"app.services.knowledge_index 未实现：{exc}"}
     except Exception as exc:  # noqa: BLE001 - 知识库不可用不能阻塞 seed
         session.rollback()
         return {"indexed": 0, "warning": f"知识库重建失败：{type(exc).__name__}: {exc}"}

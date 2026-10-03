@@ -1,7 +1,7 @@
 /**
  * 后端未就绪时的本地 fixture 路由（兜底，不是 mock server）。
  *
- * 触发条件见 api/request.ts：网络错误 / HTTP 404 / 5xx 且 VITE_USE_MOCKS!=false。
+ * 触发条件见 api/request.ts：**显式** VITE_USE_MOCKS=true 且（网络错误 / 5xx）；404 永不兜底。
  * 作用：保证 /exceptions、/exceptions/:id 等页面在无后端时仍渲染出骨架，而不是白屏报错。
  *
  * 形状与 backend 实际响应一一对应（2026-09-30 逐端点核对）：

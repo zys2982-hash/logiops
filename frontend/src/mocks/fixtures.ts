@@ -459,7 +459,7 @@ export const exceptionList: ExceptionListItem[] = [
 
 /* ---------------------------------------------------------- AI 分析步骤 */
 
-/** 实测 8 步：6 个只读工具 + 1 次 LLM 输出 + 1 次 schema 校验 */
+/** 实测 8 步（后端上限 14 步）：6 个只读工具 + 1 次 LLM 输出 + 1 次 schema 校验 */
 export const aiSteps: AiAnalysisStep[] = [
   { step_no: 1, step_type: 'TOOL', tool_name: 'get_order', args: { order_id: 21 }, status: 'OK', duration_ms: 0, error: null, result_summary: 'SO20260930021 天津→上海 IN_TRANSIT', created_at: DEMO_NOW_UTC },
   { step_no: 2, step_type: 'TOOL', tool_name: 'get_tracking_events', args: { order_id: 21, limit: 10 }, status: 'OK', duration_ms: 0, error: null, result_summary: '6 条轨迹，最后位置 济南 09-30 06:15', created_at: DEMO_NOW_UTC },

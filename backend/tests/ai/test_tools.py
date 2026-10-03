@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from app.ai.errors import AiOutputInvalid
-from app.ai.knowledge_index import reindex_all, search
 from app.ai.tools import TOOL_NAMES, ToolContext, call_tool, evidence_from_outcome
 from app.ai.tools.readonly import MAX_TOP_K, MAX_TRACKING_LIMIT
+from app.services.knowledge_index import reindex_all, search
 
 AI_ROOT = Path(__file__).resolve().parents[2] / "app" / "ai"
 FORBIDDEN_ATTRS = {"execute", "scalars", "query", "select"}
@@ -71,6 +71,34 @@ def test_ai_layer_has_no_direct_sql():
     """AI 层整体禁止直接 SQL（入库/检索一律走 Repos 与 read_models）。"""
     for path in sorted(AI_ROOT.rglob("*.py")):
         _assert_no_direct_sql(path)
+
+
+def test_whole_ai_package_forbids_repository_and_session_types():
+    """整个 AI 包禁止 import Repository / sqlalchemy（含 Session 类型）。
+
+    此前只有 tools/ 受这条约束，`app/ai/knowledge_index.py` 便带着
+    `from app.repositories import Repos` + `session.commit()` 一路绿灯（已移到
+    `app/services/knowledge_index.py`）。`session` 只能由外部注入——`runner.py` 里是 `session: Any`。
+    """
+    for path in sorted(AI_ROOT.rglob("*.py")):
+        for module in _imported_modules(_parse(path)):
+            assert not module.startswith("app.repositories"), f"{path.name} 引入了 {module}"
+            assert not module.startswith("sqlalchemy"), f"{path.name} 引入了 {module}"
+
+
+def test_knowledge_write_path_lives_outside_ai_package():
+    """写库路径必须在 AI 包外：索引重建会写 knowledge_doc/chunk，不属于"只读 AI"。"""
+    assert not (AI_ROOT / "knowledge_index.py").exists(), "knowledge_index 不得放回 app/ai/"
+    from app.services import knowledge_index as service_index
+
+    assert callable(service_index.reindex_all)
+
+
+def test_tools_never_import_orm_models():
+    """工具层必须经 read_models 取数，不得直接摸 ORM 模型（非工具代码才可用枚举/步骤模型）。"""
+    for path in sorted((AI_ROOT / "tools").glob("*.py")):
+        for module in _imported_modules(_parse(path)):
+            assert not module.startswith("app.models"), f"{path.name} 引入了 {module}"
 
 
 def test_tools_are_wired_to_read_models():

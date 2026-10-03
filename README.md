@@ -24,8 +24,8 @@ FastAPI · SQLAlchemy 2.0 · MySQL 8 · Alembic · Vue 3.5 · Vite 6 · Element 
 | 面试官在看的点 | 本项目的答案 |
 |---|---|
 | 模糊业务问题能否拆成可执行规格 | 订单/异常双状态机 + SLA 计算式 + 风险评分表 + 22 张表字段级数据字典 + 接口全清单（`docs/00-项目基线-MVP.md` §7–§10） |
-| LLM 边界怎么划 | AI **全只读**（7 个只读 Tool，禁止 import Repository/Session）；**等级由规则算**，LLM 只给解释与建议；所有写意图 → 审批单 → 人批准 → 后端执行器（§11） |
-| AI 功能可测/可复现/可审计 | `AI_MODE=replay` + 固定基准日 + ReplayClock + 有界循环（≤8 步/90s）+ Pydantic schema 校验 + 事实比对 + 每次调用落库留痕（§11/§13） |
+| LLM 边界怎么划 | AI **全只读**（7 个只读 Tool；**整个 `app/ai/` 包禁止 import Repository/Session 类型**，静态测试覆盖全包）；**等级由规则算**，LLM 只给解释与建议；所有写意图 → 审批单 → 人批准 → 后端执行器（§11） |
+| AI 功能可测/可复现/可审计 | `AI_MODE=replay` + 固定基准日 + ReplayClock + 有界循环（**上限 14 步/90s，实测 8 步**）+ Pydantic schema 校验 + 事实比对 + 每次调用落库留痕（§11/§13） |
 | 工程洁癖 | 分层硬约束、Alembic 迁移、幂等 seed、乐观锁（409）、多租户越权隔离（404）、一键启动、一键验收（§6/§14） |
 | 诚实说明取舍 | 15 条 ADR 含被否方案（LangGraph、向量库、MQ、SSE…）：`docs/04-决策记录ADR.md`、基线附录 A/C |
 

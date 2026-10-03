@@ -6,7 +6,8 @@
  * - 成功响应直接返回资源对象或分页对象（不套 code/data）
  * - 错误体 {"error":{"code","message","details"}} 统一在此解析
  * - 401 → 登出；409 → 提示“数据已被他人更新，已为你刷新”
- * - 后端未就绪（网络错误 / 404 / 5xx）且 VITE_USE_MOCKS!=false 时，走 src/mocks 本地 fixture 兜底
+ * - 后端未就绪（网络错误 / 5xx）且**显式** VITE_USE_MOCKS=true 时，走 src/mocks 本地 fixture 兜底
+ * - 404 绝不兜底：本系统里 404 有语义（跨租户越权、资源不存在），兜底会把真实结果渲染成假数据
  */
 import axios, {
   AxiosError,
@@ -23,7 +24,7 @@ import type { ApiErrorBody } from '@/types'
 
 export const API_PREFIX = '/api/v1'
 
-const USE_MOCKS = import.meta.env.VITE_USE_MOCKS !== 'false'
+const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === 'true'
 
 /** 错误码 → 中文文案（§10.2） */
 export const ERROR_CODE_TEXT: Record<string, string> = {
@@ -131,8 +132,10 @@ http.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 function shouldFallbackToMock(status: number | undefined, code: string | undefined): boolean {
   if (!USE_MOCKS) return false
+  // 404 不兜底：跨租户越权 / 资源不存在在本系统里是**有语义的真实结果**，
+  // 渲染成 fixture 会掩盖多租户隔离与「资源不存在」的真实表现。
+  if (status === 404) return false
   if (status === undefined) return true // 网络错误 / 后端未起
-  if (status === 404) return true // 接口尚未实现
   if (status >= 500 && code !== 'AI_OUTPUT_INVALID' && code !== 'LLM_UNAVAILABLE') return true
   return false
 }

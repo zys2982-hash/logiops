@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.errors import AppError, ErrorCode, validation_error
+from app.core.ratelimit import check_rate_limit
 from app.models.ai import AiAnalysis
 from app.models.enums import (
     ActorType,
@@ -122,6 +123,24 @@ class ExceptionService:
     # --- 基础设施 ---------------------------------------------------------
     def get(self, exception_id: int) -> ExceptionCase:
         return self.repos.exceptions.get_or_404(exception_id, "异常单不存在")
+
+    def _enforce_analyze_rate_limit(self, actor_id: int | None) -> None:
+        """AI 分析限流（基线 §10：1 次/5 秒 → 429 RATE_LIMITED）。
+
+        进程内滑动窗口，按"工作区 + 用户"计；窗口可经 RATE_LIMIT_AI_ANALYZE_SECONDS 配置，
+        设为 0 关闭（测试用）。真正的分布式限流需要 Redis/网关，这里如实标注为演示级。
+        """
+        window = float(get_settings().rate_limit_ai_analyze_seconds or 0)
+        if window <= 0:
+            return
+        key = f"ai-analyze:{self.repos.workspace_id}:{actor_id or 0}"
+        wait = check_rate_limit(key, min_interval_seconds=window)
+        if wait > 0:
+            raise AppError(
+                ErrorCode.RATE_LIMITED,
+                f"AI 分析请求过于频繁，请 {wait:.0f} 秒后再试",
+                {"retry_after_seconds": round(wait, 1), "limit_seconds": window},
+            )
 
     def input_hash(self, case: ExceptionCase) -> str:
         """T2 幂等键：异常关键字段 + 最新轨迹 id + 最新消息 id（§11.2 表 1）。"""
@@ -331,6 +350,7 @@ class ExceptionService:
     ) -> dict[str, Any]:
         case = self.get(exception_id)
         check_version(case, expected_version, "异常单")
+        self._enforce_analyze_rate_limit(actor_id)
         digest = self.input_hash(case)
 
         reused = self._reuse_candidate(case, digest)
@@ -546,6 +566,7 @@ class ExceptionService:
                 {"analysis_id": analysis.id, "status": analysis.status},
             )
         case = self.get(analysis.exception_id)
+        self._enforce_analyze_rate_limit(actor_id)
         digest = analysis.input_hash or self.input_hash(case)
 
         from_status = case.status

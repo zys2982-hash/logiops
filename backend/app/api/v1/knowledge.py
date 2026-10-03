@@ -2,7 +2,7 @@
 
 - ``GET /knowledge/docs``：列出文档与分片数（含全租户共享文档 workspace_id=NULL）。
 - ``GET /knowledge/docs/{id}``：文档元信息 + 分片原文（前端"来源"跳转用），不存在/跨租户一律 404。
-- ``POST /knowledge/reindex``：从 Markdown 重建分片，入口 ``app.ai.knowledge_index.reindex_all``。
+- ``POST /knowledge/reindex``：从 Markdown 重建分片，入口 ``app.services.knowledge_index.reindex_all``。
   该模块由 AI 智能体并行实现：不可用/失败时**不阻塞业务**，返回 200 + ``{"indexed": 0, "warning": ...}``。
 """
 
@@ -86,7 +86,7 @@ def get_doc(ctx: ViewCtx, doc_id: int) -> KnowledgeDocDetail:
 
 def _invoke_reindex(session, workspace_id: int):
     """兼容未知签名的调用：``reindex_all()`` / ``(session)`` / ``(session, workspace_id=...)``。"""
-    from app.ai.knowledge_index import reindex_all  # type: ignore[import-not-found]
+    from app.services.knowledge_index import reindex_all  # type: ignore[import-not-found]
 
     signature = inspect.signature(reindex_all)
     params = signature.parameters
@@ -126,7 +126,7 @@ def reindex(ctx: ManageCtx) -> KnowledgeReindexResponse:
             indexed = chunks_count
     except ImportError as exc:
         ctx.session.rollback()
-        warning = f"知识库索引模块 app.ai.knowledge_index 不可用：{exc}"
+        warning = f"知识库索引模块 app.services.knowledge_index 不可用：{exc}"
     except Exception as exc:  # noqa: BLE001 - 知识库不可用不能阻塞业务
         ctx.session.rollback()
         warning = f"知识库重建失败：{type(exc).__name__}: {exc}"

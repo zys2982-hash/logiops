@@ -1,6 +1,8 @@
 """订单与异常的状态机（基线文档 §8.1 / §8.2）。
 
-唯一允许改状态的入口：任何直接给 status 赋值的代码都算 bug。
+唯一允许改状态的入口：**仅限 ORDER / EXCEPTION 两个业务实体**，任何直接给这两个
+status 赋值的代码都算 bug。approval / ai_analysis / notification / followup / vehicle /
+driver 的 status 是任务级枚举、没有流转表，由各自服务按业务规则直接赋值（§8.4）。
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ class EntityKind(StrEnum):
     EXCEPTION = "EXCEPTION"
 
 
-ORDER_TRANSITIONS: dict[str, set[str]] = {
+ORDER_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
     OrderStatus.CREATED: {OrderStatus.DISPATCHED, OrderStatus.CANCELLED},
     OrderStatus.DISPATCHED: {OrderStatus.IN_TRANSIT, OrderStatus.CANCELLED},
     OrderStatus.IN_TRANSIT: {OrderStatus.DELIVERED},
@@ -26,7 +28,7 @@ ORDER_TRANSITIONS: dict[str, set[str]] = {
     OrderStatus.CANCELLED: set(),
 }
 
-EXCEPTION_TRANSITIONS: dict[str, set[str]] = {
+EXCEPTION_TRANSITIONS: dict[ExceptionStatus, set[ExceptionStatus]] = {
     ExceptionStatus.DETECTED: {ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED},
     ExceptionStatus.CONFIRMING: {ExceptionStatus.ANALYZING, ExceptionStatus.CLOSED},
     ExceptionStatus.ANALYZING: {ExceptionStatus.PROCESSING, ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED},

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     demo_random_seed: int = 20260930
     # 演示数据规模：compact（默认，3 单，每种异常类型一单）| full（1000 单完整规模）
     seed_scale: str = "compact"
+    # AI 分析限流窗口（秒，按"工作区+用户"计；0 = 关闭）。基线 §10 承诺 1 次/5 秒 → 429 RATE_LIMITED
+    rate_limit_ai_analyze_seconds: float = 5.0
     clock_mode: str = "replay"
     ai_mode: str = "replay"
     ai_replay_dir: str = "tests/fixtures/ai"

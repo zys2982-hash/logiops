@@ -375,7 +375,7 @@ def run_case(out_path: Path, scenario: str, timeout: float) -> int:
     parse_record["list"] = wait_parse(api, exc_id, message_id, timeout)
     print(f"        ok：parse_status={pick(parse_record['list'], 'parse_status')}")
 
-    print("  [5/9] 触发 AI 分析（T2 ANALYZE_EXCEPTION，有界循环 ≤8 步）...")
+    print("  [5/9] 触发 AI 分析（T2 ANALYZE_EXCEPTION，有界循环上限 ≤14 步、实测 8 步）...")
     # 乐观锁：第 4 步录入消息后 version 会自增，这里必须重新读取最新 version，否则会被 409 挡下
     detail = body_of(api.call("GET", f"/exceptions/{exc_id}"))
     version = pick(detail, "version", "lock_version")

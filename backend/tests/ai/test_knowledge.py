@@ -6,7 +6,9 @@ import shutil
 
 from sqlalchemy import select
 
-from app.ai.knowledge_index import (
+from app.models.ops import KnowledgeChunk, KnowledgeDoc
+from app.repositories import Repos
+from app.services.knowledge_index import (
     CHUNK_SOFT_LIMIT,
     KNOWLEDGE_DIR,
     list_docs,
@@ -15,8 +17,6 @@ from app.ai.knowledge_index import (
     reindex_all,
     search,
 )
-from app.models.ops import KnowledgeChunk, KnowledgeDoc
-from app.repositories import Repos
 
 EXPECTED_TITLES = {
     "01-exception-handling": "异常处理规范",
