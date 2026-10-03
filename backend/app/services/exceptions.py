@@ -1472,6 +1472,83 @@ class ExceptionService:
         )
         return case
 
+    def force_status(
+        self,
+        exception_id: int,
+        target: str,
+        *,
+        note: str | None = None,
+        actor_id: int | None = None,
+    ) -> ExceptionCase:
+        """演示/管理用途：**直接设定**异常状态，跳过状态机（仍写事件 + 审计，可追溯）。
+
+        与 resolve/close 的区别：不做"这条流转合不合法"的拦截（允许 CLOSED → PROCESSING 这类回退），
+        用户口径是"演示时状态要能自己选"。但保留必要的一致性副作用：
+
+        - 进入 RESOLVED / CLOSED：释放车辆维修状态（复用 _release_vehicle_repairing）并按现状重算风险；
+        - 进入 RESOLVED 补 resolved_at；进入 CLOSED 补 closed_at + close_reason（未给就用 FORCED_CLOSE）；
+        - 回到进行中状态：清掉 resolved_at / closed_at / close_reason，避免"不是终态却留着结束时间"；
+        - 每次写 STATUS_CHANGED 事件（detail.forced=true）与 ``exception.status_forced`` 审计。
+
+        注意：本方法不做"送达即闭环"之类的级联，订单与异常的状态可以分别直设（演示需要）。
+        """
+        case = self.get(exception_id)
+        want = str(target or "").strip().upper()
+        if want not in {member.value for member in ExceptionStatus}:
+            raise validation_error(
+                "异常状态非法",
+                fields=[{"loc": "status", "msg": f"{want} 不在 {[m.value for m in ExceptionStatus]}"}],
+            )
+        before = str(case.status)
+        if before == want:
+            return case
+
+        order = self.repos.orders.get(case.order_id)
+        if (
+            want in {str(ExceptionStatus.RESOLVED), str(ExceptionStatus.CLOSED)}
+            and self._release_vehicle_repairing(case, actor_id=actor_id) is not None
+            and order is not None
+        ):
+            eta_flow.refresh_case_impact(self.repos, case, order)
+
+        case.status = want
+        if want == str(ExceptionStatus.RESOLVED):
+            case.resolved_at = case.resolved_at or now_naive()
+        elif want == str(ExceptionStatus.CLOSED):
+            case.closed_at = case.closed_at or now_naive()
+            case.close_reason = case.close_reason or "FORCED_CLOSE"
+        else:
+            case.resolved_at = None
+            case.closed_at = None
+            case.close_reason = None
+        bump_version(case)
+        self.repos.exceptions.save(case)
+
+        add_event(
+            self.session,
+            self.repos,
+            exception_id=case.id,
+            event_type=str(ExceptionEventType.STATUS_CHANGED),
+            from_status=before,
+            to_status=want,
+            actor_type=ActorType.USER,
+            actor_id=actor_id,
+            note=note or f"演示工具直设状态：{before} → {want}",
+            detail={"forced": True, "by": "demo.set-exception-status"},
+        )
+        write_audit(
+            self.session,
+            self.repos,
+            "exception.status_forced",
+            resource_type="exception",
+            resource_id=case.id,
+            actor_id=actor_id,
+            before={"status": before},
+            after={"status": want, "note": note},
+            source=AuditSource.MANUAL,
+        )
+        return case
+
     # --- 只读 -------------------------------------------------------------
     def detail(self, exception_id: int) -> dict[str, Any]:
         case = self.get(exception_id)

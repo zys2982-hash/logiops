@@ -5,9 +5,17 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PanelCard from '@/components/PanelCard.vue'
 import { resetMockState } from '@/mocks/registry'
 import { Perm } from '@/types'
+import type { ExceptionStatus, OrderStatus } from '@/types'
+import { exceptionApi, orderApi } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useDemoStore } from '@/stores/demo'
 import { displayIsoToUtc, formatDateTime } from '@/utils/datetime'
+import {
+  EXCEPTION_STATUS_OPTIONS,
+  ORDER_STATUS_OPTIONS,
+  exceptionStatusLabel,
+  orderStatusLabel,
+} from '@/utils/format'
 
 const auth = useAuthStore()
 const demo = useDemoStore()
@@ -126,10 +134,105 @@ async function reset(): Promise<void> {
     ElMessage.success('已重置为 seed 初始态')
   } finally {
     busy.value = false
+    await loadTargets()
   }
 }
 
-onMounted(refresh)
+/* ---------------------------------------------------------------------------
+ * 状态直设（演示）：订单与异常的状态可以自己选
+ * 后端 POST /demo/actions/set-order-status | set-exception-status（跳过状态机，写审计留痕）
+ * ------------------------------------------------------------------------- */
+interface OrderOption {
+  id: number
+  order_no: string
+  status: OrderStatus
+}
+interface CaseOption {
+  id: number
+  case_no: string
+  status: ExceptionStatus
+}
+
+const orders = ref<OrderOption[]>([])
+const cases = ref<CaseOption[]>([])
+const orderPick = ref<number | null>(null)
+const orderStatusPick = ref<OrderStatus | null>(null)
+const casePick = ref<number | null>(null)
+const caseStatusPick = ref<ExceptionStatus | null>(null)
+
+async function loadTargets(): Promise<void> {
+  try {
+    const [orderPage, casePage] = await Promise.all([
+      orderApi.listOrders({ page: 1, page_size: 50, sort: '-id' }),
+      exceptionApi.listExceptions({ page: 1, page_size: 50, sort: '-id' }),
+    ])
+    orders.value = orderPage.items.map((item) => ({
+      id: item.id,
+      order_no: item.order_no,
+      status: item.status,
+    }))
+    cases.value = casePage.items.map((item) => ({
+      id: item.id,
+      case_no: item.case_no,
+      status: item.status,
+    }))
+  } catch {
+    // 未登录 / 后端不可达时保持空列表，不影响本页其它演示功能
+  }
+}
+
+async function applyOrderStatus(): Promise<void> {
+  if (!orderPick.value || !orderStatusPick.value) {
+    ElMessage.warning('请先选择订单和目标状态')
+    return
+  }
+  busy.value = true
+  try {
+    const result = await demo.setOrderStatus(orderPick.value, orderStatusPick.value, '演示工具直设订单状态')
+    if (!result) {
+      logAction(`订单状态直设失败：${demo.lastError}`)
+      ElMessage.error(`订单状态直设失败：${demo.lastError}`)
+      return
+    }
+    logAction(
+      `订单 ${result.order_no}：${result.previous_status} → ${result.status}`,
+      'POST /demo/actions/set-order-status',
+    )
+    ElMessage.success(`订单已直设为 ${orderStatusLabel(result.status as OrderStatus)}`)
+    await loadTargets()
+  } finally {
+    busy.value = false
+  }
+}
+
+async function applyCaseStatus(): Promise<void> {
+  if (!casePick.value || !caseStatusPick.value) {
+    ElMessage.warning('请先选择异常单和目标状态')
+    return
+  }
+  busy.value = true
+  try {
+    const result = await demo.setExceptionStatus(casePick.value, caseStatusPick.value, '演示工具直设异常状态')
+    if (!result) {
+      logAction(`异常状态直设失败：${demo.lastError}`)
+      ElMessage.error(`异常状态直设失败：${demo.lastError}`)
+      return
+    }
+    logAction(
+      `异常 ${result.case_no}：${result.previous_status} → ${result.status}`,
+      'POST /demo/actions/set-exception-status',
+    )
+    ElMessage.success(`异常已直设为 ${exceptionStatusLabel(result.status as ExceptionStatus)}`)
+    await loadTargets()
+  } finally {
+    busy.value = false
+  }
+}
+
+onMounted(async () => {
+  await refresh()
+  await loadTargets()
+})
 </script>
 
 <template>
@@ -243,6 +346,83 @@ onMounted(refresh)
         </PanelCard>
       </el-col>
     </el-row>
+
+    <el-row :gutter="12" class="u-mt-12">
+      <el-col :md="24">
+        <PanelCard title="状态直设（订单 / 异常的状态都可以自己选）" icon="Switch">
+          <template #actions>
+            <el-tag v-if="!canControl" size="small" effect="plain">当前角色无 demo.control</el-tag>
+            <el-tag v-else size="small" type="success" effect="plain">可控制</el-tag>
+          </template>
+
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            class="u-mb-12"
+            title="演示专用：直接设定状态（跳过状态机），但一切留痕"
+            description="订单：设定 IN_TRANSIT / DELIVERED 会补 dispatched_at / delivered_at，回到未送达会清 delivered_at；异常：进入已解决 / 已关闭会释放车辆维修状态并补结束时间，回到进行中会清掉结束时间。每次都会写审计（order.status_forced / exception.status_forced）和状态事件，演示后可在审计页查到。"
+          />
+
+          <el-form label-width="130px" :disabled="!canControl">
+            <el-form-item label="订单 → 目标状态">
+              <div class="status-row">
+                <el-select v-model="orderPick" filterable placeholder="选择订单" class="status-select">
+                  <el-option
+                    v-for="order in orders"
+                    :key="order.id"
+                    :label="`${order.order_no}（${orderStatusLabel(order.status)}）`"
+                    :value="order.id"
+                  />
+                </el-select>
+                <el-select v-model="orderStatusPick" placeholder="目标状态" style="width: 160px">
+                  <el-option
+                    v-for="option in ORDER_STATUS_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <el-button type="primary" :loading="busy" :disabled="!canControl" @click="applyOrderStatus">
+                  应用
+                </el-button>
+              </div>
+            </el-form-item>
+
+            <el-form-item label="异常 → 目标状态">
+              <div class="status-row">
+                <el-select v-model="casePick" filterable placeholder="选择异常单" class="status-select">
+                  <el-option
+                    v-for="item in cases"
+                    :key="item.id"
+                    :label="`${item.case_no}（${exceptionStatusLabel(item.status)}）`"
+                    :value="item.id"
+                  />
+                </el-select>
+                <el-select v-model="caseStatusPick" placeholder="目标状态" style="width: 160px">
+                  <el-option
+                    v-for="option in EXCEPTION_STATUS_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+                <el-button type="primary" :loading="busy" :disabled="!canControl" @click="applyCaseStatus">
+                  应用
+                </el-button>
+              </div>
+            </el-form-item>
+
+            <el-form-item>
+              <el-button text type="primary" @click="loadTargets">刷新订单 / 异常列表</el-button>
+              <span class="u-text-muted u-ml-8">
+                列表取最新 50 条；演示中改完状态可回到订单页 / 异常中心确认
+              </span>
+            </el-form-item>
+          </el-form>
+        </PanelCard>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
@@ -256,6 +436,18 @@ onMounted(refresh)
 
 .jump-row :deep(.el-date-editor) {
   flex: 1;
+}
+
+/* 状态直设：下拉与"应用"同一行，窄屏自动换行 */
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-select {
+  width: 300px;
 }
 
 .action-list {

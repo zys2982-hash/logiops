@@ -54,3 +54,40 @@ export interface DemoClockModeResult {
 export function demoSetClockMode(clockMode: 'system' | 'replay'): Promise<DemoClockModeResult> {
   return post<DemoClockModeResult>('/demo/actions/set-clock-mode', { clock_mode: clockMode })
 }
+
+/** 演示：直接设定订单 / 异常状态（跳过状态机，后端写审计留痕） */
+export interface DemoStatusResult {
+  ok: boolean
+  order_id?: number
+  order_no?: string
+  exception_id?: number
+  case_no?: string
+  previous_status?: string
+  status: string
+  forced?: boolean
+  note?: string | null
+}
+
+export function demoSetOrderStatus(
+  orderId: number,
+  status: string,
+  note?: string,
+): Promise<DemoStatusResult> {
+  return post<DemoStatusResult>('/demo/actions/set-order-status', {
+    order_id: orderId,
+    status,
+    note,
+  })
+}
+
+export function demoSetExceptionStatus(
+  exceptionId: number,
+  status: string,
+  note?: string,
+): Promise<DemoStatusResult> {
+  return post<DemoStatusResult>('/demo/actions/set-exception-status', {
+    exception_id: exceptionId,
+    status,
+    note,
+  })
+}

@@ -146,6 +146,81 @@ def demo_set_clock_mode(ctx: ContextDep, payload: SetClockModeRequest) -> dict:
     }
 
 
+class SetOrderStatusRequest(BaseModel):
+    order_id: int = Field(ge=1, description="订单 id")
+    status: str = Field(
+        min_length=4,
+        max_length=16,
+        description="目标状态：CREATED / DISPATCHED / IN_TRANSIT / DELIVERED / CLOSED / CANCELLED",
+    )
+    note: str | None = Field(default=None, max_length=255, description="留痕说明（写进审计）")
+
+
+class SetExceptionStatusRequest(BaseModel):
+    exception_id: int = Field(ge=1, description="异常单 id")
+    status: str = Field(
+        min_length=4,
+        max_length=16,
+        description="目标状态：DETECTED / CONFIRMING / ANALYZING / PROCESSING / RESOLVED / CLOSED",
+    )
+    note: str | None = Field(default=None, max_length=255, description="留痕说明（写进事件与审计）")
+
+
+@router.post(
+    "/actions/set-order-status",
+    summary="演示：直接设定订单状态（跳过状态机，写审计；用户口径「状态要能自己选」）",
+)
+def demo_set_order_status(ctx: ContextDep, payload: SetOrderStatusRequest) -> dict:
+    """演示/管理用途：把订单状态直接设成任意目标状态。
+
+    不做状态机合法性拦截（允许回退），但字段自洽（补/清 dispatched_at、delivered_at）并写
+    ``order.status_forced`` 审计。不级联改异常单状态 —— 订单与异常可以分别直设。
+    """
+    from app.services.orders import OrderService
+
+    before_status = str(ctx.repos.orders.get_or_404(payload.order_id, "订单不存在").status)
+    order = OrderService(ctx.repos).force_status(
+        payload.order_id, payload.status, note=payload.note, actor_id=ctx.user.id
+    )
+    return {
+        "ok": True,
+        "order_id": order.id,
+        "order_no": order.order_no,
+        "previous_status": before_status,
+        "status": str(order.status),
+        "forced": True,
+        "note": payload.note,
+    }
+
+
+@router.post(
+    "/actions/set-exception-status",
+    summary="演示：直接设定异常状态（跳过状态机，写事件 + 审计）",
+)
+def demo_set_exception_status(ctx: ContextDep, payload: SetExceptionStatusRequest) -> dict:
+    """演示/管理用途：把异常状态直接设成任意目标状态。
+
+    进入 RESOLVED/CLOSED 会释放车辆维修状态并补结束时间；回到进行中状态会清掉结束时间；
+    每次写一条 STATUS_CHANGED 事件（detail.forced=true）与 ``exception.status_forced`` 审计。
+    """
+    from app.services.exceptions import ExceptionService
+
+    service = ExceptionService(ctx.repos)
+    before_status = str(service.get(payload.exception_id).status)
+    case = service.force_status(
+        payload.exception_id, payload.status, note=payload.note, actor_id=ctx.user.id
+    )
+    return {
+        "ok": True,
+        "exception_id": case.id,
+        "case_no": case.case_no,
+        "previous_status": before_status,
+        "status": str(case.status),
+        "forced": True,
+        "note": payload.note,
+    }
+
+
 @router.post("/actions/set-ai-mode", summary="切换 AI 模式（回放样本 / 真实大模型），立即生效")
 def demo_set_ai_mode(ctx: ContextDep, payload: SetAiModeRequest) -> dict:
     """运行时切换 AI 模式，不需要重启后端。

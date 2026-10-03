@@ -7,6 +7,7 @@ import { computed, ref } from 'vue'
 
 import { demoApi } from '@/api'
 import { ApiError } from '@/api/request'
+import type { DemoStatusResult } from '@/api/demo'
 import { demoState as fixtureDemoState } from '@/mocks/fixtures'
 import { formatDateTime } from '@/utils/datetime'
 import type { DemoState } from '@/types'
@@ -192,6 +193,50 @@ export const useDemoStore = defineStore('demo', () => {
     }
   }
 
+  /** 演示：直接设定订单状态（跳过状态机；后端写 order.status_forced 审计） */
+  async function setOrderStatus(
+    orderId: number,
+    status: string,
+    note?: string,
+  ): Promise<DemoStatusResult | null> {
+    loading.value = true
+    try {
+      const result = await demoApi.demoSetOrderStatus(orderId, status, note)
+      lastAction.value = `订单 ${result.order_no ?? orderId}：${result.previous_status} → ${result.status}`
+      lastError.value = null
+      lastWarning.value = null
+      mocked.value = false
+      return result
+    } catch (error) {
+      lastError.value = error instanceof Error ? error.message : '订单状态直设失败'
+      return null
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /** 演示：直接设定异常状态（跳过状态机；后端写事件 + exception.status_forced 审计） */
+  async function setExceptionStatus(
+    exceptionId: number,
+    status: string,
+    note?: string,
+  ): Promise<DemoStatusResult | null> {
+    loading.value = true
+    try {
+      const result = await demoApi.demoSetExceptionStatus(exceptionId, status, note)
+      lastAction.value = `异常 ${result.case_no ?? exceptionId}：${result.previous_status} → ${result.status}`
+      lastError.value = null
+      lastWarning.value = null
+      mocked.value = false
+      return result
+    } catch (error) {
+      lastError.value = error instanceof Error ? error.message : '异常状态直设失败'
+      return null
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function reset(scenario = 'case-a'): Promise<void> {
     loading.value = true
     try {
@@ -234,6 +279,8 @@ export const useDemoStore = defineStore('demo', () => {
     setClock,
     setAiMode,
     setClockMode,
+    setOrderStatus,
+    setExceptionStatus,
     reset,
   }
 })

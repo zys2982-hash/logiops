@@ -597,6 +597,82 @@ class OrderService:
                 )
         return order
 
+    def force_status(
+        self,
+        order_id: int,
+        target: str,
+        *,
+        note: str | None = None,
+        actor_id: int | None = None,
+    ) -> Order:
+        """演示/管理用途：**直接设定**订单状态，跳过状态机（仍写审计，可追溯）。
+
+        用户口径："演示时订单状态要能自己选"。与 mark_delivered / close_order 的区别是不做合法性
+        拦截（允许 DELIVERED → IN_TRANSIT 这类回退），但保证字段自洽：
+
+        - 进入 IN_TRANSIT / DELIVERED 且此前未派车：补 dispatched_at；
+        - 进入 DELIVERED：补 delivered_at，并把 current_eta_at 锁到送达时刻（与 mark_delivered 同口径）；
+        - 回到未送达状态（CREATED / DISPATCHED / IN_TRANSIT）：清 delivered_at；
+        - 进入 DELIVERED / CLOSED：车辆仍在途则释放为 IDLE、司机置 AVAILABLE（与 mark_delivered 一致）；
+        - 写 ``order.status_forced`` 审计，note 一并留痕。
+
+        注意：不级联改异常单状态（订单与异常可分别直设，演示需要）。
+        """
+        order = self.get(order_id)
+        want = str(target or "").strip().upper()
+        if want not in {member.value for member in OrderStatus}:
+            raise validation_error(
+                "订单状态非法",
+                fields=[{"loc": "status", "msg": f"{want} 不在 {[m.value for m in OrderStatus]}"}],
+            )
+        before = self._snapshot(order)
+        if str(order.status) == want:
+            return order
+
+        moment = now_naive()
+        if want in {str(OrderStatus.IN_TRANSIT), str(OrderStatus.DELIVERED)} and order.dispatched_at is None:
+            order.dispatched_at = moment
+        if want == str(OrderStatus.DELIVERED):
+            order.delivered_at = order.delivered_at or moment
+            order.current_eta_at = order.delivered_at
+        elif want in {
+            str(OrderStatus.CREATED),
+            str(OrderStatus.DISPATCHED),
+            str(OrderStatus.IN_TRANSIT),
+        }:
+            order.delivered_at = None
+        order.status = want
+        bump_version(order)
+        self.repos.orders.save(order)
+
+        if want in {str(OrderStatus.DELIVERED), str(OrderStatus.CLOSED)}:
+            if order.vehicle_id:
+                vehicle = self.repos.vehicles.get(order.vehicle_id)
+                if vehicle is not None and str(vehicle.status) == str(VehicleStatus.IN_TRANSIT):
+                    vehicle.status = str(VehicleStatus.IDLE)
+                    bump_version(vehicle)
+                    self.repos.vehicles.save(vehicle)
+            if order.driver_id:
+                driver = self.repos.drivers.get(order.driver_id)
+                if driver is not None and str(driver.status) != str(DriverStatus.AVAILABLE):
+                    driver.status = str(DriverStatus.AVAILABLE)
+                    bump_version(driver)
+                    self.repos.drivers.save(driver)
+
+        write_audit(
+            self.session,
+            self.repos,
+            "order.status_forced",
+            resource_type="order",
+            resource_id=order.id,
+            actor_type=ActorType.SYSTEM if actor_id is None else ActorType.USER,
+            actor_id=actor_id,
+            before=before,
+            after={**self._snapshot(order), "note": note},
+            source=AuditSource.SYSTEM if actor_id is None else AuditSource.MANUAL,
+        )
+        return order
+
     def close_order(
         self,
         order_id: int,
