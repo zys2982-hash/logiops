@@ -167,9 +167,19 @@ defineExpose({ loadExisting, isPolling, analysisId })
       <el-button size="small" class="u-mt-8" @click="handleRetry">重试</el-button>
     </el-alert>
 
+    <el-alert
+      v-if="!demo.aiEnabled"
+      type="info"
+      :closable="false"
+      show-icon
+      class="u-mb-12"
+      title="AI 已停用（待重构）"
+      description="当前关闭了全部 AI 逻辑：不调用大模型、不产出建议。异常处理、审批、人工延误判定等功能不受影响。"
+    />
+
     <div v-if="!status" class="analyze-hint">
       <el-empty description="尚未触发 AI 分析" :image-size="60">
-        <el-button v-if="canAnalyze" type="primary" :loading="starting" @click="handleAnalyze">
+        <el-button v-if="canAnalyze && demo.aiEnabled" type="primary" :loading="starting" @click="handleAnalyze">
           {{ props.exception.status === 'PROCESSING' ? '重新分析此异常' : 'AI 分析此异常' }}
         </el-button>
         <span v-else class="u-text-muted">{{ blockReason || '当前状态不可发起 AI 分析' }}</span>

@@ -64,6 +64,7 @@ def demo_state(ctx: ContextDep) -> dict:
         "now_utc": now_utc().isoformat(),
         "clock_mode": settings.clock_mode,
         "ai_mode": settings.ai_mode,
+        "ai_enabled": settings.ai_enabled,
         "workspace_id": ctx.workspace_id,
         "seed_available": _seed_module() is not None,
     }

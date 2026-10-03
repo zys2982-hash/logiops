@@ -32,6 +32,10 @@ export const useDemoStore = defineStore('demo', () => {
   const aiMode = computed(() => state.value.ai_mode ?? 'replay')
   const clockMode = computed(() => state.value.clock_mode ?? 'replay')
   const isReplay = computed(() => aiMode.value === 'replay')
+  /** AI 总开关（默认停用）：停用时面板显示「已停用」并隐藏分析按钮 */
+  const aiEnabled = computed(
+    () => (state.value as unknown as { ai_enabled?: boolean }).ai_enabled !== false,
+  )
   const businessNowUtc = computed(() => state.value.now_utc)
   const businessTimeText = computed(() => formatDateTime(state.value.now_utc, 'YYYY-MM-DD HH:mm'))
   const baseDateText = computed(() => formatDateTime(state.value.base_date, 'YYYY-MM-DD'))
@@ -186,6 +190,7 @@ export const useDemoStore = defineStore('demo', () => {
     lastWarning,
     mocked,
     aiMode,
+    aiEnabled,
     clockMode,
     isReplay,
     businessNowUtc,
