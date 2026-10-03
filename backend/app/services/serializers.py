@@ -12,7 +12,7 @@ from app.models.ai import AiAnalysis, AiAnalysisStep
 from app.models.exception import ExceptionCase
 from app.models.transport import Order, TrackingEvent
 from app.repositories import Repos
-from app.services import read_models
+from app.services import eta_flow, read_models
 
 
 def order_out(repos: Repos, order: Order, *, full: bool = False) -> dict[str, Any]:
@@ -55,6 +55,8 @@ def order_out(repos: Repos, order: Order, *, full: bool = False) -> dict[str, An
 
 def exception_brief(repos: Repos, case: ExceptionCase) -> dict[str, Any]:
     order = case.order or repos.orders.get(case.order_id)
+    # 读取时自愈：车辆故障因子按订单车辆现状对齐（未结束的异常；已结束的保持历史判定）
+    eta_flow.sync_case_vehicle_factor(repos, case, order)
     root_cause = {"code": case.root_cause_code, "note": case.root_cause_note}
     return {
         "id": case.id,

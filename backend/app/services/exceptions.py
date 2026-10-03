@@ -1475,9 +1475,11 @@ class ExceptionService:
     # --- 只读 -------------------------------------------------------------
     def detail(self, exception_id: int) -> dict[str, Any]:
         case = self.get(exception_id)
+        order = self.repos.orders.get(case.order_id)
+        # 读取时自愈：与列表同一入口（serializers.exception_brief），保证详情页也显示"现状"
+        eta_flow.sync_case_vehicle_factor(self.repos, case, order)
         facts = read_models.exception_facts(self.repos, case.id)
         latest_analysis = self.repos.analyses.latest_for_case(case.id)
-        order = self.repos.orders.get(case.order_id)
 
         detail = {
             "id": case.id,

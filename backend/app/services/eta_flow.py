@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.config import get_settings
-from app.models.enums import OrderStatus, VehicleStatus
+from app.models.enums import ExceptionStatus, ExceptionType, OrderStatus, VehicleStatus
 from app.models.exception import ExceptionCase
 from app.models.transport import Order
 from app.repositories import Repos
@@ -211,6 +211,63 @@ def vehicle_is_repairing(repos: Repos, vehicle_id: int | None) -> bool:
     return vehicle is not None and str(vehicle.status) == str(VehicleStatus.REPAIRING)
 
 
+VEHICLE_BREAKDOWN_FACTOR = "VEHICLE_BREAKDOWN"
+# 已结束的异常不做读取时自愈：RESOLVED / CLOSED 是"历史判定"，卡片按当时的口径存档
+# （070a8f4：已结束的卡片不再声称"当前风险"）。与 services.exceptions 的
+# VEHICLE_HOLDING_STATUSES 同口径（那边判断"车还占着维修状态"）。
+ENDED_EXCEPTION_STATUSES: frozenset[str] = frozenset(
+    {str(ExceptionStatus.RESOLVED), str(ExceptionStatus.CLOSED)}
+)
+
+
+def sync_case_vehicle_factor(repos: Repos, case: ExceptionCase, order: Order | None = None) -> bool:
+    """读取时自愈：把「车辆故障」因子对齐到订单车辆的**现状**（用户口径：卡片显示当前风险）。
+
+    为什么不挂在写入侧：车辆状态有 5+ 个写入口（派车 / 维修 / 送达 / 异常驱动 / 消息解析），
+    逐个挂钩容易漏；而异常列表与详情都要经过这里，一处即可保证"界面任何地方看到的都是现状"。
+    实测口径：人工把车辆改成「维修中」→ 卡片出现「车辆故障」；改回空闲 → 因子消失。
+
+    只做三件克制的事：
+    1. 仅对**未结束**的异常生效（已结束的异常保持历史判定，见 ENDED_EXCEPTION_STATUSES）；
+    2. 仅加/减「车辆故障」这一个因子，风险分与等级由**剩下的因子权重**重算（规则口径一致）；
+    3. 不重算 SLA / ETA / impact_summary —— 机器提议阶段（DETECTED/CONFIRMING）不允许被
+       ETA 波动带着降档（tests/unit/test_closure_regression.py 的验收口径），
+       自愈只让"按现状计"的那一个因子跟随现实。
+
+    提交方式：本函数只 `save()`（flush），**不自己 commit** —— 请求级事务由
+    `app.db.session.get_db` 在请求正常结束时统一 commit（GET 里的自愈因此也能落库），
+    调用方（create / confirm / patch 等写接口）的原子性也不会被打断；
+    脱离请求上下文（脚本）时由调用方自备 session_scope。
+    """
+    if str(case.type) != str(ExceptionType.VEHICLE_BREAKDOWN):
+        return False
+    if str(case.status) in ENDED_EXCEPTION_STATUSES:
+        return False
+    if order is None:
+        order = repos.orders.get(case.order_id)
+    if order is None:
+        return False
+
+    repairing = vehicle_is_repairing(repos, order.vehicle_id)
+    factors = [factor for factor in (case.risk_factors_json or []) if isinstance(factor, dict)]
+    has_factor = any(str(factor.get("code")) == VEHICLE_BREAKDOWN_FACTOR for factor in factors)
+    if repairing == has_factor:
+        return False
+
+    if repairing:
+        factors = [*factors, risk_rules.vehicle_breakdown_factor().as_dict()]
+    else:
+        factors = [f for f in factors if str(f.get("code")) != VEHICLE_BREAKDOWN_FACTOR]
+
+    score = min(risk_rules.MAX_SCORE, sum(int(factor.get("weight") or 0) for factor in factors))
+    case.risk_factors_json = factors
+    case.risk_score = score
+    case.level = str(risk_rules.level_of(score))
+    bump_version(case)
+    repos.exceptions.save(case)
+    return True
+
+
 __all__ = [
     "arrival_reached",
     "match_sla",
@@ -220,5 +277,6 @@ __all__ = [
     "resolve_repair_recovery",
     "resolve_promised_at",
     "summary_text",
+    "sync_case_vehicle_factor",
     "vehicle_is_repairing",
 ]

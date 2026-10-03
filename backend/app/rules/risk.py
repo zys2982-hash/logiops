@@ -60,6 +60,15 @@ def level_of(score: int) -> str:
     return ExceptionLevel.CRITICAL
 
 
+def vehicle_breakdown_factor() -> RiskFactor:
+    """「车辆故障」因子（单一出处）。
+
+    读取时自愈（eta_flow.sync_case_vehicle_factor）需要按现状加/减这一个因子，
+    从这里取，保证与 evaluate_risk 里生成的 label/weight/detail 永远一致。
+    """
+    return RiskFactor("VEHICLE_BREAKDOWN", "车辆故障", 1, "车辆故障通常需要外部资源介入")
+
+
 def evaluate_risk(
     *,
     delay_minutes: int | None,
@@ -91,7 +100,7 @@ def evaluate_risk(
     # False = 车辆已恢复，不再计入（用户口径：显示当前风险等级）
     if str(exception_type) == str(ExceptionType.VEHICLE_BREAKDOWN) and vehicle_repairing is not False:
         score += 1
-        factors.append(RiskFactor("VEHICLE_BREAKDOWN", "车辆故障", 1, "车辆故障通常需要外部资源介入"))
+        factors.append(vehicle_breakdown_factor())
 
     if sla_breached:
         score += 1
