@@ -238,3 +238,32 @@ SUMMARY: 11/11 pages clean（errors=0）
 4. **`approveNotification`**：当前实现走 `PATCH /notifications/{id}` 保存确认结果，"批准"语义最终由后端的通知审批链承担；若后端新增专用接口，需同步替换。
 5. **容器化**：`frontend/Dockerfile`（多阶段 node:24-alpine → nginx:alpine，含 SPA history 回退与 `/api` 反代到 `backend:8000`）已提供，但本机未安装 Docker，**未实际构建验证**；使用前请确认 `.npmrc` 的 `allowBuilds` 会随构建上下文一起拷进镜像（Dockerfile 已 `COPY package.json pnpm-lock.yaml* .npmrc* ./`）。
 
+### 8.3 开发排障：改了 `.vue` 但界面没变 / 点了没反应
+
+本机已实测踩到 **3 次**：Vite dev server 返回**陈旧编译产物**（源码已改，浏览器拿到的模块还是旧模板）。
+
+典型症状：**按钮点了没反应**。实测那一例是——模块里有「新建订单」按钮和 `openCreate`，
+但**没有弹窗**（`grep dialog` 命中 0 处），所以点击只把 `createVisible` 置 true，
+界面自然什么也不发生。**只有重启 dev server 才能恢复**（`Ctrl+Shift+R` 也不够，因为服务端产物本身就是旧的）。
+
+判断方法（不用看浏览器，直接问服务端要模块）：
+
+```powershell
+# 把 OrderListView.vue 换成你刚改的文件，检查新加的标识串是否出现在产物里
+(Invoke-WebRequest 'http://127.0.0.1:5173/src/views/OrderListView.vue').Content -match '新建运输订单'
+# False → 产物陈旧：重启 dev server（见下）
+```
+
+处置：
+
+```powershell
+# 1) 结束占用 5173 的进程（taskkill /F /PID <pid>，pid 见 netstat -ano | findstr :5173）
+# 2) 清依赖预构建缓存并重启
+Remove-Item node_modules\.vite -Recurse -Force
+corepack pnpm dev --host 127.0.0.1 --port 5173
+```
+
+> 推测原因：工具/编辑器以**原子替换（写临时文件再 rename）**方式保存 `.vue`，Windows 上 watcher 偶尔丢事件，
+> 于是该文件的转换结果一直是旧的。所以**每次改前端后请按上面的方法核一次产物**，不要只依赖热更新。
+
+
