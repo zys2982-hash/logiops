@@ -13,7 +13,9 @@ import type { AiAnalysis, AnalysisSummary } from '@/types'
 type AnalysisSummaryLike = AiAnalysis | AnalysisSummary
 
 const POLL_INTERVAL_MS = 1500
-const TIMEOUT_MS = 90_000
+// 后端 agent 总超时 90s，但单次模型调用最长 60s 且失败会退避重试——
+// 前端等待窗口留足余量（3 分钟），避免"界面已超时、后端其实还在跑"的错觉。
+const TIMEOUT_MS = 180_000
 
 export function useAiAnalysis() {
   const analysis = ref<AiAnalysis | null>(null)

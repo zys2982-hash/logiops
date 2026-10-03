@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 
 import EvidenceList from './EvidenceList.vue'
 import PanelCard from './PanelCard.vue'
 import { useAiAnalysis } from '@/composables/useAiAnalysis'
+import { useDemoStore } from '@/stores/demo'
 import { formatDateTime, formatDelay } from '@/utils/datetime'
 import { analysisStatusLabel, analysisStatusType, formatDuration, toolNameLabel } from '@/utils/format'
 import type { AiAnalysis, AiAnalysisStep, AnalysisSummary, ExceptionDetail } from '@/types'
@@ -30,11 +31,37 @@ const {
   loadExisting: loadExistingFn,
 } = useAiAnalysis()
 
-/** 后端有界循环上限 8 步（§11.3），步骤条数按实际返回显示 */
-const STEP_LIMIT = 8
+/** 后端有界循环上限（§11.3：14 步 = 决策 LLM + 最多 7 个只读工具 + 最终输出 + 重试余量） */
+const STEP_LIMIT = 14
 
 const steps = computed<AiAnalysisStep[]>(() => analysis.value?.steps ?? [])
 const output = computed(() => analysis.value?.output ?? null)
+
+/** 等待反馈：跑起来以后显示"已用 N 秒"，避免只看到一句"等待后端返回步骤…"干等 */
+const demo = useDemoStore()
+const elapsedSeconds = ref(0)
+let elapsedTimer: number | null = null
+
+watch(
+  isRunning,
+  (running) => {
+    if (elapsedTimer !== null) {
+      window.clearInterval(elapsedTimer)
+      elapsedTimer = null
+    }
+    if (running) {
+      elapsedSeconds.value = 0
+      elapsedTimer = window.setInterval(() => {
+        elapsedSeconds.value += 1
+      }, 1000)
+    }
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => {
+  if (elapsedTimer !== null) window.clearInterval(elapsedTimer)
+})
 
 const stepState = (index: number): 'ok' | 'running' | 'pending' | 'error' => {
   const step = steps.value[index]
@@ -129,8 +156,8 @@ defineExpose({ loadExisting, isPolling, analysisId })
       :closable="false"
       show-icon
       class="u-mb-12"
-      title="轮询超过 90 秒仍未完成，已停止等待"
-      description="可稍后重试，或直接人工处理（异常仍可由人工 resolve/close）"
+      title="等待超过 3 分钟仍未完成，已停止自动刷新"
+      description="分析可能仍在后台执行（真实模型偶发较慢）：可点「刷新状态」再看结果，或直接人工处理。"
     />
 
     <el-alert v-if="failedHint" type="error" :closable="false" show-icon class="u-mb-12" :title="failedHint">
@@ -174,7 +201,17 @@ defineExpose({ loadExisting, isPolling, analysisId })
         <div v-if="step.result_summary" class="u-text-muted">{{ step.result_summary }}</div>
         <div v-if="step.error" class="u-text-muted log-level-CRITICAL">{{ step.error }}</div>
       </div>
-      <div v-if="steps.length === 0" class="u-text-muted">等待后端返回步骤…</div>
+      <div v-if="steps.length === 0" class="u-text-muted waiting">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span v-if="isRunning">正在分析，已用 {{ elapsedSeconds }} 秒…</span>
+        <span v-else>等待后端返回步骤…</span>
+        <span class="u-text-muted">
+          （后端每完成一步才写一条记录，所以第一次模型调用结束前这里是空的；{{
+            demo.aiMode === 'live' ? '当前是实时模型模式，单步约 3–10 秒' : '回放样本模式通常 1 秒内完成'
+          }}）
+        </span>
+      </div>
+      <div v-else-if="isRunning" class="u-text-muted">分析进行中，已用 {{ elapsedSeconds }} 秒…</div>
 
       <el-divider />
 
@@ -261,6 +298,15 @@ defineExpose({ loadExisting, isPolling, analysisId })
   margin: 14px 0 6px;
   font-size: 13px;
   color: #303133;
+}
+
+/* 等待后端返回步骤时的提示：图标 + 文案对齐 */
+.waiting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  line-height: 1.7;
 }
 
 .summary-text {
