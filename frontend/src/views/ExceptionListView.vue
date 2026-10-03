@@ -9,10 +9,13 @@ import { exceptionApi, orderApi } from '@/api'
 import { Perm } from '@/types'
 import type { ExceptionLevel, ExceptionListItem, ExceptionStatus, ExceptionType, OrderBrief, Page } from '@/types'
 import { useAuthStore } from '@/stores/auth'
+import { useDemoStore } from '@/stores/demo'
+import { businessNowText, displayIsoToUtc } from '@/utils/datetime'
 import { EXCEPTION_STATUS_OPTIONS, LEVEL_OPTIONS } from '@/utils/format'
 
 const router = useRouter()
 const auth = useAuthStore()
+const demo = useDemoStore()
 
 const query = reactive({
   q: '',
@@ -49,7 +52,7 @@ const createForm = reactive({
   order_id: null as number | null,
   type: 'VEHICLE_BREAKDOWN' as ExceptionType,
   level: 'MEDIUM' as ExceptionLevel,
-  occurred_at: new Date().toISOString().slice(0, 16),
+  occurred_at: '',
   note: '',
 })
 
@@ -104,6 +107,9 @@ function onSizeChange(size: number): void {
 
 async function openCreate(): Promise<void> {
   createVisible.value = true
+  // 发生时间默认取**业务时间**（真实时间或演示时钟），不要用电脑时间
+  if (!demo.businessNowUtc) await demo.refresh()
+  createForm.occurred_at = businessNowText(demo.businessNowUtc)
   if (orderOptions.value.length === 0) {
     try {
       const page = await orderApi.listOrders({ page: 1, page_size: 50 })
@@ -125,11 +131,17 @@ async function submitCreate(): Promise<void> {
   }
   creating.value = true
   try {
+    const occurredAt = displayIsoToUtc(createForm.occurred_at)
+    if (!occurredAt) {
+      ElMessage.warning('请选择发生时间')
+      return
+    }
     const created = await exceptionApi.createException({
       order_id: createForm.order_id,
       type: createForm.type,
-      level: createForm.level,
-      occurred_at: new Date(createForm.occurred_at).toISOString(),
+      // 指定等级仅 ADMIN 可用（后端强制）；非 ADMIN 不传，由规则算等级
+      level: canForceClose.value ? createForm.level : undefined,
+      occurred_at: occurredAt,
       note: createForm.note.trim(),
     })
     ElMessage.success(`已创建异常 ${created.case_no}`)
@@ -252,13 +264,18 @@ onMounted(load)
             <el-option v-for="option in typeOptions" :key="option.value" :label="option.label" :value="option.value" />
           </el-select>
         </el-form-item>
-        <el-form-item label="等级">
+        <el-form-item v-if="canForceClose" label="等级">
           <el-select v-model="createForm.level" style="width: 100%">
             <el-option v-for="option in LEVEL_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="发生时间">
-          <el-date-picker v-model="createForm.occurred_at" type="datetime" style="width: 100%" />
+          <el-date-picker
+            v-model="createForm.occurred_at"
+            type="datetime"
+            value-format="YYYY-MM-DD HH:mm"
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="createForm.note" type="textarea" :rows="3" placeholder="必填：为什么手工建单" />

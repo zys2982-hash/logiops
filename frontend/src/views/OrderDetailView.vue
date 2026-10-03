@@ -22,7 +22,7 @@ import type {
 } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useDemoStore } from '@/stores/demo'
-import { formatDateTime, formatDelay } from '@/utils/datetime'
+import { businessNowText, displayIsoToUtc, formatDateTime, formatDelay } from '@/utils/datetime'
 import {
   customerLevelLabel,
   exceptionStatusLabel,
@@ -166,7 +166,8 @@ const trackForm = reactive({
   event_type: 'NOTE',
   city: '',
   address: '',
-  occurred_at: new Date().toISOString().slice(0, 16),
+  // 默认值在 onMounted 里按**业务时间**填充（syncFormsToBusinessTime），这里不放真实时间
+  occurred_at: '',
   source: 'OPERATOR',
 })
 
@@ -230,11 +231,16 @@ async function createEvent(): Promise<void> {
   }
   saving.value = true
   try {
+    const occurredAt = displayIsoToUtc(trackForm.occurred_at)
+    if (!occurredAt) {
+      ElMessage.warning('请选择发生时间')
+      return
+    }
     await orderApi.createTrackingEvent(orderId.value, {
       event_type: trackForm.event_type as TrackingEvent['event_type'],
       city: trackForm.city.trim(),
       address: trackForm.address.trim() || undefined,
-      occurred_at: new Date(trackForm.occurred_at).toISOString(),
+      occurred_at: occurredAt,
       source: trackForm.source as TrackingEvent['source'],
     })
     ElMessage.success('轨迹已写入：同步触发 ETA 重算 → 异常检测')
@@ -258,10 +264,15 @@ async function createIncident(): Promise<void> {
   }
   exceptionSaving.value = true
   try {
+    const occurredAt = displayIsoToUtc(exceptionForm.occurred_at)
+    if (!occurredAt) {
+      ElMessage.warning('请选择异常发生时间')
+      return
+    }
     await exceptionApi.createException({
       order_id: order.value.id,
       type: exceptionForm.type,
-      occurred_at: new Date(exceptionForm.occurred_at).toISOString(),
+      occurred_at: occurredAt,
       note: exceptionForm.note.trim(),
     })
     ElMessage.success('异常已录入（待确认）；可在异常详情里继续「确认 → AI 分析」')
@@ -344,9 +355,9 @@ async function archiveIncident(): Promise<void> {
   }
 }
 
-/** 两个表单的时间默认取**业务时间**（演示时钟），不要用电脑真实时间 */
+/** 两个表单的时间默认取**业务时间**（真实时间或演示时钟），不要用电脑真实时间 */
 function syncFormsToBusinessTime(): void {
-  const business = demo.businessTimeText
+  const business = businessNowText(demo.businessNowUtc)
   if (!business) return
   trackForm.occurred_at = business
   exceptionForm.occurred_at = business

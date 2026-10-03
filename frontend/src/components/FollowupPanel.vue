@@ -2,9 +2,12 @@
 import { ref } from 'vue'
 
 import PanelCard from './PanelCard.vue'
-import { formatDateTime, formatFromNow } from '@/utils/datetime'
+import { businessNow, formatDateTime, formatFromNow } from '@/utils/datetime'
 import { followupStatusLabel, followupStatusType } from '@/utils/format'
+import { useDemoStore } from '@/stores/demo'
 import type { FollowupTask } from '@/types'
+
+const demo = useDemoStore()
 
 defineProps<{
   tasks: FollowupTask[]
@@ -31,7 +34,10 @@ function submit(): void {
 }
 
 function overdue(task: FollowupTask): boolean {
-  return task.status === 'OPEN' && !!task.due_at && Date.parse(task.due_at) < Date.now()
+  // 用**业务时间**判断是否逾期（不能拿电脑时间比业务时间的 due_at，
+  // 演示时钟与真实时间不同，否则"逾期"标签会误判）
+  if (task.status !== 'OPEN' || !task.due_at) return false
+  return Date.parse(task.due_at) < businessNow(demo.businessNowUtc).valueOf()
 }
 </script>
 

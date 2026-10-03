@@ -78,12 +78,22 @@ onMounted(() => {
     <span>
       业务时间：
       <b>{{ demo.businessTimeText }}</b>
-      （Asia/Shanghai）
+      <el-tag
+        v-if="demo.clockMode === 'system'"
+        size="small"
+        type="success"
+        effect="plain"
+      >
+        真实时间
+      </el-tag>
+      <el-tooltip
+        v-else
+        placement="bottom"
+        content="演示时钟：可快进 / 跳转，用于演示自动关闭与 ETA 重算；它与真实时间不同，界面上所有业务时间都取自它。"
+      >
+        <el-tag size="small" type="warning" effect="plain">演示时钟（模拟）</el-tag>
+      </el-tooltip>
     </span>
-    <el-divider direction="vertical" />
-    <span>基准日 {{ demo.baseDateText }}</span>
-    <el-divider direction="vertical" />
-    <span>时钟偏移 {{ demo.offsetMinutes }} 分钟</span>
     <el-tag v-if="demo.mocked" size="small" type="warning" effect="plain">本地演示数据</el-tag>
     <span class="banner-actions">
       <router-link to="/demo">演示工具</router-link>
