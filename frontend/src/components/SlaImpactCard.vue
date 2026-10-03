@@ -9,10 +9,11 @@ const props = defineProps<{ exception: ExceptionDetail }>()
 
 const rows = computed(() => {
   const e = props.exception
+  // 只保留两个业务概念：承诺到达（规则算）+ 预计送达（人工给出）
+  // 「当前 ETA」已删除（docs/08：不再有程序按车速推算的 ETA）
   return [
     { label: '承诺到达', value: formatDateTime(e.promised_delivery_at) },
-    { label: '当前 ETA', value: formatDateTime(e.current_eta_at) },
-    { label: '预计到达', value: formatDateTime(e.expected_eta_at) },
+    { label: '预计送达', value: formatDateTime(e.expected_eta_at) },
   ]
 })
 
