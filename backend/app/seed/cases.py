@@ -70,7 +70,6 @@ GENERIC_BANDS: list[dict[str, Any]] = [
 GENERIC_STATUS_CYCLE: list[str] = [
     str(ExceptionStatus.DETECTED),
     str(ExceptionStatus.CONFIRMING),
-    str(ExceptionStatus.ANALYZING),
     str(ExceptionStatus.PROCESSING),
     str(ExceptionStatus.RESOLVED),
     str(ExceptionStatus.CLOSED),
@@ -78,6 +77,9 @@ GENERIC_STATUS_CYCLE: list[str] = [
     str(ExceptionStatus.PROCESSING),
     str(ExceptionStatus.CLOSED),
     str(ExceptionStatus.DETECTED),
+    # 注意：**不要**把 ANALYZING 铺成常态。它只是"分析任务正在跑"的瞬时状态，
+    # 单独铺出来会出现"显示分析中、却没有分析记录、又不能发起分析"的死胡同
+    # （真实踩到：4 条 seed 异常卡在 ANALYZING，用户点不了 AI 分析）。
 ]
 OPEN_CASE_STATUSES = {
     str(ExceptionStatus.DETECTED),
@@ -974,7 +976,7 @@ def build_generic_cases(ctx: SeedContext, count: int = GENERIC_CASE_TOTAL) -> li
 
     if not {"LOW", "MEDIUM", "HIGH", "CRITICAL"} <= levels_seen:
         raise RuntimeError(f"通用异常未覆盖全部等级：{sorted(levels_seen)}")
-    if not {str(ExceptionStatus.DETECTED), str(ExceptionStatus.ANALYZING)} <= statuses_seen:
+    if not {str(ExceptionStatus.DETECTED), str(ExceptionStatus.CONFIRMING)} <= statuses_seen:
         raise RuntimeError(f"通用异常未覆盖关键状态：{sorted(statuses_seen)}")
     return cases
 

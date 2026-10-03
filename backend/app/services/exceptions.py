@@ -370,8 +370,27 @@ class ExceptionService:
         running = self.repos.analyses.find_running(case.id)
         if running is not None:
             raise AppError(
-                ErrorCode.AI_ANALYSIS_IN_PROGRESS,                "该异常已有分析任务在执行",
+                ErrorCode.AI_ANALYSIS_IN_PROGRESS,
+                "该异常已有分析任务在执行",
                 {"analysis_id": running.id, "status": running.status},
+            )
+
+        # 状态自愈：ANALYZING 是"任务正在跑"的瞬时状态。若没有在跑的任务却停在 ANALYZING
+        # （进程被杀 / 崩溃 / 历史预置数据），先退回 CONFIRMING，否则这里就是死胡同。
+        if str(case.status) == str(ExceptionStatus.ANALYZING):
+            apply_transition(case, EXCEPTION_KIND, ExceptionStatus.CONFIRMING)
+            bump_version(case)
+            self.repos.exceptions.save(case)
+            add_event(
+                self.session,
+                self.repos,
+                exception_id=case.id,
+                event_type=str(ExceptionEventType.STATUS_CHANGED),
+                from_status=str(ExceptionStatus.ANALYZING),
+                to_status=str(ExceptionStatus.CONFIRMING),
+                actor_type=ActorType.SYSTEM,
+                actor_id=actor_id,
+                note="无在跑的分析任务，自动回退到确认中（自愈遗留状态）",
             )
 
         # 前置给出可执行的提示（比裸的状态机报错"不允许的状态流转"更容易理解）

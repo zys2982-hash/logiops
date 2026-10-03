@@ -85,8 +85,11 @@ const displayVehiclePlate = computed(
   () => exception.value?.vehicle?.plate_no ?? exception.value?.vehicle_plate ?? '—',
 )
 
-/** 只有「确认中」的异常能发起 AI 分析（后端状态机：CONFIRMING → ANALYZING） */
-const canAnalyze = computed(() => canHandle.value && exception.value?.status === 'CONFIRMING')
+/** 可发起 AI 分析：确认中，以及 ANALYZING（遗留状态由后端自动回退后继续）。
+ *  真有任务在跑时 AiPanel 会用 isRunning 自己隐藏按钮，所以这里放开是安全的。 */
+const canAnalyze = computed(
+  () => canHandle.value && ['CONFIRMING', 'ANALYZING'].includes(exception.value?.status ?? ''),
+)
 
 /** 不可分析时告诉用户"为什么、该怎么办"，避免点了才报 409 */
 const analyzeBlockReason = computed(() => {
