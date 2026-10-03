@@ -163,6 +163,7 @@ def refresh_case_impact(
 
     impact = sla_rules.evaluate(match, promised_delivery_at=promised, expected_eta_at=expected)
     risk = risk_rules.evaluate_risk(
+        vehicle_repairing=vehicle_is_repairing(repos, order.vehicle_id),
         delay_minutes=impact.delay_minutes,
         customer_level=customer.level if customer else None,
         exception_type=case.type,

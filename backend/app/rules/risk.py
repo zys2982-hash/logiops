@@ -67,6 +67,7 @@ def evaluate_risk(
     exception_type: str | None = None,
     sla_breached: bool = False,
     vip_upgrade: bool = True,
+    vehicle_repairing: bool | None = None,
 ) -> RiskResult:
     score = base_score(delay_minutes)
     factors: list[RiskFactor] = [
@@ -86,7 +87,9 @@ def evaluate_risk(
             score += 1
             factors.append(RiskFactor("CUSTOMER_VIP", "VIP 客户", 1, "VIP 客户需优先处理"))
 
-    if str(exception_type) == str(ExceptionType.VEHICLE_BREAKDOWN):
+    # 车辆故障因子按**现状**计：None = 旧行为（只看类型，兼容既有测试）；
+    # False = 车辆已恢复，不再计入（用户口径：显示当前风险等级）
+    if str(exception_type) == str(ExceptionType.VEHICLE_BREAKDOWN) and vehicle_repairing is not False:
         score += 1
         factors.append(RiskFactor("VEHICLE_BREAKDOWN", "车辆故障", 1, "车辆故障通常需要外部资源介入"))
 
