@@ -85,10 +85,11 @@ const displayVehiclePlate = computed(
   () => exception.value?.vehicle?.plate_no ?? exception.value?.vehicle_plate ?? '—',
 )
 
-/** 可发起 AI 分析：确认中，以及 ANALYZING（遗留状态由后端自动回退后继续）。
+/** 可发起 AI 分析：确认中（首次）、处理中（重新分析）、以及遗留的 ANALYZING（后端自动回退）。
  *  真有任务在跑时 AiPanel 会用 isRunning 自己隐藏按钮，所以这里放开是安全的。 */
 const canAnalyze = computed(
-  () => canHandle.value && ['CONFIRMING', 'ANALYZING'].includes(exception.value?.status ?? ''),
+  () =>
+    canHandle.value && ['CONFIRMING', 'PROCESSING', 'ANALYZING'].includes(exception.value?.status ?? ''),
 )
 
 /** 不可分析时告诉用户"为什么、该怎么办"，避免点了才报 409 */
@@ -96,7 +97,6 @@ const analyzeBlockReason = computed(() => {
   const status = exception.value?.status
   if (!canHandle.value) return '没有 exception.handle 权限，无法触发分析'
   if (status === 'DETECTED') return '异常还没确认：请先点上方「确认异常」，再发起 AI 分析'
-  if (status === 'PROCESSING') return '异常已进入「处理中」：分析结论已产出，请直接处理建议（如需重新分析请重置演示数据）'
   if (status === 'RESOLVED') return '异常已「已解决」，无需再分析'
   if (status === 'CLOSED') return '异常已关闭，不能再分析'
   return ''

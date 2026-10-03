@@ -602,6 +602,7 @@ vehicle 1─0..1 driver（vehicle.current_driver_id，固定主驾）
 | ANALYZING | AI 分析 FAILED 或超时 90s | CONFIRMING | SYSTEM | 写 `ANALYSIS_FAILED`，前端提示可重试或手工处理 |
 | PROCESSING | 订单 DELIVERED 或 新轨迹恢复且规则判定风险解除 | RESOLVED | SYSTEM | 重算 ETA 与 SLA，写 `ETA_UPDATED` + `STATUS_CHANGED` |
 | PROCESSING | 人工 `POST /exceptions/{id}/resolve`（需 note） | RESOLVED | OPERATOR+ | 同上 + 审计 |
+| PROCESSING | 人工 `POST /exceptions/{id}/analyze`（**重新分析**） | ANALYZING | OPERATOR+ | 新证据/承运商更新恢复时间/原结论存疑时重跑；写新 `ai_analysis`，完成后回到 PROCESSING |
 | RESOLVED | 订单送达后 24h 自动 或 人工 `POST /exceptions/{id}/close` | CLOSED | SYSTEM / OPERATOR+ | `close_reason=DELIVERED/MANUAL`，写 `CLOSED`；**终态不可逆** |
 | 任意非终态 | 强制归档 | CLOSED | ADMIN+ | 必须带 note，审计标记 `FORCED_CLOSE` |
 

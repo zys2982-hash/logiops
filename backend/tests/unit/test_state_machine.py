@@ -29,6 +29,7 @@ EXCEPTION_LEGAL = [
     (ExceptionStatus.ANALYZING, ExceptionStatus.CLOSED),
     (ExceptionStatus.PROCESSING, ExceptionStatus.RESOLVED),
     (ExceptionStatus.PROCESSING, ExceptionStatus.CLOSED),
+    (ExceptionStatus.PROCESSING, ExceptionStatus.ANALYZING),  # 重新分析
     (ExceptionStatus.RESOLVED, ExceptionStatus.CLOSED),
 ]
 

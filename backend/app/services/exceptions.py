@@ -394,13 +394,13 @@ class ExceptionService:
             )
 
         # 前置给出可执行的提示（比裸的状态机报错"不允许的状态流转"更容易理解）
-        if str(case.status) != str(ExceptionStatus.CONFIRMING):
+        # 可发起分析：CONFIRMING（首次分析）与 PROCESSING（重新分析）
+        if str(case.status) not in {str(ExceptionStatus.CONFIRMING), str(ExceptionStatus.PROCESSING)}:
             hint = {
                 "DETECTED": "请先点「确认异常」，再发起 AI 分析",
-                "PROCESSING": "该异常已进入处理中：分析结论已产出，请直接处理建议（如需重新分析请先重置演示数据）",
                 "RESOLVED": "该异常已解决，无需再分析",
                 "CLOSED": "该异常已关闭，不能再分析",
-            }.get(str(case.status), "只有状态为「确认中」的异常可以发起 AI 分析")
+            }.get(str(case.status), "只有「确认中」或「处理中」的异常可以发起 AI 分析")
             raise AppError(
                 ErrorCode.STATE_TRANSITION_INVALID,
                 f"当前状态（{case.status}）不能发起 AI 分析：{hint}",

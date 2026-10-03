@@ -30,7 +30,10 @@ EXCEPTION_TRANSITIONS: dict[str, set[str]] = {
     ExceptionStatus.DETECTED: {ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED},
     ExceptionStatus.CONFIRMING: {ExceptionStatus.ANALYZING, ExceptionStatus.CLOSED},
     ExceptionStatus.ANALYZING: {ExceptionStatus.PROCESSING, ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED},
-    ExceptionStatus.PROCESSING: {ExceptionStatus.RESOLVED, ExceptionStatus.CLOSED},
+    ExceptionStatus.PROCESSING: {ExceptionStatus.RESOLVED, ExceptionStatus.CLOSED, ExceptionStatus.ANALYZING},
+    # ↑ PROCESSING → ANALYZING = "重新分析"：处理中的单子允许操作者再跑一次分析
+    #   （新证据/承运商更新恢复时间/原结论存疑时很常见）；不放开的话，
+    #   任何"已进入处理中"的单子都会变成不能再分析的死胡同。
     ExceptionStatus.RESOLVED: {ExceptionStatus.CLOSED},
     ExceptionStatus.CLOSED: set(),
 }

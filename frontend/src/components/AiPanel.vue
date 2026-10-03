@@ -143,7 +143,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
     <div v-if="!status" class="analyze-hint">
       <el-empty description="尚未触发 AI 分析" :image-size="60">
         <el-button v-if="canAnalyze" type="primary" :loading="starting" @click="handleAnalyze">
-          AI 分析此异常
+          {{ props.exception.status === 'PROCESSING' ? '重新分析此异常' : 'AI 分析此异常' }}
         </el-button>
         <span v-else class="u-text-muted">{{ blockReason || '当前状态不可发起 AI 分析' }}</span>
       </el-empty>
