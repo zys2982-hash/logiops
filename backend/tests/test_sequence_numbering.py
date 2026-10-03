@@ -88,6 +88,33 @@ def test_case_no_uses_max_not_count(db_session, bootstrap):
     assert repos.exceptions.next_sequence("EX20260930") == 260
 
 
+def test_order_no_format_matches_seed_after_manual_create(db_session, bootstrap):
+    """手工建单的订单号必须与 seed 同格式（3 位序号）。
+
+    真机暴露过：`:04d` 生成 `SO202609300025`，比 seed 的 `SO20260930021` 长一位。
+    """
+    from app.seed import reset_demo_data
+    from app.services.common import next_order_no
+
+    reset_demo_data(db_session, workspace_id=bootstrap["workspace_id"], with_knowledge=False)
+    db_session.commit()
+    number = next_order_no(Repos(db_session, bootstrap["workspace_id"]), moment=DAY)
+    assert number == "SO20260930025", f"应与 seed 同格式（13 位），实际 {number!r}"
+    assert len(number) == len("SO20260930021")
+
+
+def test_case_no_format_matches_seed_after_manual_create(db_session, bootstrap):
+    """手工建异常的 case_no 也必须与 seed 同格式（3 位序号）。"""
+    from app.seed import reset_demo_data
+    from app.services.common import next_case_no
+
+    reset_demo_data(db_session, workspace_id=bootstrap["workspace_id"], with_knowledge=False)
+    db_session.commit()
+    number = next_case_no(Repos(db_session, bootstrap["workspace_id"]), moment=DAY)
+    assert number == "EX20260930004", f"应与 seed 同格式（13 位），实际 {number!r}"
+    assert len(number) == len("EX20260930001")
+
+
 def test_retry_after_failure_produces_unique_analysis_no(client, db_session, bootstrap, admin_headers):
     """失败后重试必须成功且编号唯一（不再 500）。"""
     case = _make_case(db_session, bootstrap, _make_order(db_session, bootstrap), status="CONFIRMING")

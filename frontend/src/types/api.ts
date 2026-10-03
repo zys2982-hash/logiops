@@ -340,6 +340,7 @@ export interface OrderQuery extends PageQuery {
   created_to?: string
 }
 
+/** POST /orders 只收基础信息（后端 OrderCreate）：派车与承诺时间走 PATCH，承诺时间由 SLA 规则算 */
 export interface OrderCreatePayload {
   order_no?: string
   customer_id: number
@@ -348,10 +349,6 @@ export interface OrderCreatePayload {
   cargo_desc?: string
   weight_ton?: number
   distance_km?: number
-  carrier_id?: number | null
-  vehicle_id?: number | null
-  driver_id?: number | null
-  promised_delivery_at?: string
   remark?: string
 }
 

@@ -187,21 +187,28 @@ def next_sequence_from_max(
 
 
 def next_case_no(repos: Repos, *, moment: datetime | None = None) -> str:
+    """异常单号：EX + yyyymmdd + 3 位序号（与 seed 的 `EX20260930001` 同格式）。"""
     prefix = f"EX{_day_stamp(moment)}"
-    return f"{prefix}{repos.exceptions.next_sequence(prefix):04d}"
+    return f"{prefix}{repos.exceptions.next_sequence(prefix):03d}"
 
 
 def next_analysis_no(repos: Repos, *, moment: datetime | None = None) -> str:
+    """分析编号：AI + yyyymmdd + 6 位序号（与 seed 的 `AI20260930000005` 同格式）。"""
     prefix = f"AI{_day_stamp(moment)}"
     seq = next_sequence_from_max(repos.session, AiAnalysis.analysis_no, prefix)
     return f"{prefix}{seq:06d}"
 
 
 def next_order_no(repos: Repos, *, moment: datetime | None = None) -> str:
+    """订单号：SO + yyyymmdd + 3 位序号（与 seed 的 `SO20260930021` 同格式）。
+
+    序号位宽必须与 seed 一致：`:04d` 会生成 `SO202609300025`，与 seed 的
+    `SO20260930021` 长短不一，读起来像两套编号体系（真机验证时暴露）。
+    """
     prefix = f"SO{_day_stamp(moment)}"
     extra = (Order.workspace_id == repos.workspace_id,) if repos.workspace_id is not None else ()
     seq = next_sequence_from_max(repos.session, Order.order_no, prefix, extra_conditions=extra)
-    return f"{prefix}{seq:04d}"
+    return f"{prefix}{seq:03d}"
 
 
 __all__ = [
