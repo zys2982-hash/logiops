@@ -45,7 +45,8 @@ def _resolve_test_tmp_root() -> Path:
             return root
         except OSError:
             continue
-    raise RuntimeError("找不到可写的测试临时目录（试过：%s）" % ", ".join(str(p) for p in candidates))
+    tried = ", ".join(str(path) for path in candidates)
+    raise RuntimeError(f"找不到可写的测试临时目录（试过：{tried}）")
 
 
 TEST_TMP_ROOT = _resolve_test_tmp_root()
