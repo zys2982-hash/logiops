@@ -138,7 +138,7 @@ function submit(): void {
         </el-select>
         <el-input v-model="sender" size="small" placeholder="发送人（可选）" style="width: 160px" />
         <el-button type="primary" size="small" :loading="submitting" @click="submit">录入消息</el-button>
-        <span class="u-text-muted">POST /exceptions/{id}/messages → 触发 PARSE_MESSAGE</span>
+        <span class="u-text-muted">提交后自动解析原文（类型 / 位置 / 恢复时间）</span>
       </div>
     </div>
     <div v-else class="u-text-muted">当前角色没有 exception.handle 权限，仅可查看原文与解析结果。</div>

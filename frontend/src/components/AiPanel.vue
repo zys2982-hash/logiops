@@ -135,7 +135,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
 
     <el-alert v-if="failedHint" type="error" :closable="false" show-icon class="u-mb-12" :title="failedHint">
       <div class="u-text-muted">
-        降级路径：写 ai_analysis.status=FAILED，异常状态回退 CONFIRMING，人工可继续处理。
+        未通过校验 / 模型不可用时会自动降级：写 ai_analysis.status=FAILED，异常状态回退 CONFIRMING，人工可继续处理。
       </div>
       <el-button size="small" class="u-mt-8" @click="handleRetry">重试</el-button>
     </el-alert>
@@ -148,7 +148,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
         <span v-else class="u-text-muted">{{ blockReason || '当前状态不可发起 AI 分析' }}</span>
       </el-empty>
       <div class="u-text-muted">
-        契约：POST /exceptions/{id}/analyze → 202 {analysis_id}，随后每 1.5s 轮询 GET /ai-analyses/{id}
+        分析在后台执行，页面每 1.5 秒自动刷新进度。
       </div>
     </div>
 

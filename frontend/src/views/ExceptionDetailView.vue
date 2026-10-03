@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 import AiPanel from '@/components/AiPanel.vue'
+import ApiHint from '@/components/ApiHint.vue'
 import ApprovalCard from '@/components/ApprovalCard.vue'
 import CarrierMessagePanel from '@/components/CarrierMessagePanel.vue'
 import ExceptionTimeline from '@/components/ExceptionTimeline.vue'
@@ -58,6 +59,15 @@ const canForceClose = computed(() => auth.can(Perm.EXCEPTION_FORCE_CLOSE))
 
 const pendingApprovals = computed(() => approvals.value.filter((a) => a.status === 'PENDING'))
 const decidedApprovals = computed(() => approvals.value.filter((a) => a.status !== 'PENDING'))
+
+/** 右侧流程标签页当前页（默认 AI 分析） */
+const activeTab = ref('ai')
+/** 未完成的跟进任务数（用于标签角标） */
+const openFollowupCount = computed(() => followups.value.filter((t) => t.status === 'OPEN').length)
+/** 审批接口说明：原来铺在卡片底部的"契约：…"，现在收进右上角 ⓘ 悬浮提示 */
+const approvalApiHint =
+  'POST /approvals/{id}/approve body {expected_version, final_payload}；' +
+  '批准后后端在同一事务内执行 UPDATE_ETA / CREATE_FOLLOWUP / SAVE_NOTICE / SEND_NOTICE / CLOSE_EXCEPTION'
 
 /** 实测详情不返回 assigned_to_name，用工作区成员列表映射 user_id → 姓名 */
 const assigneeName = computed(() => {
@@ -184,6 +194,12 @@ async function resolveCase(): Promise<void> {
   } finally {
     actionLoading.value = false
   }
+}
+
+/** 头部「更多」下拉：把低频操作（关闭/强制关闭）收起来，减少按钮堆叠 */
+function onHeadCommand(command: string | number | object): void {
+  if (command === 'close') void closeCase(false)
+  else if (command === 'force-close') void closeCase(true)
 }
 
 async function closeCase(forced = false): Promise<void> {
@@ -454,19 +470,21 @@ onMounted(async () => {
             >
               确认异常
             </el-button>
-            <el-button v-if="canHandle" size="small" :loading="actionLoading" @click="resolveCase">处理完成</el-button>
-            <el-button v-if="canHandle" size="small" @click="openAssign">指派</el-button>
-            <el-button v-if="canHandle" size="small" @click="closeCase(false)">关闭</el-button>
-            <el-button
-              v-if="canForceClose"
-              size="small"
-              type="danger"
-              plain
-              :loading="actionLoading"
-              @click="closeCase(true)"
-            >
-              强制关闭
+            <el-button v-if="canHandle" size="small" type="primary" plain :loading="actionLoading" @click="resolveCase">
+              处理完成
             </el-button>
+            <el-button v-if="canHandle" size="small" @click="openAssign">指派</el-button>
+            <el-dropdown v-if="canHandle || canForceClose" trigger="click" @command="onHeadCommand">
+              <el-button size="small" text>
+                更多<el-icon><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="canHandle" command="close">关闭异常</el-dropdown-item>
+                  <el-dropdown-item v-if="canForceClose" command="force-close" divided>强制关闭（ADMIN）</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-button size="small" text @click="refreshAfterWrite">刷新</el-button>
           </div>
         </div>
@@ -476,9 +494,9 @@ onMounted(async () => {
         </div>
       </el-card>
 
-      <!-- 三列布局（§12.2）：左=事实 中=AI 右=协同 -->
+      <!-- 两列布局：左=事实，右=流程（用标签页收纳，避免十几张卡片堆叠） -->
       <div class="detail-grid">
-        <!-- 左列 -->
+        <!-- 左列：事实 -->
         <div class="detail-col">
           <PanelCard title="订单信息" :subtitle="exception.case_no" icon="Van">
             <el-descriptions :column="2" size="small" border>
@@ -510,10 +528,10 @@ onMounted(async () => {
 
           <SlaImpactCard :exception="exception" />
 
-          <PanelCard title="风险等级 + 为什么" subtitle="risk_factors 逐项说明（§8.6）" icon="WarnTriangleFilled">
+          <PanelCard title="风险等级" subtitle="规则逐项加权，LLM 无权修改" icon="WarnTriangleFilled">
             <div class="risk-head u-mb-8">
               <RiskTag :level="exception.level" :score="exception.risk_score" show-score size="large" />
-              <span class="u-text-muted">等级由规则计算，LLM 无权修改</span>
+              <span class="u-text-muted">0→低 / 1-2→中 / 3→高 / 4→严重（封顶）</span>
             </div>
             <el-table
               :data="exception.risk_factors ?? []"
@@ -522,103 +540,124 @@ onMounted(async () => {
               empty-text="无风险因子明细"
             >
               <el-table-column prop="label" label="因子" min-width="120" />
-              <el-table-column prop="code" label="code" width="150" />
               <el-table-column prop="weight" label="权重" width="60" align="center" />
               <el-table-column prop="detail" label="说明" min-width="180" />
             </el-table>
-            <div class="u-text-muted u-mt-8">
-              risk_score={{ exception.risk_score ?? '—' }}（0→LOW，1-2→MEDIUM，3→HIGH，4→CRITICAL，封顶）
-            </div>
           </PanelCard>
         </div>
 
-        <!-- 中列：AI 面板 + 审批单 -->
+        <!-- 右列：流程（AI / 审批 / 协同 / 记录） -->
         <div class="detail-col">
-          <AiPanel
-            ref="aiPanel"
-            :exception="exception"
-            :can-analyze="canAnalyze"
-            :block-reason="analyzeBlockReason"
-            @started="onAnalysisStarted"
-          />
-
-          <PanelCard
-            title="审批单（HITL）"
-            :subtitle="`${pendingApprovals.length} 张待决策 / 共 ${approvals.length} 张`"
-            icon="Stamp"
-          >
-            <template #actions>
-              <el-button
-                v-if="canDecide && pendingApprovals.length > 0"
-                size="small"
-                type="primary"
-                @click="batchApprove"
-              >
-                批量批准（{{ pendingApprovals.length }}）
-              </el-button>
-            </template>
-
-            <el-empty v-if="approvals.length === 0" description="暂无审批单（AI 建议会转成审批单）" :image-size="50" />
-
-            <ApprovalCard
-              v-for="approval in pendingApprovals"
-              :key="approval.id"
-              :approval="approval"
-              :can-decide="canDecide"
-              @approve="onApprove"
-              @reject="onReject"
-              @execute="onExecute"
-            />
-
-            <template v-if="decidedApprovals.length > 0">
-              <el-divider content-position="left">已决策</el-divider>
-              <ApprovalCard
-                v-for="approval in decidedApprovals"
-                :key="approval.id"
-                :approval="approval"
-                :can-decide="canDecide"
-                @approve="onApprove"
-                @reject="onReject"
-                @execute="onExecute"
+          <el-tabs v-model="activeTab" class="detail-tabs">
+            <el-tab-pane name="ai">
+              <template #label>
+                <span>AI 分析</span>
+              </template>
+              <AiPanel
+                ref="aiPanel"
+                :exception="exception"
+                :can-analyze="canAnalyze"
+                :block-reason="analyzeBlockReason"
+                @started="onAnalysisStarted"
               />
-            </template>
+            </el-tab-pane>
 
-            <div class="u-text-muted u-mt-8">
-              契约：POST /approvals/{id}/approve body {expected_version, final_payload}；批准后后端在事务内执行
-              UPDATE_ETA / CREATE_FOLLOWUP / SAVE_NOTICE / SEND_NOTICE / CLOSE_EXCEPTION。
-            </div>
-          </PanelCard>
-        </div>
+            <el-tab-pane name="approvals">
+              <template #label>
+                <span>审批单<el-badge v-if="pendingApprovals.length" :value="pendingApprovals.length" class="tab-count" /></span>
+              </template>
+              <PanelCard
+                title="审批单（HITL）"
+                :subtitle="`${pendingApprovals.length} 张待决策 / 共 ${approvals.length} 张`"
+                icon="Stamp"
+              >
+                <template #actions>
+                  <ApiHint :text="approvalApiHint" />
+                  <el-button
+                    v-if="canDecide && pendingApprovals.length > 0"
+                    size="small"
+                    type="primary"
+                    @click="batchApprove"
+                  >
+                    批量批准（{{ pendingApprovals.length }}）
+                  </el-button>
+                </template>
 
-        <!-- 右列：协同 -->
-        <div class="detail-col">
-          <CarrierMessagePanel
-            v-model:draft="messageDraft"
-            v-model:channel="messageChannel"
-            v-model:sender="messageSender"
-            :messages="messages"
-            :can-write="canHandle"
-            :submitting="messageSubmitting"
-            @submit="submitMessage"
-          />
+                <el-empty v-if="approvals.length === 0" description="暂无审批单（AI 建议会转成审批单）" :image-size="50" />
 
-          <NotificationPanel
-            :notifications="notifications"
-            :can-approve="canNotify"
-            @update="updateNotification"
-            @approve="approveNotification"
-            @send="sendNotification"
-            @skip="skipNotification"
-          />
+                <ApprovalCard
+                  v-for="approval in pendingApprovals"
+                  :key="approval.id"
+                  :approval="approval"
+                  :can-decide="canDecide"
+                  @approve="onApprove"
+                  @reject="onReject"
+                  @execute="onExecute"
+                />
 
-          <FollowupPanel
-            :tasks="followups"
-            :can-write="canFollowup"
-            @create="createFollowup"
-            @done="doneFollowup"
-          />
+                <template v-if="decidedApprovals.length > 0">
+                  <el-divider content-position="left">已决策</el-divider>
+                  <ApprovalCard
+                    v-for="approval in decidedApprovals"
+                    :key="approval.id"
+                    :approval="approval"
+                    :can-decide="canDecide"
+                    @approve="onApprove"
+                    @reject="onReject"
+                    @execute="onExecute"
+                  />
+                </template>
+              </PanelCard>
+            </el-tab-pane>
 
-          <ExceptionTimeline :events="events" />
+            <el-tab-pane name="messages">
+              <template #label>
+                <span>承运商消息<el-badge v-if="messages.length" :value="messages.length" class="tab-count" /></span>
+              </template>
+              <CarrierMessagePanel
+                v-model:draft="messageDraft"
+                v-model:channel="messageChannel"
+                v-model:sender="messageSender"
+                :messages="messages"
+                :can-write="canHandle"
+                :submitting="messageSubmitting"
+                @submit="submitMessage"
+              />
+            </el-tab-pane>
+
+            <el-tab-pane name="notices">
+              <template #label>
+                <span>客户通知<el-badge v-if="notifications.length" :value="notifications.length" class="tab-count" /></span>
+              </template>
+              <NotificationPanel
+                :notifications="notifications"
+                :can-approve="canNotify"
+                @update="updateNotification"
+                @approve="approveNotification"
+                @send="sendNotification"
+                @skip="skipNotification"
+              />
+            </el-tab-pane>
+
+            <el-tab-pane name="followups">
+              <template #label>
+                <span>跟进任务<el-badge v-if="openFollowupCount" :value="openFollowupCount" class="tab-count" /></span>
+              </template>
+              <FollowupPanel
+                :tasks="followups"
+                :can-write="canFollowup"
+                @create="createFollowup"
+                @done="doneFollowup"
+              />
+            </el-tab-pane>
+
+            <el-tab-pane name="events">
+              <template #label>
+                <span>操作记录<el-badge v-if="events.length" :value="events.length" class="tab-count" /></span>
+              </template>
+              <ExceptionTimeline :events="events" />
+            </el-tab-pane>
+          </el-tabs>
         </div>
       </div>
     </template>
@@ -637,7 +676,7 @@ onMounted(async () => {
         </el-form-item>
       </el-form>
       <div class="u-text-muted">
-        PATCH /exceptions/{id} 仅改 assigned_to / remark；expected_version 必填（避免覆盖他人改动）。
+        指派结果会写入审计日志（谁在什么时候把异常指派给了谁）。
       </div>
       <template #footer>
         <el-button @click="assigneeVisible = false">取消</el-button>
