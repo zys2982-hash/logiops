@@ -98,19 +98,29 @@ def test_evidence_type_must_be_known(repos, case_a):
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda out: out.update({"summary": "长" * 301}),
         lambda out: out.update({"suggestions": []}),
-        lambda out: out.update({"open_questions": ["q"] * 6}),
         lambda out: out.update({"root_cause": {"code": "ALIEN", "note": "x"}}),
         lambda out: out.update({"extra_field": 1}),
         lambda out: out.update({"root_cause": {"code": "TRAFFIC", "note": ""}}),
     ],
 )
 def test_schema_constraints(repos, case_a, mutate):
+    """结构性错误（缺必填、枚举越界、多余字段、空串）仍然必须拦截。"""
     output, facts, evidence = _valid_t2(repos, case_a)
     mutate(output)
     with pytest.raises(GuardError):
         validate_t2(output, facts=facts, evidence=evidence)
+
+
+def test_overlong_length_is_trimmed_not_rejected(repos, case_a):
+    """超长（模型"话太多"）不再判失败，而是按 schema 上限截断并留痕（详见 test_ai_output_length_guard.py）。"""
+    output, facts, evidence = _valid_t2(repos, case_a)
+    output["summary"] = "长" * 301
+    output["open_questions"] = ["q"] * 6
+    result = validate_t2(output, facts=facts, evidence=evidence)
+    assert len(result["summary"]) <= 300
+    assert len(result["open_questions"]) == 5
+    assert result["_guard_notes"]
 
 
 def test_t1_template_output_passes(repos, case_a, base_time):
@@ -167,7 +177,6 @@ def test_t3_template_output_passes(repos, case_a):
         ("content", "订单 SO20260930021 预计 2026-11-11 08:00 到达，延误 270 分钟。", "事实之外的时间"),
         ("content", "订单 SO20260930021 预计 2026-10-01 13:30 到达，延误 90 分钟。", "延误口径"),
         ("content", "订单 SO99999999999 预计 2026-10-01 13:30 到达，延误 270 分钟。", "未授权的订单号"),
-        ("subject", "长" * 61, "subject"),
     ],
 )
 def test_t3_fact_checks_block_hallucination(repos, case_a, field, value, fragment):
@@ -177,6 +186,16 @@ def test_t3_fact_checks_block_hallucination(repos, case_a, field, value, fragmen
     with pytest.raises(GuardError) as exc:
         validate_t3(output, facts=facts)
     assert fragment in str(exc.value)
+
+
+def test_t3_overlong_subject_is_trimmed(repos, case_a):
+    """主题超长（上限 60 字）不再判失败，而是截断并留痕。"""
+    facts = _facts(repos, case_a)
+    output = build_t3_output(facts=facts, analysis={})
+    output["subject"] = "长" * 61
+    result = validate_t3(output, facts=facts)
+    assert len(result["subject"]) <= 60
+    assert result["_guard_notes"]
 
 
 def test_evidence_index_from_facts_only(repos, case_a):
