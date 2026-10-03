@@ -52,6 +52,9 @@ class ExceptionCase(
     # 人工录入的延误分钟数（新口径：人报事实，是否违约仍由规则判）；
     # 过渡期与 sla_delay_minutes 并存，ETA 引擎移除后它成为延误的唯一来源
     delay_minutes: Mapped[int | None] = mapped_column(Integer)
+    # 车辆故障异常：录入时把车辆当时的状态记下来，结束异常时按它恢复
+    # （车辆状态由异常驱动，避免"维修中"卡住——真机反馈过 津A·12345 的问题）
+    vehicle_status_before: Mapped[str | None] = mapped_column(String(16))
     sla_delay_minutes: Mapped[int | None] = mapped_column(Integer)
     sla_breached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     risk_score: Mapped[int | None] = mapped_column(Integer)
