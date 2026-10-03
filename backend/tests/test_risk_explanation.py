@@ -18,12 +18,12 @@ ORDERS = "/api/v1/orders"
 EXCEPTIONS = "/api/v1/exceptions"
 
 
-def _order_with_vehicle(client, headers, bootstrap, *, admin_headers=None) -> dict:
+def _order_with_vehicle(client, headers, bootstrap, *, admin_headers=None, customer: str = "vip") -> dict:
     created = client.post(
         ORDERS,
         headers=admin_headers or headers,
         json={
-            "customer_id": bootstrap["customers"]["vip"].id,
+            "customer_id": bootstrap["customers"][customer].id,
             "origin_city": "天津",
             "dest_city": "上海",
             "distance_km": 800,
@@ -83,16 +83,16 @@ def test_factor_sources_and_signal_flow(client, db_session, bootstrap, operator_
     by_code = {factor["code"]: factor for factor in explanation["factors"]}
     assert by_code, "风险因子不能为空"
 
-    # 延误因子：必须能追溯到"人工录入"这条事实 + 规则快照
+    # 延误因子：只补"表格里没有的信息" —— 人工录入事实（不再重复"规则快照"那一行）
     delay_texts = [source["text"] for source in by_code["DELAY_BASE"]["sources"]]
     assert any("人工录入延误 300 分钟" in text for text in delay_texts), delay_texts
-    assert any(source["kind"] == "SLA_RULE" for source in by_code["DELAY_BASE"]["sources"])
+    assert not any("规则快照" in text for text in delay_texts), f"「说明」列已写延误分钟，不该再重复：{delay_texts}"
     # VIP 因子：指向客户等级
     assert by_code["CUSTOMER_VIP"]["sources"][0]["text"].startswith("客户")
     assert "VIP" in by_code["CUSTOMER_VIP"]["sources"][0]["text"]
-    # 违约因子：给出承诺 / 预计 / 允许延误的对比
+    # 违约因子：一条说清 承诺 / 预计 / 规则阈值 / 超出多少
     breach_text = " ".join(source["text"] for source in by_code["SLA_BREACH"]["sources"])
-    assert "承诺到达" in breach_text and "允许" in breach_text, breach_text
+    assert "承诺到达" in breach_text and "允许延误" in breach_text and "超出" in breach_text, breach_text
 
     kinds = {signal["kind"] for signal in explanation["signals"]}
     assert {"DETECTION", "MANUAL_DELAY", "TRACKING"} <= kinds, kinds
@@ -128,6 +128,24 @@ def test_vehicle_factor_points_to_current_vehicle_status(
     assert bootstrap["vehicle"].plate_no in vehicle_source["text"]
     assert "维修中" in vehicle_source["text"] or "REPAIRING" in vehicle_source["text"]
     assert vehicle_source["ref"]["vehicle_id"] == bootstrap["vehicle"].id
+
+
+def test_non_breached_case_keeps_rule_threshold_on_delay_factor(
+    client, db_session, bootstrap, operator_headers, admin_headers
+):
+    """未违约时没有「SLA 已违约」因子，阈值就放在「延误时长」因子下（避免两处重复同一组数字）。"""
+    order = _order_with_vehicle(
+        client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
+    )
+    case = _create_delay_case(client, operator_headers, bootstrap, order["id"], delay_minutes=25)
+
+    explanation = _explanation(client, operator_headers, case["id"])
+    by_code = {factor["code"]: factor for factor in explanation["factors"]}
+    assert "SLA_BREACH" not in by_code, "25 分钟 < 默认规则允许 30 分钟，不应有违约因子"
+
+    texts = [source["text"] for source in by_code["DELAY_BASE"]["sources"]]
+    assert any("允许延误" in text and "未超阈值" in text for text in texts), texts
+    assert not any("规则快照" in text for text in texts), texts
 
 
 def test_list_does_not_carry_explanation(client, db_session, bootstrap, operator_headers, admin_headers):

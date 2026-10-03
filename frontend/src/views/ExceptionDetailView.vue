@@ -607,7 +607,7 @@ onMounted(async () => {
                       <span>{{ source.text }}</span>
                     </div>
                   </div>
-                  <span v-else class="u-text-muted">该因子没有额外证据来源</span>
+                  <span v-else class="u-text-muted">依据就是这一行的「说明」列（没有额外来源）</span>
                 </template>
               </el-table-column>
               <el-table-column prop="label" label="因子" min-width="110" />

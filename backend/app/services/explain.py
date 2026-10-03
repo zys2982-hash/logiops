@@ -75,6 +75,8 @@ def _factor_sources(
     )
 
     if code == FACTOR_DELAY:
+        # 「说明」列已经写了"预计延误 X 分钟"，这里只补**表格里没有的信息**：
+        # 1) 人工录入的事实（与规则快照可能不同）；2) 未违约时的规则阈值（违约时由 SLA 已违约 因子承担，避免重复）
         if case.delay_minutes is not None:
             sources.append(
                 {
@@ -82,15 +84,13 @@ def _factor_sources(
                     "text": f"人工录入延误 {_minutes(case.delay_minutes)}（人工事实，非模型推测）",
                 }
             )
-        if case.sla_delay_minutes is not None:
+        if not case.sla_breached and rule_text:
             sources.append(
                 {
-                    "kind": "SLA_SNAPSHOT",
-                    "text": f"规则快照：{_delay_text(case.sla_delay_minutes)}",
+                    "kind": "SLA_RULE",
+                    "text": f"{rule_text}；本次{_delay_text(case.sla_delay_minutes)}未超阈值",
                 }
             )
-        if rule_text:
-            sources.append({"kind": "SLA_RULE", "text": rule_text})
 
     elif code in FACTOR_VIP and customer is not None:
         sources.append(
@@ -121,6 +121,7 @@ def _factor_sources(
             sources.append({"kind": "ROOT_CAUSE", "text": f"原因记录：{case.root_cause_note}"})
 
     elif code == FACTOR_BREACH:
+        # 违约依据合并成**一条**：承诺 / 预计 / 规则阈值 / 超出多少（避免与"延误时长"因子重复报同一组数字）
         promised = case.promised_delivery_at
         expected = case.expected_eta_at
         parts = []
@@ -128,12 +129,10 @@ def _factor_sources(
             parts.append(f"承诺到达 {read_models.iso(promised)}")
         if expected is not None:
             parts.append(f"预计到达 {read_models.iso(expected)}")
+        if rule_text:
+            parts.append(rule_text)
         if case.sla_delay_minutes is not None and sla.get("max_delay_minutes") is not None:
-            parts.append(
-                f"{_delay_text(case.sla_delay_minutes)} > 允许 {_minutes(sla['max_delay_minutes'])}"
-                if case.sla_delay_minutes >= 0
-                else _delay_text(case.sla_delay_minutes)
-            )
+            parts.append(f"超出 {_minutes(int(case.sla_delay_minutes) - int(sla['max_delay_minutes']))}")
         sources.append({"kind": "SLA_EVAL", "text": "；".join(parts) or "SLA 规则判定为已违约"})
 
     return sources
