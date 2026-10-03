@@ -370,9 +370,22 @@ class ExceptionService:
         running = self.repos.analyses.find_running(case.id)
         if running is not None:
             raise AppError(
-                ErrorCode.AI_ANALYSIS_IN_PROGRESS,
-                "该异常已有分析任务在执行",
+                ErrorCode.AI_ANALYSIS_IN_PROGRESS,                "该异常已有分析任务在执行",
                 {"analysis_id": running.id, "status": running.status},
+            )
+
+        # 前置给出可执行的提示（比裸的状态机报错"不允许的状态流转"更容易理解）
+        if str(case.status) != str(ExceptionStatus.CONFIRMING):
+            hint = {
+                "DETECTED": "请先点「确认异常」，再发起 AI 分析",
+                "PROCESSING": "该异常已进入处理中：分析结论已产出，请直接处理建议（如需重新分析请先重置演示数据）",
+                "RESOLVED": "该异常已解决，无需再分析",
+                "CLOSED": "该异常已关闭，不能再分析",
+            }.get(str(case.status), "只有状态为「确认中」的异常可以发起 AI 分析")
+            raise AppError(
+                ErrorCode.STATE_TRANSITION_INVALID,
+                f"当前状态（{case.status}）不能发起 AI 分析：{hint}",
+                {"from": str(case.status), "to": str(ExceptionStatus.ANALYZING)},
             )
 
         plan = apply_transition(case, EXCEPTION_KIND, ExceptionStatus.ANALYZING)

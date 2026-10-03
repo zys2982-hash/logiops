@@ -11,6 +11,8 @@ import type { AiAnalysis, AiAnalysisStep, AnalysisSummary, ExceptionDetail } fro
 const props = defineProps<{
   exception: ExceptionDetail
   canAnalyze?: boolean
+  /** 不可分析时的原因（由详情页按状态给出：未确认 / 处理中 / 已关闭 …） */
+  blockReason?: string
 }>()
 
 const emit = defineEmits<{ (e: 'started', analysisId: number): void }>()
@@ -143,7 +145,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
         <el-button v-if="canAnalyze" type="primary" :loading="starting" @click="handleAnalyze">
           AI 分析此异常
         </el-button>
-        <span v-else class="u-text-muted">没有 exception.handle 权限，无法触发分析</span>
+        <span v-else class="u-text-muted">{{ blockReason || '当前状态不可发起 AI 分析' }}</span>
       </el-empty>
       <div class="u-text-muted">
         契约：POST /exceptions/{id}/analyze → 202 {analysis_id}，随后每 1.5s 轮询 GET /ai-analyses/{id}

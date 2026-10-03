@@ -85,9 +85,19 @@ const displayVehiclePlate = computed(
   () => exception.value?.vehicle?.plate_no ?? exception.value?.vehicle_plate ?? '—',
 )
 
-const canAnalyze = computed(
-  () => canHandle.value && ['DETECTED', 'CONFIRMING', 'PROCESSING'].includes(exception.value?.status ?? ''),
-)
+/** 只有「确认中」的异常能发起 AI 分析（后端状态机：CONFIRMING → ANALYZING） */
+const canAnalyze = computed(() => canHandle.value && exception.value?.status === 'CONFIRMING')
+
+/** 不可分析时告诉用户"为什么、该怎么办"，避免点了才报 409 */
+const analyzeBlockReason = computed(() => {
+  const status = exception.value?.status
+  if (!canHandle.value) return '没有 exception.handle 权限，无法触发分析'
+  if (status === 'DETECTED') return '异常还没确认：请先点上方「确认异常」，再发起 AI 分析'
+  if (status === 'PROCESSING') return '异常已进入「处理中」：分析结论已产出，请直接处理建议（如需重新分析请重置演示数据）'
+  if (status === 'RESOLVED') return '异常已「已解决」，无需再分析'
+  if (status === 'CLOSED') return '异常已关闭，不能再分析'
+  return ''
+})
 
 async function loadAll(): Promise<void> {
   loading.value = true
@@ -521,7 +531,13 @@ onMounted(async () => {
 
         <!-- 中列：AI 面板 + 审批单 -->
         <div class="detail-col">
-          <AiPanel ref="aiPanel" :exception="exception" :can-analyze="canAnalyze" @started="onAnalysisStarted" />
+          <AiPanel
+            ref="aiPanel"
+            :exception="exception"
+            :can-analyze="canAnalyze"
+            :block-reason="analyzeBlockReason"
+            @started="onAnalysisStarted"
+          />
 
           <PanelCard
             title="审批单（HITL）"
