@@ -16,12 +16,14 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.core.config import get_settings
 from app.services import read_models
 
 logger = logging.getLogger("logiops.ai_bridge")
 
 LLM_UNAVAILABLE = "LLM_UNAVAILABLE"
 AI_OUTPUT_INVALID = "AI_OUTPUT_INVALID"
+AI_DISABLED = "AI_DISABLED"
 
 _INVALID_HINTS = ("schema", "invalid", "validation", "json", "事实", "不一致", "编造")
 
@@ -44,6 +46,14 @@ def classify_error(exc: BaseException) -> str:
 
 
 def _call(name: str, *args: Any, retry_without_last: bool = False, **kwargs: Any) -> dict[str, Any]:
+    # AI 总开关（默认关闭）：一处拦住 T1/T2/T3 全部三个任务。
+    # 关闭期间不加载 app.ai.*、不调用大模型、不产出任何建议；代码保留以便后续重建。
+    if not get_settings().ai_enabled:
+        return {
+            "ok": False,
+            "error_code": AI_DISABLED,
+            "error_message": "AI 已停用（待重构）：本次不做大模型调用，也不产出建议",
+        }
     runner = _load_runner()
     if runner is None or not hasattr(runner, name):
         return {"ok": False, "error_code": LLM_UNAVAILABLE, "error_message": f"AI 层未实现 {name}"}

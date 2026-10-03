@@ -66,6 +66,9 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 # 默认关闭 AI 分析限流（否则同一条用例里连续两次分析会被 429 挡下）；
 # 限流本身的测试见 tests/test_rate_limit.py（自行打开窗口并重置状态）。
 os.environ.setdefault("RATE_LIMIT_AI_ANALYZE_SECONDS", "0")
+# 运行时 AI 默认停用（app/core/config.py 的 ai_enabled=False）；
+# 测试里打开，以便继续覆盖 AI 层（保留代码、后续重建），停用行为见 tests/test_ai_disabled.py
+os.environ.setdefault("AI_ENABLED", "true")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

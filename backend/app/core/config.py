@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     seed_scale: str = "compact"
     # AI 分析限流窗口（秒，按"工作区+用户"计；0 = 关闭）。基线 §10 承诺 1 次/5 秒 → 429 RATE_LIMITED
     rate_limit_ai_analyze_seconds: float = 5.0
+    # AI 总开关（默认 **关闭**）：项目拥有者决定先停掉全部 AI 逻辑，后续重建。
+    # 关闭时不调用任何大模型、不产出建议；代码保留以便重建。测试经 conftest 置 true。
+    ai_enabled: bool = False
     clock_mode: str = "replay"
     ai_mode: str = "replay"
     ai_replay_dir: str = "tests/fixtures/ai"
