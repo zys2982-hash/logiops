@@ -506,9 +506,10 @@ export interface AnalyzeStartResult {
   error_message?: string | null
 }
 
+/** POST /exceptions/{id}/resolve：后端 ExceptionResolve 里 expected_version 是**必填**（乐观锁） */
 export interface ReasonPayload {
   note: string
-  expected_version?: number
+  expected_version: number
 }
 
 export interface ClosePayload {

@@ -185,9 +185,15 @@ async function resolveCase(): Promise<void> {
   }
   actionLoading.value = true
   try {
+    // resolve 的 expected_version 必填（乐观锁）；详情未加载完时不能发请求
+    const version = exception.value.version
+    if (typeof version !== 'number') {
+      ElMessage.warning('异常版本信息缺失，请刷新后重试')
+      return
+    }
     await exceptionApi.resolveException(exception.value.id, {
       note,
-      expected_version: exception.value.version,
+      expected_version: version,
     })
     ElMessage.success('状态已更新为 RESOLVED')
     await refreshAfterWrite()

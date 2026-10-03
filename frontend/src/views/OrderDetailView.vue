@@ -55,10 +55,25 @@ const canHandleException = computed(() => auth.can(Perm.EXCEPTION_HANDLE))
 
 /* ------------------------------------------------ 在途异常（录入 / 结束） */
 const demo = useDemoStore()
-const OPEN_EXCEPTION_STATUSES = new Set(['DETECTED', 'CONFIRMING', 'ANALYZING', 'PROCESSING'])
-/** 该订单当前未结束的异常（后端约束：同一订单同时只能有一个未关闭异常） */
+/**
+ * 两个口径必须分开（踩过坑）：
+ * - **后端"未关闭"**含 RESOLVED：同一订单只允许一个未关闭异常（DETECTED/CONFIRMING/ANALYZING/PROCESSING/RESOLVED）
+ *   → 决定"能不能录入新异常"，UI 必须与后端一致，否则点了必然 409
+ * - **展示口径**（用户要求）：只有 RESOLVED/CLOSED 才算"已结束"→ 时间线灰点
+ */
+const UNCLOSED_EXCEPTION_STATUSES = new Set(['DETECTED', 'CONFIRMING', 'ANALYZING', 'PROCESSING', 'RESOLVED'])
+const unclosedExceptions = computed(() =>
+  relatedExceptions.value.filter((item) => UNCLOSED_EXCEPTION_STATUSES.has(String(item.status))),
+)
+/** 还能"结束（解决）"的：非 RESOLVED/CLOSED */
 const openExceptions = computed(() =>
-  relatedExceptions.value.filter((item) => OPEN_EXCEPTION_STATUSES.has(String(item.status))),
+  relatedExceptions.value.filter(
+    (item) => !['RESOLVED', 'CLOSED'].includes(String(item.status)),
+  ),
+)
+/** 已解决但尚未归档的：只能"归档（关闭）"，关掉后该订单才能再录入新异常 */
+const resolvedExceptions = computed(() =>
+  relatedExceptions.value.filter((item) => String(item.status) === 'RESOLVED'),
 )
 
 const EXCEPTION_TYPE_OPTIONS: { value: ExceptionType; label: string }[] = [
@@ -72,6 +87,10 @@ const exceptionForm = reactive({
   note: '',
 })
 const resolveForm = reactive({
+  exception_id: null as number | null,
+  note: '',
+})
+const archiveForm = reactive({
   exception_id: null as number | null,
   note: '',
 })
@@ -262,15 +281,66 @@ async function endIncident(): Promise<void> {
     ElMessage.warning('请填写结束说明')
     return
   }
+  const target = openExceptions.value.find((item) => item.id === resolveForm.exception_id)
+  if (!target || typeof target.version !== 'number') {
+    ElMessage.warning('该异常的版本信息缺失，请刷新页面后重试')
+    return
+  }
   exceptionSaving.value = true
   try {
-    await exceptionApi.resolveException(resolveForm.exception_id, { note: resolveForm.note.trim() })
-    ElMessage.success('异常已结束（已解决）')
+    // 状态机决定合法出口：只有「处理中」能 → 已解决；其余状态（待确认/确认中/分析中）
+    // 只能 → 已关闭。两者在时间线上都算"已结束"（灰点），所以按钮文案统一叫"结束异常"。
+    const canResolve = String(target.status) === 'PROCESSING'
+    if (canResolve) {
+      await exceptionApi.resolveException(resolveForm.exception_id, {
+        note: resolveForm.note.trim(),
+        expected_version: target.version,
+      })
+      ElMessage.success('异常已结束（已解决）')
+    } else {
+      await exceptionApi.closeException(resolveForm.exception_id, {
+        reason_code: 'MANUAL',
+        note: resolveForm.note.trim(),
+        expected_version: target.version,
+      })
+      ElMessage.success(`异常已结束（由${exceptionStatusLabel(target.status)}直接归档为已关闭）`)
+    }
     resolveForm.exception_id = null
     resolveForm.note = ''
-    await load()
+  } catch {
+    // 409（状态机/版本冲突）/422 已由响应拦截器提示；这里刷新拿最新状态
   } finally {
     exceptionSaving.value = false
+    await load()
+  }
+}
+
+/** 归档（关闭）已解决的异常：CLOSED 是终态，关掉后该订单才能再录入新异常 */
+async function archiveIncident(): Promise<void> {
+  if (!archiveForm.exception_id) {
+    ElMessage.warning('请选择要归档的异常')
+    return
+  }
+  const target = resolvedExceptions.value.find((item) => item.id === archiveForm.exception_id)
+  if (!target || typeof target.version !== 'number') {
+    ElMessage.warning('该异常的版本信息缺失，请刷新页面后重试')
+    return
+  }
+  exceptionSaving.value = true
+  try {
+    await exceptionApi.closeException(archiveForm.exception_id, {
+      reason_code: 'MANUAL',
+      note: archiveForm.note.trim() || '问题已处理，归档该异常',
+      expected_version: target.version,
+    })
+    ElMessage.success('异常已归档（已关闭）')
+    archiveForm.exception_id = null
+    archiveForm.note = ''
+  } catch {
+    // 409/422 已由拦截器提示
+  } finally {
+    exceptionSaving.value = false
+    await load()
   }
 }
 
@@ -454,13 +524,13 @@ onMounted(async () => {
             <template v-if="canCreateException">
               <div class="form-section-title u-mb-8">录入异常</div>
               <el-alert
-                v-if="openExceptions.length > 0"
+                v-if="unclosedExceptions.length > 0"
                 type="warning"
                 :closable="false"
                 show-icon
                 class="u-mb-8"
-                :title="`该订单已有未结束的异常（${openExceptions[0]?.case_no}）`"
-                description="同一订单同时只能有一个未关闭异常：请先在下方「结束异常」结束它，再录入新的。"
+                :title="`该订单已有未关闭的异常（${unclosedExceptions[0]?.case_no} · ${exceptionStatusLabel(unclosedExceptions[0]?.status)}）`"
+                description="同一订单同时只能有一个未关闭异常：请先在下方「结束异常」把它解决；已解决但未归档的，再点「归档异常」关闭它，之后才能录入新的。"
               />
               <el-form label-width="80px" size="small">
                 <el-form-item label="类型">
@@ -495,7 +565,7 @@ onMounted(async () => {
                     plain
                     size="small"
                     :loading="exceptionSaving"
-                    :disabled="openExceptions.length > 0"
+                    :disabled="unclosedExceptions.length > 0"
                     @click="createIncident"
                   >
                     录入异常
@@ -529,9 +599,38 @@ onMounted(async () => {
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" size="small" :loading="exceptionSaving" @click="endIncident">
-                    结束异常（已解决）
+                    结束异常
                   </el-button>
-                  <span class="u-text-muted">结束后时间线上该异常变灰点</span>
+                  <span class="u-text-muted">处理中→已解决；其余状态→直接归档为已关闭（都算已结束，时间线变灰点）</span>
+                </el-form-item>
+              </el-form>
+            </template>
+
+            <!-- 已解决但未归档：占着"同一订单只能一个未关闭异常"的名额，归档后订单才能再录入 -->
+            <template v-if="canHandleException && resolvedExceptions.length > 0">
+              <el-divider content-position="left">归档异常（已解决 → 已关闭）</el-divider>
+              <el-form label-width="80px" size="small">
+                <el-form-item label="选择异常">
+                  <el-select v-model="archiveForm.exception_id" style="width: 100%" placeholder="选择已解决、待归档的异常">
+                    <el-option
+                      v-for="item in resolvedExceptions"
+                      :key="item.id"
+                      :label="`${item.case_no}　${exceptionTypeLabel(item.type)}　已解决`"
+                      :value="item.id"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="归档说明">
+                  <el-input
+                    v-model="archiveForm.note"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    placeholder="可选：例如已核对无遗留问题"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button size="small" :loading="exceptionSaving" @click="archiveIncident">归档异常</el-button>
+                  <span class="u-text-muted">关闭是终态；归档后该订单才能录入新异常</span>
                 </el-form-item>
               </el-form>
             </template>
