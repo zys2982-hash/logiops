@@ -19,6 +19,8 @@ const busy = ref(false)
 const timeline = ref<Array<{ time: string; action: string; api?: string }>>([])
 
 const canControl = computed(() => auth.can(Perm.DEMO_CONTROL))
+/** 真实时间模式（CLOCK_MODE=system）下没有"虚拟时钟"可推：控件停用并说明原因，与后端 409 口径一致 */
+const isRealClock = computed(() => demo.clockMode !== 'replay')
 
 function logAction(action: string, api?: string): void {
   timeline.value.unshift({ time: new Date().toLocaleTimeString('zh-CN'), action, api })
@@ -117,16 +119,26 @@ onMounted(refresh)
       show-icon
       class="u-mb-12"
       title="演示工具（仅本地演示）"
-      description="这一页只做两件事：① 快进/重置「虚拟时钟」——系统里的业务时间默认停在基准日不动，推一下它才往前流（推进即触发：轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查 → 自动关闭检查）；② 一键重置回到 seed 初始态（演示翻车 3 秒恢复）。权限：APP_ENV=local 且 ADMIN+ 才有 demo.control。AI 模式（回放样本 / 真实大模型）在顶部横幅上直接切换。"
+      description="① 时间控制：真实时间模式（CLOCK_MODE=system，现行默认）下系统直接用现实时间，快进/跳转已停用；只有 CLOCK_MODE=replay 时才需要手动推虚拟时钟（推进即触发：轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查 → 自动关闭检查）。② 一键重置回到 seed 初始态（演示翻车 3 秒恢复）。权限：APP_ENV=local 且 ADMIN+ 才有 demo.control。AI 模式（回放样本 / 真实大模型）在顶部横幅上直接切换。"
     />
 
     <el-row :gutter="12">
       <el-col :md="14">
-        <PanelCard title="虚拟时间控制（快进 / 重置）" icon="MagicStick">
+        <PanelCard title="时间控制（真实时间 / 虚拟时钟）" icon="MagicStick">
           <template #actions>
             <el-tag v-if="!canControl" size="small" effect="plain">当前角色无 demo.control</el-tag>
             <el-tag v-else size="small" type="success" effect="plain">可控制</el-tag>
           </template>
+
+          <el-alert
+            v-if="isRealClock"
+            type="success"
+            :closable="false"
+            show-icon
+            class="u-mb-12"
+            title="当前是真实时间模式（CLOCK_MODE=system）"
+            description="系统时间就是现实时间，不需要也不允许推进或跳转，因此下方「快进 / 跳到该时间」已停用；「重置到初始态」仍可用。需要可复现的虚拟时钟演示时，把 CLOCK_MODE 改成 replay 并重启后端。"
+          />
 
           <el-descriptions :column="2" size="small" border class="u-mb-12">
             <el-descriptions-item label="业务时间">{{ demo.businessTimeText }}</el-descriptions-item>
@@ -140,8 +152,8 @@ onMounted(refresh)
 
           <el-form label-width="120px" :disabled="!canControl">
             <el-form-item label="推进分钟数">
-              <el-input-number v-model="tickMinutes" :min="1" :max="43200" :step="30" />
-              <span class="u-text-muted u-mt-8">（tick 会触发全链路自动执行）</span>
+              <el-input-number v-model="tickMinutes" :min="1" :max="43200" :step="30" :disabled="isRealClock" />
+              <span class="u-text-muted u-mt-8">（tick 会触发全链路自动执行；仅虚拟时钟模式可用）</span>
             </el-form-item>
             <el-form-item label="跳转到时间">
               <div class="jump-row">
@@ -151,10 +163,15 @@ onMounted(refresh)
                   placeholder="点这里选年月日时分秒"
                   format="YYYY-MM-DD HH:mm:ss"
                   value-format="YYYY-MM-DD HH:mm:ss"
-                  :disabled="!canControl"
+                  :disabled="!canControl || isRealClock"
                   @keyup.enter="jumpToTime"
                 />
-                <el-button type="warning" :loading="busy" :disabled="!canControl" @click="jumpToTime">
+                <el-button
+                  type="warning"
+                  :loading="busy"
+                  :disabled="!canControl || isRealClock"
+                  @click="jumpToTime"
+                >
                   跳到该时间 →
                 </el-button>
               </div>
@@ -164,7 +181,7 @@ onMounted(refresh)
               </span>
             </el-form-item>
             <el-form-item>
-              <el-button type="primary" :loading="busy" @click="tick">快进 {{ tickMinutes }} 分钟</el-button>
+              <el-button type="primary" :loading="busy" :disabled="isRealClock" @click="tick">快进 {{ tickMinutes }} 分钟</el-button>
               <el-button text type="danger" :loading="busy" @click="reset">重置到初始态</el-button>
               <el-button text type="primary" @click="refresh">刷新状态</el-button>
             </el-form-item>

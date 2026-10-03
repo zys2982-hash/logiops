@@ -213,7 +213,7 @@ TEST_DATABASE_URL=mysql+pymysql://logiops:logiops@127.0.0.1:3306/logiops_test?ch
 # 演示与可复现
 DEMO_BASE_DATE=2026-09-30T09:00:00+08:00
 DEMO_RANDOM_SEED=20260930
-CLOCK_MODE=replay            # replay | system
+CLOCK_MODE=system            # system=真实时间（现行默认）| replay=演示虚拟时钟（仅测试/一键验收）
 AI_MODE=replay               # replay | live   ← 面试默认 replay，绝不现场翻车
 AI_REPLAY_DIR=backend/tests/fixtures/ai
 

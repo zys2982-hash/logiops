@@ -41,7 +41,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     AI_REPLAY_DIR=tests/fixtures/ai \
-    CLOCK_MODE=replay \
+    CLOCK_MODE=system \
     AI_MODE=replay
 
 # curl 仅用于容器内 healthcheck / 手工排查

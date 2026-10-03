@@ -18,6 +18,21 @@ from app.core.permissions import Perm
 router = APIRouter(prefix="/demo", tags=["demo"], dependencies=[Depends(require(Perm.DEMO_CONTROL))])
 
 
+def _reject_when_real_clock(action: str) -> None:
+    """演示时钟只在 CLOCK_MODE=replay 下有意义；真实时间模式下明确拒绝，别让按钮"点了没反应"。
+
+    项目现行口径是真实时间（CLOCK_MODE=system）：系统时间就是现实时间，既不需要也无法推进。
+    需要虚拟时钟做可复现演示时，把 CLOCK_MODE 改回 replay 再重启后端。
+    """
+    mode = get_settings().clock_mode
+    if mode.lower() != "replay":
+        raise AppError(
+            ErrorCode.DEMO_CLOCK_DISABLED,
+            f"当前是真实时间模式（CLOCK_MODE={mode}），{action}已停用：系统时间就是现实时间，不需要推进",
+            {"clock_mode": mode, "hint": "把 CLOCK_MODE 改回 replay 并重启后端即可恢复虚拟时钟"},
+        )
+
+
 class TickRequest(BaseModel):
     minutes: int = Field(default=60, ge=1, le=60 * 24 * 30, description="推进的业务分钟数")
 
@@ -114,6 +129,7 @@ def demo_set_clock(ctx: ContextDep, payload: SetClockRequest) -> dict:
     与 tick 的区别：tick 是"往前走 N 分钟"，这里是"直接到某个时刻"（秒级）。
     只改时钟、**不触发**任何业务链路；要顺带跑一次检测，跳转后再点一次「快进 1 分钟」即可。
     """
+    _reject_when_real_clock("时间跳转（set-clock）")
     try:
         target = parse_dt(payload.target_utc)
     except Exception as exc:  # noqa: BLE001 - 任何解析失败都归为参数错误
@@ -153,10 +169,11 @@ def demo_set_clock(ctx: ContextDep, payload: SetClockRequest) -> dict:
     }
 
 
-@router.post("/actions/tick", summary="推进业务时钟（触发 ETA 重算/检测/自动关闭）")
+@router.post("/actions/tick", summary="推进业务时钟（仅 CLOCK_MODE=replay；真实时间模式下拒绝）")
 def demo_tick(ctx: ContextDep, payload: TickRequest) -> dict:
     from app.services.tick import run_tick
 
+    _reject_when_real_clock("推进业务时钟（tick）")
     result = run_tick(ctx.session, ctx.repos, workspace_id=ctx.workspace_id, minutes=payload.minutes)
     # 把最新时钟偏移回写 system_setting，使库里的 demo.clock_offset_minutes 与前端/文档口径一致
     try:
@@ -183,10 +200,11 @@ def demo_reset(ctx: ContextDep, payload: ResetRequest) -> dict:
     return {"reset": True, "scenario": payload.scenario, "scale": summary.get("seed_scale"), "summary": summary}
 
 
-@router.post("/actions/advance-to-less", summary="推进到主案例送达（用于演示自动关闭）")
+@router.post("/actions/advance-to-less", summary="推进到主案例送达（仅 CLOCK_MODE=replay）")
 def demo_advance(ctx: ContextDep) -> dict:
     from app.services.tick import advance_until_delivered
 
+    _reject_when_real_clock("推进到送达（advance-to-less，依赖虚拟时钟跳跃）")
     result = advance_until_delivered(ctx.session, ctx.repos, workspace_id=ctx.workspace_id)
     ctx.audit("demo.advance_to_delivered", resource_type="workspace", resource_id=ctx.workspace_id, after=result)
     return {"offset_minutes": clock_state.offset_minutes, "now_utc": now_utc().isoformat(), **result}

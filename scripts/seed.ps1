@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     LogiOps 演示数据生成（seed --reset --demo，幂等可重建）。
 
@@ -108,7 +108,9 @@ if ($WithDocker) {
         Write-Host '数据库：路径 A（本机 MySQL 127.0.0.1:3306，配置默认值）'
     }
 }
-$env:CLOCK_MODE = 'replay'
+# 时钟：与运行时口径一致用真实时间（seed 出来的演示数据时间戳就是"现在"）；
+# 需要可复现的固定基准日时，调用方显式设 CLOCK_MODE=replay（acceptance.ps1 就是这么做的）
+if (-not $env:CLOCK_MODE) { $env:CLOCK_MODE = 'system' }
 $env:AI_MODE = 'replay'
 if (-not $env:AI_REPLAY_DIR) { $env:AI_REPLAY_DIR = 'tests/fixtures/ai' }
 

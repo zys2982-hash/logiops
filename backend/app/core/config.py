@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     # ETA 重算总开关（默认 **关闭**，docs/08）：不再按车速/里程模拟到达时间。
     # 关闭后 recalc_order_eta 直接沿用既有 ETA 快照（不再变动）；代码保留以便回溯。
     eta_enabled: bool = False
-    clock_mode: str = "replay"
+    # 时钟：system = **真实时间**（项目现行口径，默认）；replay = 演示虚拟时钟
+    # （DEMO_BASE_DATE + /demo/actions/tick 推进）。replay 代码保留：单元测试与一键验收仍用它保证确定性。
+    clock_mode: str = "system"
     ai_mode: str = "replay"
     ai_replay_dir: str = "tests/fixtures/ai"
 

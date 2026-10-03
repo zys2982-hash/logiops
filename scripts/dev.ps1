@@ -183,7 +183,8 @@ if (-not $NoEnvFile -and -not (Test-Path $EnvFile) -and (Test-Path $EnvExample))
 
 # 数据库 URL 通过进程环境变量传给子进程（权限高于 .env 文件），避免改动用户的 .env
 $env:DATABASE_URL = $DatabaseUrl
-$env:CLOCK_MODE = 'replay'
+# 时钟：真实时间（现行口径）。演示虚拟时钟（ReplayClock/tick）保留给测试与一键验收
+$env:CLOCK_MODE = 'system'
 $env:AI_MODE = 'replay'
 if (-not $env:AI_REPLAY_DIR) { $env:AI_REPLAY_DIR = 'tests/fixtures/ai' }
 

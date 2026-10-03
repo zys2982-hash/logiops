@@ -77,10 +77,10 @@ services:
       TEST_DATABASE_URL: mysql+pymysql://logiops:logiops@mysql:3306/logiops_test?charset=utf8mb4
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-me}
       CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
-      # 演示确定性：固定基准日 + 回放时钟 + 回放 AI（基线 §13.1 / §11.3）
+      # 时钟：真实时间（现行口径）；演示虚拟时钟的 replay 保留给测试/验收
       DEMO_BASE_DATE: 2026-09-30T09:00:00+08:00
       DEMO_RANDOM_SEED: "20260930"
-      CLOCK_MODE: replay
+      CLOCK_MODE: system
       AI_MODE: replay
       AI_REPLAY_DIR: tests/fixtures/ai
       # 仅 AI_MODE=live 时才需要；演示默认 replay，留空也能跑全流程
