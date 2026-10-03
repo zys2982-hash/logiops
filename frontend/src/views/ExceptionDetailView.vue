@@ -142,11 +142,10 @@ const displayVehiclePlate = computed(
   () => exception.value?.vehicle?.plate_no ?? exception.value?.vehicle_plate ?? '—',
 )
 
-/** 可发起 AI 分析：确认中（首次）、处理中（重新分析）、以及遗留的 ANALYZING（后端自动回退）。
+/** 可发起 AI 分析：只允许「处理中」（4 状态模型里首次分析与重跑都在这个状态做）。
  *  真有任务在跑时 AiPanel 会用 isRunning 自己隐藏按钮，所以这里放开是安全的。 */
 const canAnalyze = computed(
-  () =>
-    canHandle.value && ['CONFIRMING', 'PROCESSING', 'ANALYZING'].includes(exception.value?.status ?? ''),
+  () => canHandle.value && exception.value?.status === 'PROCESSING',
 )
 
 /** 不可分析时告诉用户"为什么、该怎么办"，避免点了才报 409 */
@@ -211,7 +210,7 @@ async function confirmCase(): Promise<void> {
   actionLoading.value = true
   try {
     await exceptionApi.confirmException(exception.value.id, { expected_version: exception.value.version })
-    ElMessage.success('已确认，状态进入 CONFIRMING')
+    ElMessage.success('已确认，状态进入「处理中」')
     await refreshAfterWrite()
   } finally {
     actionLoading.value = false

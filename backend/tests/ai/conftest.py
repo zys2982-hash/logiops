@@ -92,7 +92,7 @@ def case_a(db_session, bootstrap, base_time) -> dict:
         carrier_id=bootstrap["carrier"].id,
         type="VEHICLE_BREAKDOWN",
         level="CRITICAL",
-        status="CONFIRMING",
+        status="PROCESSING",
         detected_by="SYSTEM",
         detection_rule="STALL_OVER_THRESHOLD",
         occurred_at=naive(base_time),

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from app.models.enums import ExceptionStatus, OrderStatus
 from app.repositories import Repos
-from app.services.common import apply_transition
 from app.services.exceptions import ExceptionService
 from tests.unit import _support
 
@@ -43,9 +42,9 @@ def test_order_delivered_resolves_open_exception(client, db_session, bootstrap, 
     repos = Repos(db_session, workspace_id=bootstrap["workspace_id"])
     case = repos.exceptions.get(case_item["id"])
     service = ExceptionService(repos)
-    if case.status == str(ExceptionStatus.DETECTED):  # seed 可能已因承运商消息进入 CONFIRMING
+    # 4 状态模型：seed 的 CASE-A 直接落在"处理中"（旧数据可能是 DETECTED/CONFIRMING，先确认推进）
+    if case.status in {str(ExceptionStatus.DETECTED), str(ExceptionStatus.CONFIRMING)}:
         service.confirm(case.id, expected_version=case.version, actor_id=None)
-    apply_transition(case, "EXCEPTION", ExceptionStatus.ANALYZING)
     analysis = _support.make_analysis(repos, case, output=_support.ai_output())
     service.apply_analysis_result(analysis.id)
     db_session.commit()
@@ -68,7 +67,7 @@ def test_order_delivered_resolves_open_exception(client, db_session, bootstrap, 
 
 
 def test_big_tick_never_strands_case_a(client, db_session, bootstrap, operator_headers):
-    """未人工确认的 DETECTED/CONFIRMING 异常，到站后也必须闭环（不能挂着 PROCESSING/IN_TRANSIT）。"""
+    """未人工处置的 DETECTED/PROCESSING 异常，到站后也必须闭环（不能挂着不结束）。"""
     _seed(db_session, bootstrap)
     order, case_item = _case_a(client, operator_headers)
 
@@ -92,7 +91,7 @@ def test_tick_keeps_repair_wait_and_does_not_downgrade(client, db_session, boots
     assert tick.status_code == 200, tick.text
 
     exception = client.get(f"{EXCEPTIONS}/{case_item['id']}", headers=operator_headers).json()
-    assert exception["status"] == str(ExceptionStatus.CONFIRMING)  # 机器提议、人确认，不自动推进
+    assert exception["status"] == str(ExceptionStatus.DETECTED)  # 机器提议、人确认，不自动推进也不降档
     # 机器提议阶段不允许"高危单静默降档"：等级/风险分保持，SLA 数字仍按事实刷新
     assert exception["level"] == "CRITICAL", exception
     assert exception["risk_score"] == 4

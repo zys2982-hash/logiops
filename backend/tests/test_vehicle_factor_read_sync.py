@@ -13,12 +13,9 @@ fixture 里 bootstrap 车辆（津A·12345）初始状态 IN_TRANSIT（等价"�
 
 from __future__ import annotations
 
-from app.models.enums import ExceptionStatus
 from app.models.exception import ExceptionCase
 from app.models.master import Vehicle
 from app.repositories import Repos
-from app.rules import state_machine
-from app.services.common import apply_transition, bump_version
 from app.services.exceptions import ExceptionService
 
 ORDERS = "/api/v1/orders"
@@ -109,14 +106,10 @@ def _detail(client, headers, case_id: int) -> dict:
 
 
 def _to_processing(db_session, bootstrap, case_id: int) -> None:
+    """4 状态模型：确认即进入处理中。"""
     repos = Repos(db_session, workspace_id=bootstrap["workspace_id"])
     service = ExceptionService(repos)
     service.confirm(case_id, actor_id=bootstrap["users"]["OPERATOR"].id)
-    case = service.get(case_id)
-    apply_transition(case, state_machine.EntityKind.EXCEPTION, ExceptionStatus.ANALYZING)
-    apply_transition(case, state_machine.EntityKind.EXCEPTION, ExceptionStatus.PROCESSING)
-    bump_version(case)
-    repos.exceptions.save(case)
     db_session.commit()
 
 

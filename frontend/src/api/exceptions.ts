@@ -61,7 +61,7 @@ export function updateException(
 
 /* ------------------------------------------------------ 异常状态机动作 */
 
-/** POST /exceptions/{id}/confirm  DETECTED → CONFIRMING */
+/** POST /exceptions/{id}/confirm  DETECTED → PROCESSING（4 状态模型：确认即进入处理中） */
 export function confirmException(
   id: number,
   payload: { expected_version?: number } = {},
@@ -69,7 +69,7 @@ export function confirmException(
   return post<ExceptionDetail>(`/exceptions/${id}/confirm`, payload)
 }
 
-/** POST /exceptions/{id}/analyze  CONFIRMING → ANALYZING，202 + {analysis_id} */
+/** POST /exceptions/{id}/analyze  仅「处理中」可发起，202 + {analysis_id}（分析期间异常状态不变） */
 export function analyzeException(
   id: number,
   payload: { expected_version?: number } = {},

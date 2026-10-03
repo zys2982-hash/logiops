@@ -296,18 +296,18 @@ onMounted(load)
     />
     <div class="u-text-muted u-mt-8">
       快捷分析入口：行内「分析」按钮调用 POST /exceptions/{id}/analyze；
-      <b>只有「确认中」的异常可以分析</b>（后端状态机 CONFIRMING → ANALYZING），批量审批见详情页。
+      <b>只有「处理中」的异常可以分析</b>（4 状态模型：确认异常即进入处理中），批量审批见详情页。
       <el-button
         v-if="canHandle"
         size="small"
         text
         type="primary"
         @click="quickAnalyze(result.items[0])"
-        :disabled="!result.items.length || result.items[0]?.status !== 'CONFIRMING'"
+        :disabled="!result.items.length || result.items[0]?.status !== 'PROCESSING'"
       >
         对首行触发分析
       </el-button>
-      <span v-if="canHandle && result.items.length && result.items[0]?.status !== 'CONFIRMING'" class="u-text-muted">
+      <span v-if="canHandle && result.items.length && result.items[0]?.status !== 'PROCESSING'" class="u-text-muted">
         （首行当前状态 {{ result.items[0]?.status }}，不可分析）
       </span>
     </div>

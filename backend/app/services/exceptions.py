@@ -20,6 +20,7 @@ from app.core.errors import AppError, ErrorCode, validation_error
 from app.core.ratelimit import check_rate_limit
 from app.models.ai import AiAnalysis
 from app.models.enums import (
+    LEGACY_EXCEPTION_STATUSES,
     ActorType,
     AnalysisStatus,
     AnalysisTaskType,
@@ -64,9 +65,10 @@ REPAIRING_STATUS = str(VehicleStatus.REPAIRING)
 # 它按自动关闭的需要把 RESOLVED 也算"打开"，会让车辆永远等下去）。
 VEHICLE_HOLDING_STATUSES: tuple[str, ...] = (
     str(ExceptionStatus.DETECTED),
+    str(ExceptionStatus.PROCESSING),
+    # 历史状态（旧数据尚未迁移时）同样按"未结束"处理
     str(ExceptionStatus.CONFIRMING),
     str(ExceptionStatus.ANALYZING),
-    str(ExceptionStatus.PROCESSING),
 )
 # "预计晚上 8 点恢复" / "20:30 恢复" 这类相对时间（确定性兜底解析）
 TIME_HINT_RE = re.compile(
@@ -533,7 +535,8 @@ class ExceptionService:
     ) -> ExceptionCase:
         case = self.get(exception_id)
         check_version(case, expected_version, "异常单")
-        plan = apply_transition(case, EXCEPTION_KIND, ExceptionStatus.CONFIRMING)
+        # 4 状态模型：确认即进入"处理中"（原来的 CONFIRMING 已并入 PROCESSING）
+        plan = apply_transition(case, EXCEPTION_KIND, ExceptionStatus.PROCESSING)
         bump_version(case)
         self.repos.exceptions.save(case)
         add_event(
@@ -545,7 +548,7 @@ class ExceptionService:
             to_status=plan.to_status,
             actor_type=ActorType.USER,
             actor_id=actor_id,
-            note=note or "人工确认信息完整，进入分析准备",
+            note=note or "人工确认信息完整，进入处理中",
         )
         write_audit(
             self.session,
@@ -614,41 +617,29 @@ class ExceptionService:
                 {"analysis_id": running.id, "status": running.status},
             )
 
-        # 状态自愈：ANALYZING 是"任务正在跑"的瞬时状态。若没有在跑的任务却停在 ANALYZING
-        # （进程被杀 / 崩溃 / 历史预置数据），先退回 CONFIRMING，否则这里就是死胡同。
-        if str(case.status) == str(ExceptionStatus.ANALYZING):
-            apply_transition(case, EXCEPTION_KIND, ExceptionStatus.CONFIRMING)
+        # 历史状态归一：旧的 CONFIRMING / ANALYZING 视同"处理中"（4 状态模型里已没有这两个状态）
+        if str(case.status) in {str(s) for s in LEGACY_EXCEPTION_STATUSES}:
+            apply_transition(case, EXCEPTION_KIND, ExceptionStatus.PROCESSING)
             bump_version(case)
             self.repos.exceptions.save(case)
-            add_event(
-                self.session,
-                self.repos,
-                exception_id=case.id,
-                event_type=str(ExceptionEventType.STATUS_CHANGED),
-                from_status=str(ExceptionStatus.ANALYZING),
-                to_status=str(ExceptionStatus.CONFIRMING),
-                actor_type=ActorType.SYSTEM,
-                actor_id=actor_id,
-                note="无在跑的分析任务，自动回退到确认中（自愈遗留状态）",
-            )
 
         # 前置给出可执行的提示（比裸的状态机报错"不允许的状态流转"更容易理解）
-        # 可发起分析：CONFIRMING（首次分析）与 PROCESSING（重新分析）
-        if str(case.status) not in {str(ExceptionStatus.CONFIRMING), str(ExceptionStatus.PROCESSING)}:
+        # 可发起分析：只允许"处理中"（首次分析与重跑都在这个状态下做；
+        # "分析任务正在跑"由 ai_analysis.status 表达，不再占用异常状态）
+        if str(case.status) != str(ExceptionStatus.PROCESSING):
             hint = {
                 "DETECTED": "请先点「确认异常」，再发起 AI 分析",
                 "RESOLVED": "该异常已解决，无需再分析",
                 "CLOSED": "该异常已关闭，不能再分析",
-            }.get(str(case.status), "只有「确认中」或「处理中」的异常可以发起 AI 分析")
+            }.get(str(case.status), "只有「处理中」的异常可以发起 AI 分析")
             raise AppError(
                 ErrorCode.STATE_TRANSITION_INVALID,
                 f"当前状态（{case.status}）不能发起 AI 分析：{hint}",
-                {"from": str(case.status), "to": str(ExceptionStatus.ANALYZING)},
+                {"from": str(case.status), "to": str(ExceptionStatus.PROCESSING)},
             )
 
-        plan = apply_transition(case, EXCEPTION_KIND, ExceptionStatus.ANALYZING)
-        bump_version(case)
-        self.repos.exceptions.save(case)
+        # 4 状态模型：分析期间异常保持"处理中"（不再切到 ANALYZING）
+        status_now = str(case.status)
         analysis = AiAnalysis(
             workspace_id=int(self.repos.workspace_id or 0),
             exception_id=case.id,
@@ -667,8 +658,8 @@ class ExceptionService:
             self.repos,
             exception_id=case.id,
             event_type=str(ExceptionEventType.ANALYSIS_REQUESTED),
-            from_status=plan.from_status,
-            to_status=plan.to_status,
+            from_status=status_now,
+            to_status=status_now,
             actor_type=ActorType.USER,
             actor_id=actor_id,
             note="触发 AI 异常分析",
@@ -681,8 +672,8 @@ class ExceptionService:
             resource_type="exception",
             resource_id=case.id,
             actor_id=actor_id,
-            before={"status": plan.from_status},
-            after={"status": plan.to_status, "analysis_id": analysis.id},
+            before={"status": status_now},
+            after={"status": status_now, "analysis_id": analysis.id},
         )
 
         call = ai_bridge.execute_analysis(self.session, self.repos, analysis.id)
@@ -763,12 +754,8 @@ class ExceptionService:
             finished_at=now_naive(),
         )
         self.repos.analyses.add(clone)
-        if str(case.status) == str(ExceptionStatus.CONFIRMING):
-            apply_transition(case, EXCEPTION_KIND, ExceptionStatus.ANALYZING)
-            apply_transition(case, EXCEPTION_KIND, ExceptionStatus.PROCESSING)
-            bump_version(case)
-            self.repos.exceptions.save(case)
-        elif str(case.status) == str(ExceptionStatus.ANALYZING):
+        # 4 状态模型：分析结果落库时异常应处于"处理中"（旧 CONFIRMING/ANALYZING 先归一）
+        if str(case.status) in {str(s) for s in LEGACY_EXCEPTION_STATUSES}:
             apply_transition(case, EXCEPTION_KIND, ExceptionStatus.PROCESSING)
             bump_version(case)
             self.repos.exceptions.save(case)
@@ -789,15 +776,16 @@ class ExceptionService:
         digest = analysis.input_hash or self.input_hash(case)
 
         from_status = case.status
-        if str(case.status) == str(ExceptionStatus.CONFIRMING):
-            apply_transition(case, EXCEPTION_KIND, ExceptionStatus.ANALYZING)
+        # 4 状态模型：只有"处理中"能重跑分析（旧 CONFIRMING/ANALYZING 先归一）
+        if str(case.status) in {str(s) for s in LEGACY_EXCEPTION_STATUSES}:
+            apply_transition(case, EXCEPTION_KIND, ExceptionStatus.PROCESSING)
             bump_version(case)
             self.repos.exceptions.save(case)
-        elif str(case.status) not in {str(ExceptionStatus.ANALYZING), str(ExceptionStatus.PROCESSING)}:
+        elif str(case.status) != str(ExceptionStatus.PROCESSING):
             raise AppError(
                 ErrorCode.STATE_TRANSITION_INVALID,
                 f"异常状态为 {case.status}，无法重跑分析",
-                {"from": case.status, "to": str(ExceptionStatus.ANALYZING)},
+                {"from": case.status, "to": str(ExceptionStatus.PROCESSING)},
             )
 
         rerun = AiAnalysis(
@@ -914,54 +902,28 @@ class ExceptionService:
         bump_version(analysis)
         self.repos.analyses.save(analysis)
 
-        if str(case.status) == str(ExceptionStatus.ANALYZING):
-            plan = apply_transition(case, EXCEPTION_KIND, ExceptionStatus.CONFIRMING)
-            bump_version(case)
-            self.repos.exceptions.save(case)
-            add_event(
-                self.session,
-                self.repos,
-                exception_id=case.id,
-                event_type=str(ExceptionEventType.ANALYSIS_FAILED),
-                from_status=plan.from_status,
-                to_status=plan.to_status,
-                actor_type=ActorType.SYSTEM,
-                note=error_message,
-                detail={"analysis_id": analysis.id, "error_code": error_code},
-            )
-            write_audit(
-                self.session,
-                self.repos,
-                "exception.analysis_failed",
-                resource_type="exception",
-                resource_id=case.id,
-                actor_type=ActorType.SYSTEM,
-                before={"status": plan.from_status},
-                after={"status": plan.to_status, "error_code": error_code},
-                source=AuditSource.SYSTEM,
-            )
-        else:
-            add_event(
-                self.session,
-                self.repos,
-                exception_id=case.id,
-                event_type=str(ExceptionEventType.ANALYSIS_FAILED),
-                from_status=case.status,
-                to_status=case.status,
-                actor_type=ActorType.SYSTEM,
-                note=error_message,
-                detail={"analysis_id": analysis.id, "error_code": error_code},
-            )
-            write_audit(
-                self.session,
-                self.repos,
-                "exception.analysis_failed",
-                resource_type="exception",
-                resource_id=case.id,
-                actor_type=ActorType.SYSTEM,
-                after={"analysis_id": analysis.id, "error_code": error_code},
-                source=AuditSource.SYSTEM,
-            )
+        # 4 状态模型：分析失败不再回退状态（异常始终停在"处理中"，由人继续处置）
+        add_event(
+            self.session,
+            self.repos,
+            exception_id=case.id,
+            event_type=str(ExceptionEventType.ANALYSIS_FAILED),
+            from_status=case.status,
+            to_status=case.status,
+            actor_type=ActorType.SYSTEM,
+            note=error_message,
+            detail={"analysis_id": analysis.id, "error_code": error_code},
+        )
+        write_audit(
+            self.session,
+            self.repos,
+            "exception.analysis_failed",
+            resource_type="exception",
+            resource_id=case.id,
+            actor_type=ActorType.SYSTEM,
+            after={"analysis_id": analysis.id, "error_code": error_code},
+            source=AuditSource.SYSTEM,
+        )
 
     def apply_analysis_result(
         self,
@@ -983,7 +945,8 @@ class ExceptionService:
         order = self.repos.orders.get_or_404(case.order_id, "订单不存在")
 
         from_status = case.status
-        if str(case.status) == str(ExceptionStatus.ANALYZING):
+        # 4 状态模型：分析结果只能落到"处理中"（旧 ANALYZING/CONFIRMING 先归一）
+        if str(case.status) in {str(s) for s in LEGACY_EXCEPTION_STATUSES}:
             apply_transition(case, EXCEPTION_KIND, ExceptionStatus.PROCESSING)
         elif str(case.status) != str(ExceptionStatus.PROCESSING):
             raise AppError(
@@ -1099,23 +1062,9 @@ class ExceptionService:
         )
         self.repos.messages.add(message)
 
+        # 4 状态模型：录入承运商消息**不自动推进状态** —— "待确认 → 处理中" 只由人点「确认异常」触发
+        # （保留 HITL：机器提议、人确认；避免系统替人决定"已经在处理了"）
         transitioned = False
-        if str(case.status) == str(ExceptionStatus.DETECTED):
-            plan = apply_transition(case, EXCEPTION_KIND, ExceptionStatus.CONFIRMING)
-            bump_version(case)
-            self.repos.exceptions.save(case)
-            transitioned = True
-            add_event(
-                self.session,
-                self.repos,
-                exception_id=case.id,
-                event_type=str(ExceptionEventType.STATUS_CHANGED),
-                from_status=plan.from_status,
-                to_status=plan.to_status,
-                actor_type=ActorType.SYSTEM,
-                actor_id=actor_id,
-                note="录入承运商消息，异常进入确认中",
-            )
         add_event(
             self.session,
             self.repos,
@@ -1420,7 +1369,11 @@ class ExceptionService:
                 "异常单已关闭，终态不可逆（ADR-A11）",
                 {"from": case.status, "to": str(ExceptionStatus.CLOSED)},
             )
-        in_progress = {str(ExceptionStatus.CONFIRMING), str(ExceptionStatus.ANALYZING)}
+        in_progress = {
+            str(ExceptionStatus.PROCESSING),
+            str(ExceptionStatus.CONFIRMING),
+            str(ExceptionStatus.ANALYZING),
+        }
         if str(case.status) in in_progress and not forced:
             raise AppError(
                 ErrorCode.STATE_TRANSITION_INVALID,

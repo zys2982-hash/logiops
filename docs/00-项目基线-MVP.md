@@ -300,7 +300,8 @@ TrackingSource    MOCK | DRIVER | CARRIER | OPERATOR | SYSTEM
 SlaScopeType      DEFAULT | CUSTOMER_LEVEL | CUSTOMER
 ExceptionType     VEHICLE_BREAKDOWN | DELAY_RISK   (MVP 产品化仅前者)
 ExceptionLevel    LOW | MEDIUM | HIGH | CRITICAL
-ExceptionStatus   DETECTED | CONFIRMING | ANALYZING | PROCESSING | RESOLVED | CLOSED
+ExceptionStatus   DETECTED（待确认）| PROCESSING（处理中）| RESOLVED（已解决）| CLOSED（已关闭）
+                  # 4 状态模型；历史 CONFIRMING / ANALYZING 已并入 PROCESSING（读取时归一并兼容流转）
 ExceptionEventType DETECTED | MESSAGE_ADDED | CONFIRMED | ANALYSIS_REQUESTED | ANALYSIS_READY |
                    ANALYSIS_FAILED | APPROVED | REJECTED | EXECUTED | EXECUTE_FAILED |
                    ETA_UPDATED | STATUS_CHANGED | COMMENT | FOLLOWUP_DONE | CLOSED
@@ -594,36 +595,40 @@ vehicle 1─0..1 driver（vehicle.current_driver_id，固定主驾）
 
 非法流转一律 `409 STATE_TRANSITION_INVALID`。
 
-### 8.2 异常状态机（6 态）
+### 8.2 异常状态机（4 态）
+
+用户口径（2026-10）：状态太多、触发链看不懂 → 收敛为 **待确认 → 处理中 → 已解决 → 已关闭**。
+旧的 `CONFIRMING` 并入 `PROCESSING`（确认即进入处理中）、`ANALYZING` 随 AI 停用废弃
+（"分析任务在跑"由 `ai_analysis.status` 表达，不再占用异常状态）。
 
 | 起始 | 事件 / 接口 | 终态 | 允许角色 | 副作用 |
 |---|---|---|---|---|
 | — | 检测规则命中 或 `POST /exceptions` | DETECTED | SYSTEM / OPERATOR+ | 写主单 + `exception_event(DETECTED)` + 审计 |
-| DETECTED | 录入承运商消息 `POST /exceptions/{id}/messages` | CONFIRMING | OPERATOR+ | 写 `carrier_message`，触发 PARSE_MESSAGE，写 `MESSAGE_ADDED` |
-| DETECTED | 人工确认信息完整 `POST /exceptions/{id}/confirm` | CONFIRMING | OPERATOR+ | 写 `CONFIRMED` |
+| DETECTED | 录入承运商消息 `POST /exceptions/{id}/messages` | DETECTED（**不自动推进**） | OPERATOR+ | 写 `carrier_message`，触发 PARSE_MESSAGE，写 `MESSAGE_ADDED` |
+| DETECTED | 人工确认信息完整 `POST /exceptions/{id}/confirm` | **PROCESSING** | OPERATOR+ | 写 `CONFIRMED`（保留 HITL：机器提议、人确认） |
 | DETECTED | 判定误报 `POST /exceptions/{id}/close {reason:INVALID}` | CLOSED | OPERATOR+ | 终态，`close_reason=INVALID` |
-| CONFIRMING | `POST /exceptions/{id}/analyze` | ANALYZING | OPERATOR+ | 创建 `ai_analysis(RUNNING)`，返回 202 + analysis_id |
-| ANALYZING | AI 分析 READY（独立事务落库） | PROCESSING | SYSTEM | 写规则等级（覆盖 LLM 的 level）、生成 0..n 条 `approval(PENDING)`，写 `ANALYSIS_READY` |
-| ANALYZING | AI 分析 FAILED 或超时 90s | CONFIRMING | SYSTEM | 写 `ANALYSIS_FAILED`，前端提示可重试或手工处理 |
+| PROCESSING | `POST /exceptions/{id}/analyze`（首次 / 重新分析） | PROCESSING（状态不变） | OPERATOR+ | 创建 `ai_analysis(RUNNING)`，返回 202 + analysis_id |
+| PROCESSING | AI 分析 READY（独立事务落库） | PROCESSING（状态不变） | SYSTEM | 写规则等级（覆盖 LLM 的 level）、生成 0..n 条 `approval(PENDING)`，写 `ANALYSIS_READY` |
+| PROCESSING | AI 分析 FAILED 或超时 90s | PROCESSING（状态不变） | SYSTEM | 写 `ANALYSIS_FAILED`，前端提示可重试或手工处理 |
 | PROCESSING | 订单 DELIVERED 或 新轨迹恢复且规则判定风险解除 | RESOLVED | SYSTEM | 重算 ETA 与 SLA，写 `ETA_UPDATED` + `STATUS_CHANGED` |
 | PROCESSING | 人工 `POST /exceptions/{id}/resolve`（需 note） | RESOLVED | OPERATOR+ | 同上 + 审计 |
-| PROCESSING | 人工 `POST /exceptions/{id}/analyze`（**重新分析**） | ANALYZING | OPERATOR+ | 新证据/承运商更新恢复时间/原结论存疑时重跑；写新 `ai_analysis`，完成后回到 PROCESSING |
 | RESOLVED | 订单送达后 24h 自动 或 人工 `POST /exceptions/{id}/close` | CLOSED | SYSTEM / OPERATOR+ | `close_reason=DELIVERED/MANUAL`，写 `CLOSED`；**终态不可逆** |
 | 任意非终态 | 强制归档 | CLOSED | ADMIN+ | 必须带 note，审计标记 `FORCED_CLOSE` |
 
 规则细节：
 
-- 同一订单**至多一个未关闭异常**（`DETECTED/CONFIRMING/ANALYZING/PROCESSING/RESOLVED`）；再次命中则合并：`merged_count+1`、刷新 `expected_eta_at/sla_*/level`、写一条 `exception_event`，不新建主单。
+- 同一订单**至多一个未关闭异常**（`DETECTED/PROCESSING/RESOLVED`）；再次命中则合并：`merged_count+1`、刷新 `expected_eta_at/sla_*/level`、写一条 `exception_event`，不新建主单。
 - 分析进行中重复点击「AI 分析」：若最新 `ai_analysis` 为 `READY` 且 `input_hash` 未变且 `finished_at` 在 15 分钟内 → 直接复用（`reused_from_id`），返回 200 而非 202；若状态为 `RUNNING` → 409 `AI_ANALYSIS_IN_PROGRESS`。
 - 审批单 24h 未决策 → 定时/`tick` 置 `EXPIRED`（不自动执行）。
 - `CLOSED` 不提供 reopen（ADR-A11）。
 - **订单送达时的收口规则**（实现定稿，勿当 bug 修）：
   - 异常已进入 `PROCESSING` → `RESOLVED`（写 `resolved_at`），24h 后自动 `CLOSED`；
-  - 异常仍在 `DETECTED / CONFIRMING / ANALYZING`（尚未人工确认或未走完分析）→ 直接 `CLOSED`，`close_reason=DELIVERED`。
-    理由：状态机刻意没有 `CONFIRMING → RESOLVED` 这条边，"只有 PROCESSING 才能 RESOLVED"这条纪律要保留；
-    未进入处理阶段的异常，订单送达即归档，同样不会"货到了异常还挂着"。
-- **机器提议阶段等级只升不降**：异常处于 `DETECTED / CONFIRMING / ANALYZING` 时，`tick` 的合并刷新
-  `refresh_case_impact(allow_downgrade=False)` —— `level / risk_score / risk_factors` 保持，SLA 数字仍按事实刷新。
+  - 异常仍停在 `DETECTED`（尚未人工确认）→ 直接 `CLOSED`，`close_reason=DELIVERED`。
+    理由："只有 PROCESSING 才能 RESOLVED"这条纪律要保留；未进入处理阶段的异常，订单送达即归档，
+    同样不会"货到了异常还挂着"。
+- **机器提议阶段等级只升不降**：异常处于 `DETECTED` 时，`tick` 不刷新（跳过非 PROCESSING）；
+  `tick` 对 `PROCESSING` 的合并刷新用 `refresh_case_impact(allow_downgrade=False)` ——
+  `level / risk_score / risk_factors` 保持，SLA 数字仍按事实刷新。
   风险真解除时由 `PROCESSING → RESOLVED` 或"送达即闭环"收口，避免"系统悄悄把高危降级成中危"。
 - **Demo 推进目标的选择是确定性的**：`advance_until_delivered` 优先选"带承运商消息的脚本化案例"（Demo 主案例），
   否则选最近创建的未关闭异常；**不要**用 `created_at asc`（seed 的历史池 created_at 被回填，会选错）。
@@ -836,8 +841,8 @@ GET    /exceptions               ?status&level&type&customer_id&sla_breached&ass
 POST   /exceptions               手工建单（MANUAL，ADMIN+）
 GET    /exceptions/{id}          详情：主单 + 订单/客户/车辆快照 + 最新 ETA + 最新分析摘要
 PATCH  /exceptions/{id}          改 assigned_to / remark（不改 status）
-POST   /exceptions/{id}/confirm          DETECTED → CONFIRMING
-POST   /exceptions/{id}/analyze          CONFIRMING → ANALYZING，202 + {analysis_id}
+POST   /exceptions/{id}/confirm          DETECTED → PROCESSING
+POST   /exceptions/{id}/analyze          仅 PROCESSING 可发起，202 + {analysis_id}（状态不变）
 POST   /exceptions/{id}/resolve          → RESOLVED（body: note）
 POST   /exceptions/{id}/close            → CLOSED（body: reason_code, note）
 GET    /exceptions/{id}/events           时间线（分页）
@@ -1163,7 +1168,7 @@ CLOCK_MODE=replay（默认）时全系统使用 ReplayClock，包括"订单送�
 订单       3 单（SO20260930021/23/24，均为运输中）
 轨迹       24 条
 异常       3 个 —— 覆盖全部 2 种异常类型：
-             CASE-A 车辆故障 1 单（CRITICAL / CONFIRMING / 延误 270min 违约 / 含承运商消息）
+             CASE-A 车辆故障 1 单（CRITICAL / DETECTED 待确认 / 延误 270min 违约 / 含承运商消息）
              CASE-D 延误风险 2 单（MEDIUM / RESOLVED：延误 25min 不违约 vs 31min 违约，SLA 边界对照）
 
 【full（完整规模，分页/统计/压测类演示用）】

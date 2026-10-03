@@ -351,10 +351,10 @@ const ROUTES: MockRoute[] = [
     } },
   { method: 'POST', pattern: /^\/exceptions\/(\d+)\/confirm$/, handler: (_m, config) => {
       const from = mockState.exception.status
-      mockState.exception = { ...mockState.exception, status: 'CONFIRMING', version: (mockState.exception.version ?? 1) + 1, updated_at: nowIso() }
+      mockState.exception = { ...mockState.exception, status: 'PROCESSING', version: (mockState.exception.version ?? 1) + 1, updated_at: nowIso() }
       mockState.events = [...mockState.events, {
         id: Date.now(), workspace_id: 1, exception_id: 1, event_type: 'CONFIRMED', actor_type: 'USER',
-        actor_id: 3, from_status: from, to_status: 'CONFIRMING', note: '人工确认（本地 fixture）', detail: null, occurred_at: nowIso(),
+        actor_id: 3, from_status: from, to_status: 'PROCESSING', note: '人工确认，进入处理中（本地 fixture）', detail: null, occurred_at: nowIso(),
       }]
       return ok(config, mockState.exception)
     } },
@@ -363,9 +363,8 @@ const ROUTES: MockRoute[] = [
       const analysisId = mockState.analysisSeq
       mockState.analysisRuns.set(analysisId, { startedAt: Date.now() })
       mockState.analysis = currentAnalysis(analysisId)
-      mockState.exception = { ...mockState.exception, status: 'ANALYZING', updated_at: nowIso() }
-      // 真实后端 202 的响应体（新建）
-      return ok(config, { analysis_id: analysisId, status: 'PENDING', reused: false, reused_from_id: null, exception_status: 'ANALYZING', input_hash: makeAiAnalysis(analysisId).input_hash, error_code: null, error_message: null }, 202)
+      // 4 状态模型：分析期间异常状态不变（仍为处理中）
+      return ok(config, { analysis_id: analysisId, status: 'PENDING', reused: false, reused_from_id: null, exception_status: mockState.exception.status, input_hash: makeAiAnalysis(analysisId).input_hash, error_code: null, error_message: null }, 202)
     } },
   { method: 'POST', pattern: /^\/exceptions\/(\d+)\/resolve$/, handler: (_m, config, p) => {
       const from = mockState.exception.status
@@ -427,8 +426,8 @@ const ROUTES: MockRoute[] = [
   { method: 'GET', pattern: /^\/ai-analyses\/(\d+)$/, handler: (m, config) => {
       const id = Number(m[1])
       const analysis = currentAnalysis(id)
-      // 模拟 §8.2：AI READY 时 ANALYZING → PROCESSING
-      if (analysis.status === 'READY' && mockState.exception.status !== 'PROCESSING') {
+      // 4 状态模型：分析完成时异常已在「处理中」，这里只补 latest_analysis
+      if (analysis.status === 'READY') {
         mockState.exception = { ...mockState.exception, status: 'PROCESSING', latest_analysis: exceptionAnalysisSummary }
       }
       return ok(config, analysis)

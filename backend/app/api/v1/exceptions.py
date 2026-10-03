@@ -160,7 +160,11 @@ def patch_exception(ctx: ExceptionHandle, exception_id: int, payload: ExceptionP
     return exception_brief(ctx.repos, case)
 
 
-@router.post("/{exception_id}/confirm", response_model=ExceptionOut, summary="DETECTED → CONFIRMING")
+@router.post(
+    "/{exception_id}/confirm",
+    response_model=ExceptionOut,
+    summary="DETECTED → PROCESSING（确认即进入处理中）",
+)
 def confirm_exception(
     ctx: ExceptionHandle,
     exception_id: int,
@@ -180,7 +184,7 @@ def confirm_exception(
     "/{exception_id}/analyze",
     response_model=AnalyzeAccepted,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="CONFIRMING → ANALYZING，创建 ai_analysis（复用命中时 200）",
+    summary="在「处理中」发起 AI 分析，创建 ai_analysis（复用命中时 200；分析期间异常状态不变）",
 )
 def analyze_exception(
     ctx: ExceptionHandle,

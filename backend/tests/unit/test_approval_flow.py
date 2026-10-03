@@ -11,7 +11,6 @@ from app.core.errors import AppError, ErrorCode
 from app.models.enums import ApprovalStatus, ExceptionStatus, NotificationStatus
 from app.services import ai_bridge
 from app.services.approvals import ApprovalExecutor, build_approvals_from_analysis, diff_payload
-from app.services.common import apply_transition
 from app.services.exceptions import ExceptionService
 from tests.unit import _support
 
@@ -181,7 +180,6 @@ def test_apply_analysis_result_uses_rules_for_level(db_session, bootstrap):
     repos = _support.repos_for(db_session, bootstrap)
     case = _support.detected_exception(repos, bootstrap)
     ExceptionService(repos).confirm(case.id, expected_version=case.version, actor_id=None)
-    apply_transition(case, "EXCEPTION", ExceptionStatus.ANALYZING)
 
     output = _support.ai_output()
     output["level"] = "LOW"

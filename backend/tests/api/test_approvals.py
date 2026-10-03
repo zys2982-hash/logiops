@@ -8,9 +8,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from app.core.clock import state as clock_state
-from app.models.enums import ExceptionStatus
 from app.repositories import Repos
-from app.services.common import apply_transition
 from app.services.exceptions import ExceptionService
 from tests.unit import _support
 
@@ -24,7 +22,6 @@ def _build_approvals(db_session, bootstrap) -> dict:
     case = _support.detected_exception(repos, bootstrap)
     service = ExceptionService(repos)
     service.confirm(case.id, expected_version=case.version, actor_id=None)
-    apply_transition(case, "EXCEPTION", ExceptionStatus.ANALYZING)
     analysis = _support.make_analysis(repos, case, output=_support.ai_output())
     result = service.apply_analysis_result(analysis.id)
     approvals = [repos.approvals.get(approval_id) for approval_id in result["approval_ids"]]

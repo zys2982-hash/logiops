@@ -68,23 +68,18 @@ GENERIC_BANDS: list[dict[str, Any]] = [
     {"level": "CRITICAL", "code": "VIP-01", "case_type": ExceptionType.DELAY_RISK, "delay": 400},
 ]
 GENERIC_STATUS_CYCLE: list[str] = [
+    # 4 状态模型：待确认 → 处理中 → 已解决 → 已关闭（不再有 CONFIRMING / ANALYZING）
     str(ExceptionStatus.DETECTED),
-    str(ExceptionStatus.CONFIRMING),
     str(ExceptionStatus.PROCESSING),
     str(ExceptionStatus.RESOLVED),
     str(ExceptionStatus.CLOSED),
-    str(ExceptionStatus.CONFIRMING),
     str(ExceptionStatus.PROCESSING),
+    str(ExceptionStatus.RESOLVED),
     str(ExceptionStatus.CLOSED),
     str(ExceptionStatus.DETECTED),
-    # 注意：**不要**把 ANALYZING 铺成常态。它只是"分析任务正在跑"的瞬时状态，
-    # 单独铺出来会出现"显示分析中、却没有分析记录、又不能发起分析"的死胡同
-    # （真实踩到：4 条 seed 异常卡在 ANALYZING，用户点不了 AI 分析）。
 ]
 OPEN_CASE_STATUSES = {
     str(ExceptionStatus.DETECTED),
-    str(ExceptionStatus.CONFIRMING),
-    str(ExceptionStatus.ANALYZING),
     str(ExceptionStatus.PROCESSING),
 }
 
@@ -354,7 +349,8 @@ def build_case_a(ctx: SeedContext) -> ExceptionCase:
         order=order,
         customer=customer,
         case_type=str(ExceptionType.VEHICLE_BREAKDOWN),
-        status=str(ExceptionStatus.CONFIRMING),
+        # 4 状态模型：CASE-A 停在「待确认」（机器已建单 + 已录入承运商消息，等人点「确认异常」）
+        status=str(ExceptionStatus.DETECTED),
         occurred_at=last_move_at,
         detection_rule=decision.rule,
         expected_eta_at=expected_eta,
@@ -419,8 +415,8 @@ def build_case_a(ctx: SeedContext) -> ExceptionCase:
         actor_type="USER",
         actor_id=operator.id,
         from_status=str(ExceptionStatus.DETECTED),
-        to_status=str(ExceptionStatus.CONFIRMING),
-        note="录入承运商消息：济南爆胎，预计 20:00 恢复",
+        to_status=str(ExceptionStatus.DETECTED),
+        note="录入承运商消息：济南爆胎，预计 20:00 恢复（等人工确认）",
         occurred_at=created_at + timedelta(minutes=10),
     )
     add_audit(
@@ -810,7 +806,7 @@ def build_case_e(ctx: SeedContext) -> list[ExceptionCase]:
     now = ctx.now
     definitions = [
         (25, "VIP-03", ExceptionType.VEHICLE_BREAKDOWN, 400, ExceptionStatus.PROCESSING, "CRITICAL"),
-        (26, "VIP-01", ExceptionType.DELAY_RISK, 100, ExceptionStatus.CONFIRMING, "HIGH"),
+        (26, "VIP-01", ExceptionType.DELAY_RISK, 100, ExceptionStatus.PROCESSING, "HIGH"),
         (27, "NORM-01", ExceptionType.DELAY_RISK, 60, ExceptionStatus.DETECTED, "MEDIUM"),
         (28, "SVIP-01", ExceptionType.DELAY_RISK, 25, ExceptionStatus.RESOLVED, "HIGH"),
         (29, "NORM-03", ExceptionType.VEHICLE_BREAKDOWN, 25, ExceptionStatus.CLOSED, "MEDIUM"),
@@ -984,7 +980,7 @@ def build_generic_cases(ctx: SeedContext, count: int = GENERIC_CASE_TOTAL) -> li
 
     if not {"LOW", "MEDIUM", "HIGH", "CRITICAL"} <= levels_seen:
         raise RuntimeError(f"通用异常未覆盖全部等级：{sorted(levels_seen)}")
-    if not {str(ExceptionStatus.DETECTED), str(ExceptionStatus.CONFIRMING)} <= statuses_seen:
+    if not {str(ExceptionStatus.DETECTED), str(ExceptionStatus.PROCESSING)} <= statuses_seen:
         raise RuntimeError(f"通用异常未覆盖关键状态：{sorted(statuses_seen)}")
     return cases
 

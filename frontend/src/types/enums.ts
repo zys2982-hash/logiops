@@ -99,12 +99,14 @@ export const ExceptionLevel = {
 export type ExceptionLevel = (typeof ExceptionLevel)[keyof typeof ExceptionLevel]
 
 export const ExceptionStatus = {
+  // 对外 4 状态（4 状态模型）
   DETECTED: 'DETECTED',
-  CONFIRMING: 'CONFIRMING',
-  ANALYZING: 'ANALYZING',
   PROCESSING: 'PROCESSING',
   RESOLVED: 'RESOLVED',
   CLOSED: 'CLOSED',
+  // 历史状态：旧数据仍可能出现（后端读取时按"处理中"处理），不出现在下拉选项里
+  CONFIRMING: 'CONFIRMING',
+  ANALYZING: 'ANALYZING',
 } as const
 export type ExceptionStatus = (typeof ExceptionStatus)[keyof typeof ExceptionStatus]
 

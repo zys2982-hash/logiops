@@ -117,7 +117,7 @@ def test_case_no_format_matches_seed_after_manual_create(db_session, bootstrap):
 
 def test_retry_after_failure_produces_unique_analysis_no(client, db_session, bootstrap, admin_headers):
     """失败后重试必须成功且编号唯一（不再 500）。"""
-    case = _make_case(db_session, bootstrap, _make_order(db_session, bootstrap), status="CONFIRMING")
+    case = _make_case(db_session, bootstrap, _make_order(db_session, bootstrap), status="PROCESSING")
     db_session.add(
         AiAnalysis(
             workspace_id=bootstrap["workspace_id"],

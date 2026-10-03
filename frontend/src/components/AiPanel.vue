@@ -162,7 +162,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
 
     <el-alert v-if="failedHint" type="error" :closable="false" show-icon class="u-mb-12" :title="failedHint">
       <div class="u-text-muted">
-        未通过校验 / 模型不可用时会自动降级：写 ai_analysis.status=FAILED，异常状态回退 CONFIRMING，人工可继续处理。
+        未通过校验 / 模型不可用时会自动降级：写 ai_analysis.status=FAILED，异常保持「处理中」（状态不变），人工可继续处理。
       </div>
       <el-button size="small" class="u-mt-8" @click="handleRetry">重试</el-button>
     </el-alert>

@@ -121,10 +121,11 @@ def summary(ctx: ViewCtx) -> DashboardSummary:
         exceptions_total=sum(by_status.values()),
         open_exceptions=sum(count for status, count in by_status.items() if status in OPEN_STATUSES),
         high_risk=high_risk,
-        pending=by_status.get(str(ExceptionStatus.DETECTED), 0)
-        + by_status.get(str(ExceptionStatus.CONFIRMING), 0),
-        processing=by_status.get(str(ExceptionStatus.ANALYZING), 0)
-        + by_status.get(str(ExceptionStatus.PROCESSING), 0),
+        pending=by_status.get(str(ExceptionStatus.DETECTED), 0),
+        # 历史状态（旧 CONFIRMING/ANALYZING）在 4 状态模型里视同"处理中"
+        processing=by_status.get(str(ExceptionStatus.PROCESSING), 0)
+        + by_status.get(str(ExceptionStatus.CONFIRMING), 0)
+        + by_status.get(str(ExceptionStatus.ANALYZING), 0),
         resolving=by_status.get(str(ExceptionStatus.RESOLVED), 0),
         resolved=by_status.get(str(ExceptionStatus.RESOLVED), 0),
         closed=by_status.get(str(ExceptionStatus.CLOSED), 0),

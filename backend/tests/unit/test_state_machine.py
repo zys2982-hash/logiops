@@ -20,17 +20,19 @@ ORDER_LEGAL = [
 ]
 
 EXCEPTION_LEGAL = [
-    (ExceptionStatus.DETECTED, ExceptionStatus.CONFIRMING),
+    # 4 状态模型（用户口径）：待确认 → 处理中 → 已解决 → 已关闭
+    (ExceptionStatus.DETECTED, ExceptionStatus.PROCESSING),
     (ExceptionStatus.DETECTED, ExceptionStatus.CLOSED),
-    (ExceptionStatus.CONFIRMING, ExceptionStatus.ANALYZING),
-    (ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED),
-    (ExceptionStatus.ANALYZING, ExceptionStatus.PROCESSING),
-    (ExceptionStatus.ANALYZING, ExceptionStatus.CONFIRMING),
-    (ExceptionStatus.ANALYZING, ExceptionStatus.CLOSED),
     (ExceptionStatus.PROCESSING, ExceptionStatus.RESOLVED),
     (ExceptionStatus.PROCESSING, ExceptionStatus.CLOSED),
-    (ExceptionStatus.PROCESSING, ExceptionStatus.ANALYZING),  # 重新分析
     (ExceptionStatus.RESOLVED, ExceptionStatus.CLOSED),
+    # 历史兼容行：旧 CONFIRMING / ANALYZING 视同处理中，能按 4 状态收口
+    (ExceptionStatus.CONFIRMING, ExceptionStatus.PROCESSING),
+    (ExceptionStatus.CONFIRMING, ExceptionStatus.RESOLVED),
+    (ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED),
+    (ExceptionStatus.ANALYZING, ExceptionStatus.PROCESSING),
+    (ExceptionStatus.ANALYZING, ExceptionStatus.RESOLVED),
+    (ExceptionStatus.ANALYZING, ExceptionStatus.CLOSED),
 ]
 
 

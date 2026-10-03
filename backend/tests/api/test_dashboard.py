@@ -48,11 +48,10 @@ def test_seed_scale_and_idempotency(client, db_session, bootstrap):
     assert counts["exceptions"] == 50
     assert first["orders_by_status"] == {"CREATED": 300, "DELIVERED": 300, "DISPATCHED": 100, "IN_TRANSIT": 300}
     assert set(first["exceptions_by_level"]) == {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
-    # 注意：演示数据**不铺 ANALYZING**——它是"分析任务正在跑"的瞬时状态，
-    # 单独铺出来会出现"显示分析中、没有分析记录、又不能发起分析"的死胡同
-    assert set(first["exceptions_by_status"]) >= {
-        "DETECTED", "CONFIRMING", "PROCESSING", "RESOLVED", "CLOSED"
-    }
+    # 4 状态模型：演示数据只铺 待确认/处理中/已解决/已关闭
+    # （旧的 CONFIRMING / ANALYZING 已并入 PROCESSING，不再由任何流程产生）
+    assert set(first["exceptions_by_status"]) >= {"DETECTED", "PROCESSING", "RESOLVED", "CLOSED"}
+    assert "CONFIRMING" not in first["exceptions_by_status"]
     assert "ANALYZING" not in first["exceptions_by_status"]
 
     second = seed_workspace(db_session, bootstrap)
@@ -79,7 +78,7 @@ def test_case_a_is_computed_by_rules(client, db_session, bootstrap):
     case = db_session.scalars(select(ExceptionCase).where(ExceptionCase.order_id == order.id)).one()
     assert case.detection_rule == "STALL_OVER_THRESHOLD"
     assert case.type == "VEHICLE_BREAKDOWN"
-    assert case.status in {"CONFIRMING", "PROCESSING"}
+    assert case.status in {"DETECTED", "PROCESSING"}
     assert case.promised_delivery_at + timedelta(minutes=270) == case.expected_eta_at
     assert case.risk_factors_json and {item["code"] for item in case.risk_factors_json} >= {
         "DELAY_BASE",

@@ -285,8 +285,8 @@ export const exceptionHistory: ExceptionHistory = {
   avg_resolve_minutes: 45,
   recent: [
     { case_no: 'EX20260929012', type: 'DELAY_RISK', level: 'CRITICAL', status: 'DETECTED', closed_reason: null },
-    { case_no: 'EX20260929007', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'CONFIRMING', closed_reason: null },
-    { case_no: 'EX20260926004', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'CONFIRMING', closed_reason: null },
+    { case_no: 'EX20260929007', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'PROCESSING', closed_reason: null },
+    { case_no: 'EX20260926004', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'PROCESSING', closed_reason: null },
   ],
 }
 
@@ -404,7 +404,7 @@ export const exceptionAnalysisSummary: AnalysisSummary = {
 function otherExceptions(): ExceptionListItem[] {
   const base: ExceptionListItem[] = [
     { id: 40, case_no: 'EX20260930008', order_id: 987, order_no: 'SO20260930987', customer_id: 3, customer_name: '华东医药', type: 'DELAY_RISK', level: 'CRITICAL', status: 'DETECTED', detected_by: 'SYSTEM', detection_rule: 'ETA_BREACH_SLA', occurred_at: '2026-09-29T21:22:00Z', sla_delay_minutes: 400, sla_breached: true, risk_score: 4, assigned_to: 3, merged_count: 0, version: 1, created_at: '2026-09-29T21:22:00Z', updated_at: '2026-09-30T00:30:00Z', vehicle_plate: '苏D·31002', impact_summary: 'SVIP 冷链单预计延误 400 分钟' },
-    { id: 27, case_no: 'EX20260924003', order_id: 439, order_no: 'SO20260930439', customer_id: 5, customer_name: '中远海运', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'CONFIRMING', detected_by: 'SYSTEM', detection_rule: 'STALL_OVER_THRESHOLD', occurred_at: '2026-09-24T03:20:00Z', sla_delay_minutes: 300, sla_breached: true, risk_score: 4, assigned_to: 3, merged_count: 0, version: 1, created_at: '2026-09-24T03:20:00Z', updated_at: '2026-09-30T00:10:00Z', vehicle_plate: '沪B·12353', impact_summary: '车辆离线导致停滞' },
+    { id: 27, case_no: 'EX20260924003', order_id: 439, order_no: 'SO20260930439', customer_id: 5, customer_name: '中远海运', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'PROCESSING', detected_by: 'SYSTEM', detection_rule: 'STALL_OVER_THRESHOLD', occurred_at: '2026-09-24T03:20:00Z', sla_delay_minutes: 300, sla_breached: true, risk_score: 4, assigned_to: 3, merged_count: 0, version: 1, created_at: '2026-09-24T03:20:00Z', updated_at: '2026-09-30T00:10:00Z', vehicle_plate: '沪B·12353', impact_summary: '车辆离线导致停滞' },
     { id: 47, case_no: 'EX20260926011', order_id: 490, order_no: 'SO20260930490', customer_id: 2, customer_name: '华北贸易', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'PROCESSING', detected_by: 'OPERATOR', detection_rule: 'MANUAL', occurred_at: '2026-09-26T10:00:00Z', sla_delay_minutes: 300, sla_breached: true, risk_score: 4, assigned_to: 2, merged_count: 1, version: 2, created_at: '2026-09-26T10:00:00Z', updated_at: '2026-09-29T23:00:00Z', vehicle_plate: '沪B·88001', impact_summary: '运营手工建单后确认车辆故障' },
     { id: 49, case_no: 'EX20260929011', order_id: 646, order_no: 'SO20260930646', customer_id: 4, customer_name: '珠江实业', type: 'DELAY_RISK', level: 'HIGH', status: 'RESOLVED', detected_by: 'SYSTEM', detection_rule: 'ETA_BREACH_SLA', occurred_at: '2026-09-29T05:00:00Z', sla_delay_minutes: 25, sla_breached: false, risk_score: 3, assigned_to: null, merged_count: 0, version: 1, created_at: '2026-09-29T05:00:00Z', updated_at: '2026-09-29T09:00:00Z', vehicle_plate: '鲁C·66009', impact_summary: 'CASE-D 边界：延误 25min < 允许 30min' },
     { id: 46, case_no: 'EX20260929010', order_id: 424, order_no: 'SO20260930424', customer_id: 1, customer_name: '远洋集团', type: 'VEHICLE_BREAKDOWN', level: 'CRITICAL', status: 'CLOSED', detected_by: 'SYSTEM', detection_rule: 'STALL_OVER_THRESHOLD', occurred_at: '2026-09-29T02:00:00Z', sla_delay_minutes: 200, sla_breached: true, risk_score: 4, assigned_to: 3, merged_count: 0, version: 3, created_at: '2026-09-29T02:00:00Z', updated_at: '2026-09-29T12:00:00Z', closed_at: '2026-09-29T12:00:00Z', close_reason: 'DELIVERED', vehicle_plate: '津A·12345', impact_summary: 'CASE-B 已闭环案例（分析/审批/通知/跟进/关闭）' },
@@ -412,7 +412,7 @@ function otherExceptions(): ExceptionListItem[] {
     { id: 39, case_no: 'EX20260928003', order_id: 455, order_no: 'SO20260930455', customer_id: 4, customer_name: '珠江实业', type: 'DELAY_RISK', level: 'HIGH', status: 'PROCESSING', detected_by: 'SYSTEM', detection_rule: 'ETA_BREACH_SLA', occurred_at: '2026-09-28T06:00:00Z', sla_delay_minutes: 100, sla_breached: true, risk_score: 3, assigned_to: 3, merged_count: 0, version: 1, created_at: '2026-09-28T06:00:00Z', updated_at: '2026-09-28T11:00:00Z', vehicle_plate: '沪B·88001', impact_summary: '预计延误 100 分钟' },
   ]
   const levels = ['LOW', 'MEDIUM', 'HIGH'] as const
-  const statuses = ['DETECTED', 'CONFIRMING', 'PROCESSING', 'RESOLVED', 'CLOSED'] as const
+  const statuses = ['DETECTED', 'PROCESSING', 'RESOLVED', 'CLOSED'] as const
   const generated: ExceptionListItem[] = []
   for (let i = 0; i < 43; i += 1) {
     const level = levels[i % levels.length]
@@ -653,10 +653,10 @@ export const notifications: Notification[] = [
 
 export const exceptionEvents: ExceptionEvent[] = [
   { id: 1, workspace_id: 1, exception_id: 1, event_type: 'DETECTED', actor_type: 'SYSTEM', actor_id: null, from_status: null, to_status: 'DETECTED', note: '规则 STALL_OVER_THRESHOLD：济南停滞 180 分钟', detail: { detection_rule: 'STALL_OVER_THRESHOLD', stall_minutes: 180 }, occurred_at: '2026-09-30T01:00:00Z' },
-  { id: 2, workspace_id: 1, exception_id: 1, event_type: 'MESSAGE_ADDED', actor_type: 'USER', actor_id: 3, from_status: 'DETECTED', to_status: 'CONFIRMING', note: '录入承运商消息并触发解析', detail: { carrier_message_id: 1, parse_status: 'PARSED' }, occurred_at: '2026-09-30T00:10:00Z' },
-  { id: 3, workspace_id: 1, exception_id: 1, event_type: 'CONFIRMED', actor_type: 'USER', actor_id: 3, from_status: 'DETECTED', to_status: 'CONFIRMING', note: '信息完整，确认异常', detail: null, occurred_at: '2026-09-30T00:20:00Z' },
-  { id: 4, workspace_id: 1, exception_id: 1, event_type: 'ANALYSIS_REQUESTED', actor_type: 'USER', actor_id: 3, from_status: 'CONFIRMING', to_status: 'ANALYZING', note: '触发 AI 分析（ANALYZE_EXCEPTION）', detail: { analysis_id: 2 }, occurred_at: '2026-09-30T01:00:00Z' },
-  { id: 5, workspace_id: 1, exception_id: 1, event_type: 'ANALYSIS_READY', actor_type: 'AI', actor_id: null, from_status: 'ANALYZING', to_status: 'PROCESSING', note: '分析完成，规则等级 CRITICAL，生成 3 张审批单', detail: { analysis_id: 2, risk_level_calculated: 'CRITICAL', approvals: 3 }, occurred_at: '2026-09-30T01:00:00Z' },
+  { id: 2, workspace_id: 1, exception_id: 1, event_type: 'MESSAGE_ADDED', actor_type: 'USER', actor_id: 3, from_status: 'DETECTED', to_status: 'DETECTED', note: '录入承运商消息并触发解析（4 状态模型：不自动推进状态）', detail: { carrier_message_id: 1, parse_status: 'PARSED' }, occurred_at: '2026-09-30T00:10:00Z' },
+  { id: 3, workspace_id: 1, exception_id: 1, event_type: 'CONFIRMED', actor_type: 'USER', actor_id: 3, from_status: 'DETECTED', to_status: 'PROCESSING', note: '信息完整，确认异常，进入处理中', detail: null, occurred_at: '2026-09-30T00:20:00Z' },
+  { id: 4, workspace_id: 1, exception_id: 1, event_type: 'ANALYSIS_REQUESTED', actor_type: 'USER', actor_id: 3, from_status: 'PROCESSING', to_status: 'PROCESSING', note: '触发 AI 分析（ANALYZE_EXCEPTION）', detail: { analysis_id: 2 }, occurred_at: '2026-09-30T01:00:00Z' },
+  { id: 5, workspace_id: 1, exception_id: 1, event_type: 'ANALYSIS_READY', actor_type: 'AI', actor_id: null, from_status: 'PROCESSING', to_status: 'PROCESSING', note: '分析完成，规则等级 CRITICAL，生成 3 张审批单', detail: { analysis_id: 2, risk_level_calculated: 'CRITICAL', approvals: 3 }, occurred_at: '2026-09-30T01:00:00Z' },
 ]
 
 /* -------------------------------------------------------------- 审计 */
@@ -721,7 +721,7 @@ export const dashboardSummary: DashboardSummary = {
   sla_breached: 29,
   sla_breached_open: 18,
   by_level: { CRITICAL: 14, HIGH: 14, MEDIUM: 18, LOW: 4 },
-  by_status: { DETECTED: 9, CONFIRMING: 10, ANALYZING: 4, PROCESSING: 9, RESOLVED: 7, CLOSED: 11 },
+  by_status: { DETECTED: 9, PROCESSING: 23, RESOLVED: 7, CLOSED: 11 },
 }
 
 /** 实测趋势点字段：detected / breached / resolved / closed */

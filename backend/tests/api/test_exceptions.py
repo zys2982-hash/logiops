@@ -7,7 +7,6 @@ from app.models.enums import ExceptionStatus
 from app.models.exception import ExceptionCase
 from app.models.master import Customer
 from app.repositories import Repos
-from app.services.common import apply_transition
 from app.services.exceptions import ExceptionService
 from tests.unit import _support
 
@@ -107,7 +106,7 @@ def test_confirm_analyze_and_messages_flow(client, bootstrap, operator_headers, 
 
     confirmed = client.post(f"{EXCEPTIONS}/{case_id}/confirm", headers=operator_headers)
     assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["status"] == "CONFIRMING"
+    assert confirmed.json()["status"] == "PROCESSING"
 
     # 重复确认 → 409 状态机冲突
     conflict = client.post(f"{EXCEPTIONS}/{case_id}/confirm", headers=operator_headers)
@@ -366,7 +365,6 @@ def test_resolve_then_close_from_processing(client, db_session, bootstrap, opera
     case = _support.detected_exception(repos, bootstrap)
     service = ExceptionService(repos)
     service.confirm(case.id, expected_version=case.version, actor_id=None)
-    apply_transition(case, "EXCEPTION", ExceptionStatus.ANALYZING)
     analysis = _support.make_analysis(repos, case, output=_support.ai_output())
     service.apply_analysis_result(analysis.id)
     db_session.commit()

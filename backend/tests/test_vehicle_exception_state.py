@@ -15,12 +15,9 @@ from typing import Any
 from sqlalchemy import select
 
 from app.models import AuditLog
-from app.models.enums import ExceptionStatus
 from app.models.exception import ExceptionCase
 from app.models.master import Vehicle
 from app.repositories import Repos
-from app.rules import state_machine
-from app.services.common import apply_transition, bump_version
 from app.services.exceptions import ExceptionService
 
 ORDERS = "/api/v1/orders"
@@ -72,15 +69,10 @@ def _create_case(client, headers, bootstrap, order_id: int, *, type_: str = "VEH
 
 
 def _to_processing(db_session, bootstrap, case_id: int) -> None:
-    """把手工建单推到 PROCESSING：resolve 只允许从 PROCESSING 进入（状态机 §8.2）。"""
+    """把手工建单推到 PROCESSING：4 状态模型里「确认」即进入处理中。"""
     repos = Repos(db_session, workspace_id=bootstrap["workspace_id"])
     service = ExceptionService(repos)
     service.confirm(case_id, actor_id=bootstrap["users"]["OPERATOR"].id)
-    case = service.get(case_id)
-    apply_transition(case, state_machine.EntityKind.EXCEPTION, ExceptionStatus.ANALYZING)
-    apply_transition(case, state_machine.EntityKind.EXCEPTION, ExceptionStatus.PROCESSING)
-    bump_version(case)
-    repos.exceptions.save(case)
     db_session.commit()
 
 

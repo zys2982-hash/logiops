@@ -26,7 +26,7 @@ def test_bridge_is_disabled_by_default_and_returns_error():
 
 
 def test_analyze_endpoint_degrades_cleanly_when_ai_disabled(client, db_session, bootstrap, admin_headers):
-    """停用时发起分析：接口不 500，异常被退回 CONFIRMING，分析记录 FAILED 且 error_code=AI_DISABLED。"""
+    """停用时发起分析：接口不 500，异常保持在「处理中」，分析记录 FAILED 且 error_code=AI_DISABLED。"""
     from app.models import AiAnalysis
     from app.seed import reset_demo_data
 
@@ -35,6 +35,15 @@ def test_analyze_endpoint_degrades_cleanly_when_ai_disabled(client, db_session, 
 
     page = client.get("/api/v1/exceptions?q=EX20260930001&page_size=1", headers=admin_headers).json()
     case = page["items"][0]
+
+    # 4 状态模型：CASE-A 停在「待确认」，先确认进入「处理中」才能发起分析
+    confirmed = client.post(
+        f"/api/v1/exceptions/{case['id']}/confirm",
+        headers=admin_headers,
+        json={"expected_version": case["version"]},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    case = confirmed.json()
 
     settings = get_settings()
     original = settings.ai_enabled
@@ -53,7 +62,7 @@ def test_analyze_endpoint_degrades_cleanly_when_ai_disabled(client, db_session, 
         settings.ai_enabled = original
 
     refreshed = client.get(f"/api/v1/exceptions/{case['id']}", headers=admin_headers).json()
-    assert refreshed["status"] == "CONFIRMING", "AI 失败后异常应退回 CONFIRMING，人工可继续处理"
+    assert refreshed["status"] == "PROCESSING", "AI 失败后异常仍停在「处理中」，人工可继续处置"
     rows = (
         db_session.query(AiAnalysis)
         .filter(AiAnalysis.exception_id == case["id"], AiAnalysis.error_code == "AI_DISABLED")

@@ -40,7 +40,8 @@ type Entry =
   | { kind: 'incident-start'; at: string; incident: TimelineIncident }
   | { kind: 'incident-end'; at: string; incident: TimelineIncident }
 
-const OPEN_STATUSES = new Set(['DETECTED', 'CONFIRMING', 'ANALYZING', 'PROCESSING'])
+// 4 状态模型：未结束 = 待确认 / 处理中（旧 CONFIRMING/ANALYZING 归一到处理中）
+const OPEN_STATUSES = new Set(['DETECTED', 'PROCESSING', 'CONFIRMING', 'ANALYZING'])
 
 const entries = computed<Entry[]>(() => {
   const list: Entry[] = props.events.map((event) => ({ kind: 'tracking', at: event.occurred_at, event }))

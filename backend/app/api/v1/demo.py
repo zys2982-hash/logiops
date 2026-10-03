@@ -161,7 +161,7 @@ class SetExceptionStatusRequest(BaseModel):
     status: str = Field(
         min_length=4,
         max_length=16,
-        description="目标状态：DETECTED / CONFIRMING / ANALYZING / PROCESSING / RESOLVED / CLOSED",
+        description="目标状态：DETECTED（待确认）/ PROCESSING（处理中）/ RESOLVED（已解决）/ CLOSED（已关闭）",
     )
     note: str | None = Field(default=None, max_length=255, description="留痕说明（写进事件与审计）")
 

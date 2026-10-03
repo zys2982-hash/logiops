@@ -92,21 +92,47 @@ class ExceptionLevel(StrEnum):
 
 
 class ExceptionStatus(StrEnum):
+    # 对外只有 4 个状态（用户口径：状态太多、触发链看不懂）：
+    #   待确认 DETECTED → 处理中 PROCESSING → 已解决 RESOLVED → 已关闭 CLOSED
     DETECTED = "DETECTED"
-    CONFIRMING = "CONFIRMING"
-    ANALYZING = "ANALYZING"
     PROCESSING = "PROCESSING"
     RESOLVED = "RESOLVED"
     CLOSED = "CLOSED"
+    # 历史兼容（不再由任何流程产生，仅用于读取旧数据；见 state_machine.LEGACY_EXCEPTION_STATUSES）：
+    #   CONFIRMING 已并入 PROCESSING（"确认即进入处理中"）
+    #   ANALYZING 随 AI 停用一并废弃（分析任务状态由 ai_analysis.status 表达）
+    CONFIRMING = "CONFIRMING"
+    ANALYZING = "ANALYZING"
+
+
+# 前端下拉/看板只暴露这 4 个（顺序即业务顺序）
+VISIBLE_EXCEPTION_STATUSES: tuple[ExceptionStatus, ...] = (
+    ExceptionStatus.DETECTED,
+    ExceptionStatus.PROCESSING,
+    ExceptionStatus.RESOLVED,
+    ExceptionStatus.CLOSED,
+)
+
+# 旧状态：读取时要按 PROCESSING 处理（状态机里也给了等价流转）
+LEGACY_EXCEPTION_STATUSES: frozenset[ExceptionStatus] = frozenset(
+    {ExceptionStatus.CONFIRMING, ExceptionStatus.ANALYZING}
+)
+
+
+def normalize_exception_status(status: str) -> str:
+    """把历史状态归一到 4 状态模型（CONFIRMING / ANALYZING → PROCESSING）。"""
+    text = str(status)
+    return "PROCESSING" if text in {str(s) for s in LEGACY_EXCEPTION_STATUSES} else text
 
 
 OPEN_EXCEPTION_STATUSES: frozenset[ExceptionStatus] = frozenset(
     {
         ExceptionStatus.DETECTED,
-        ExceptionStatus.CONFIRMING,
-        ExceptionStatus.ANALYZING,
         ExceptionStatus.PROCESSING,
         ExceptionStatus.RESOLVED,
+        # 历史状态也算"未关闭"，否则旧单会被当成已结束（自动关闭/车辆恢复逻辑会漏）
+        ExceptionStatus.CONFIRMING,
+        ExceptionStatus.ANALYZING,
     }
 )
 

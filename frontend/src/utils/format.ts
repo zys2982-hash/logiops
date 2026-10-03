@@ -63,17 +63,28 @@ export function riskScoreLabel(score?: number | null): string {
 /* -------------------------------------------------------------- 异常 */
 
 export const EXCEPTION_STATUS_MAP: Record<ExceptionStatus, Labeled> = {
+  // 4 状态模型（用户口径：状态别太多、触发链要看得懂）：
+  // 待确认（系统发现/手工建单，等人确认）→ 处理中（人在处置）→ 已解决 → 已关闭
   DETECTED: { label: '待确认', type: 'info' },
-  CONFIRMING: { label: '确认中', type: 'primary' },
-  ANALYZING: { label: 'AI 分析中', type: 'warning' },
   PROCESSING: { label: '处理中', type: 'warning' },
   RESOLVED: { label: '已解决', type: 'success' },
   CLOSED: { label: '已关闭', type: 'info' },
+  // 历史状态：旧数据读取时按「处理中」显示，已并入 PROCESSING；不出现在下拉选项里
+  CONFIRMING: { label: '处理中', type: 'warning' },
+  ANALYZING: { label: '处理中', type: 'warning' },
 }
 
-export const EXCEPTION_STATUS_OPTIONS = Object.entries(EXCEPTION_STATUS_MAP).map(([value, v]) => ({
+/** 下拉/筛选只暴露 4 个对外状态（顺序即业务顺序） */
+export const VISIBLE_EXCEPTION_STATUSES: ExceptionStatus[] = [
+  'DETECTED',
+  'PROCESSING',
+  'RESOLVED',
+  'CLOSED',
+]
+
+export const EXCEPTION_STATUS_OPTIONS = VISIBLE_EXCEPTION_STATUSES.map((value) => ({
   value,
-  label: v.label,
+  label: EXCEPTION_STATUS_MAP[value].label,
 }))
 
 export function exceptionStatusLabel(status?: ExceptionStatus | null): string {

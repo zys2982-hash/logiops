@@ -47,11 +47,10 @@ def test_full_scale_still_available(db_session, bootstrap):
     assert summary["seed_scale"] == "full"
     assert summary["counts"]["orders"] == 1000
     assert summary["counts"]["exceptions"] == 50
-    # 完整规模必须覆盖全部四种等级与五个状态（原断言，搬到本文件）
+    # 完整规模必须覆盖全部四种等级与四个状态（4 状态模型：旧 CONFIRMING/ANALYZING 已并入处理中）
     assert set(summary["exceptions_by_level"]) == {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
     assert set(summary["exceptions_by_status"]) >= {
         "DETECTED",
-        "CONFIRMING",
         "PROCESSING",
         "RESOLVED",
         "CLOSED",

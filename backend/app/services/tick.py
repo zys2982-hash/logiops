@@ -167,7 +167,9 @@ def _resolve_cleared_risks(repos: Repos, orders: list[Order]) -> list[int]:
         case = repos.exceptions.find_open_by_order(order.id)
         if case is None or str(case.status) != str(ExceptionStatus.PROCESSING):
             continue
-        eta_flow.refresh_case_impact(repos, case, order, eta_at=order.current_eta_at)
+        # 只升不降（与 eta_flow 文档口径一致）：SLA 数字按事实刷新，但绝不"系统悄悄把高危降级"；
+        # 风险真解除时由下面的 resolve 收口，而不是留一张"降级但还挂着"的单
+        eta_flow.refresh_case_impact(repos, case, order, eta_at=order.current_eta_at, allow_downgrade=False)
         if not bool(case.sla_breached):
             service.resolve(
                 case.id,

@@ -82,7 +82,7 @@ def _case_confirming(db_session, bootstrap, case_no: str) -> int:
         order_id=order.id,
         customer_id=bootstrap["customers"]["vip"].id,
         type="VEHICLE_BREAKDOWN",
-        status="CONFIRMING",
+        status="PROCESSING",
     )
     db_session.add(case)
     db_session.commit()

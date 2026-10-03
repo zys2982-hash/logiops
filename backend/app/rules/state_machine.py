@@ -29,16 +29,29 @@ ORDER_TRANSITIONS: dict[OrderStatus, set[OrderStatus]] = {
 }
 
 EXCEPTION_TRANSITIONS: dict[ExceptionStatus, set[ExceptionStatus]] = {
-    ExceptionStatus.DETECTED: {ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED},
-    ExceptionStatus.CONFIRMING: {ExceptionStatus.ANALYZING, ExceptionStatus.CLOSED},
-    ExceptionStatus.ANALYZING: {ExceptionStatus.PROCESSING, ExceptionStatus.CONFIRMING, ExceptionStatus.CLOSED},
-    ExceptionStatus.PROCESSING: {ExceptionStatus.RESOLVED, ExceptionStatus.CLOSED, ExceptionStatus.ANALYZING},
-    # ↑ PROCESSING → ANALYZING = "重新分析"：处理中的单子允许操作者再跑一次分析
-    #   （新证据/承运商更新恢复时间/原结论存疑时很常见）；不放开的话，
-    #   任何"已进入处理中"的单子都会变成不能再分析的死胡同。
+    # 对外 4 状态（用户口径）：待确认 → 处理中 → 已解决 → 已关闭
+    ExceptionStatus.DETECTED: {ExceptionStatus.PROCESSING, ExceptionStatus.CLOSED},
+    ExceptionStatus.PROCESSING: {ExceptionStatus.RESOLVED, ExceptionStatus.CLOSED},
     ExceptionStatus.RESOLVED: {ExceptionStatus.CLOSED},
     ExceptionStatus.CLOSED: set(),
+    # ↓ 历史兼容：旧的 CONFIRMING / ANALYZING 视同 PROCESSING（等价流转、可按 4 状态收口），
+    #   不再作为任何流程的目标状态；数据迁移脚本会把旧行改写成 PROCESSING。
+    ExceptionStatus.CONFIRMING: {
+        ExceptionStatus.PROCESSING,
+        ExceptionStatus.RESOLVED,
+        ExceptionStatus.CLOSED,
+    },
+    ExceptionStatus.ANALYZING: {
+        ExceptionStatus.PROCESSING,
+        ExceptionStatus.RESOLVED,
+        ExceptionStatus.CLOSED,
+    },
 }
+
+# 旧状态：只读兼容用（读取时归一化为 PROCESSING，见 enums.normalize_exception_status）
+LEGACY_EXCEPTION_STATUSES: frozenset[ExceptionStatus] = frozenset(
+    {ExceptionStatus.CONFIRMING, ExceptionStatus.ANALYZING}
+)
 
 TERMINAL_EXCEPTION_STATUSES = {ExceptionStatus.CLOSED}
 TERMINAL_ORDER_STATUSES = {OrderStatus.CLOSED, OrderStatus.CANCELLED}

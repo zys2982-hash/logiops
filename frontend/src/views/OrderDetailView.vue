@@ -57,7 +57,8 @@ const canHandleException = computed(() => auth.can(Perm.EXCEPTION_HANDLE))
 const demo = useDemoStore()
 /**
  * 两个口径必须分开（踩过坑）：
- * - **后端"未关闭"**含 RESOLVED：同一订单只允许一个未关闭异常（DETECTED/CONFIRMING/ANALYZING/PROCESSING/RESOLVED）
+ * - **后端"未关闭"**含 RESOLVED：同一订单只允许一个未关闭异常（DETECTED/PROCESSING/RESOLVED，
+ *   旧数据的 CONFIRMING/ANALYZING 也算未关闭）
  *   → 决定"能不能录入新异常"，UI 必须与后端一致，否则点了必然 409
  * - **展示口径**（用户要求）：只有 RESOLVED/CLOSED 才算"已结束"→ 时间线灰点
  */

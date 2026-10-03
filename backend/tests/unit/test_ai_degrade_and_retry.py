@@ -16,7 +16,6 @@ from app.core.errors import AppError
 from app.models.enums import AnalysisStatus, ApprovalStatus, ExceptionStatus, ParseStatus
 from app.services import ai_bridge, tick
 from app.services.approvals import ApprovalExecutor
-from app.services.common import apply_transition
 from app.services.exceptions import ExceptionService
 from tests.unit import _support
 
@@ -51,8 +50,8 @@ def test_ai_bridge_degrades_when_runner_raises(monkeypatch):
     assert ai_bridge.parse_message(None, None, 1)["error_code"] == ai_bridge.AI_OUTPUT_INVALID
 
 
-def test_request_analysis_degrades_and_rolls_back_to_confirming(db_session, bootstrap, monkeypatch):
-    """AI 不可用：ai_analysis=FAILED/LLM_UNAVAILABLE，异常 ANALYZING → CONFIRMING，不抛异常。"""
+def test_request_analysis_degrades_without_blocking(db_session, bootstrap, monkeypatch):
+    """AI 不可用：ai_analysis=FAILED/LLM_UNAVAILABLE，异常保持「处理中」，不抛异常。"""
     repos = _support.repos_for(db_session, bootstrap)
     case = _support.detected_exception(repos, bootstrap)
     service = ExceptionService(repos)
@@ -66,7 +65,7 @@ def test_request_analysis_degrades_and_rolls_back_to_confirming(db_session, boot
     analysis = repos.analyses.get(result["analysis_id"])
     assert analysis is not None and analysis.status == str(AnalysisStatus.FAILED)
     assert analysis.finished_at is not None
-    assert case.status == str(ExceptionStatus.CONFIRMING)  # 回退，业务不被阻塞
+    assert case.status == str(ExceptionStatus.PROCESSING)  # 4 状态模型：分析失败不改异常状态
 
     events, _ = repos.exception_events.list_for_case(case.id)
     assert "ANALYSIS_FAILED" in {event.event_type for event in events}
@@ -111,7 +110,7 @@ def test_add_message_degrades_without_ai(db_session, bootstrap, monkeypatch):
     )
     assert result["parse_status"] == str(ParseStatus.FAILED)
     assert result["error_code"] == ai_bridge.LLM_UNAVAILABLE
-    assert result["exception_status"] == str(ExceptionStatus.CONFIRMING)  # DETECTED → CONFIRMING
+    assert result["exception_status"] == str(ExceptionStatus.DETECTED)  # 4 状态模型：录消息不自动推进
     message = repos.messages.get(result["message_id"])
     assert message is not None and message.parse_error
 
@@ -161,7 +160,6 @@ def test_run_tick_delivers_and_auto_closes(db_session, bootstrap):
 
     service = ExceptionService(repos)
     service.confirm(case.id, expected_version=case.version, actor_id=None)
-    apply_transition(case, "EXCEPTION", ExceptionStatus.ANALYZING)
     analysis = _support.make_analysis(repos, case, output=_support.ai_output())
     service.apply_analysis_result(analysis.id)
     assert case.status == str(ExceptionStatus.PROCESSING)

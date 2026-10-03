@@ -43,7 +43,7 @@ def test_state_machine_rejects_invalid_transition():
     else:  # pragma: no cover
         raise AssertionError("非法流转必须报错")
 
-    state_machine.plan_transition("EXCEPTION", ExceptionStatus.DETECTED, ExceptionStatus.CONFIRMING)
+    state_machine.plan_transition("EXCEPTION", ExceptionStatus.DETECTED, ExceptionStatus.PROCESSING)
     assert state_machine.is_terminal("EXCEPTION", ExceptionStatus.CLOSED)
 
 
