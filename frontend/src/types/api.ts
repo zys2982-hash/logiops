@@ -387,6 +387,39 @@ export interface RiskFactor {
   detail?: string | null
 }
 
+/** 因子的事实来源（GET /exceptions/{id} 的 risk_explanation） */
+export interface RiskFactorSource {
+  kind: string
+  text: string
+  ref?: Record<string, unknown> | null
+}
+
+/** 因子的来源明细：把「在途信号 → 因子」这条链显式给出 */
+export interface RiskFactorWithSources extends RiskFactor {
+  sources?: RiskFactorSource[]
+}
+
+/** 这张异常单由哪些在途信号构成（检测 / 合并 / 轨迹 / 承运商消息 / 人工延误） */
+export interface RiskSignal {
+  kind: string
+  kind_label: string
+  at?: string | null
+  text: string
+}
+
+export interface RiskExplanation {
+  factors: RiskFactorWithSources[]
+  signals: RiskSignal[]
+  summary: {
+    signals_total: number
+    by_kind: Record<string, number>
+    merged_count: number
+    detected_by?: string | null
+    detection_rule?: string | null
+  }
+  note: string
+}
+
 /** 列表/详情共用的异常字段（列表为扁平摘要，详情额外带嵌套对象） */
 export interface ExceptionListItem {
   id: number
@@ -416,6 +449,8 @@ export interface ExceptionListItem {
   sla_breached: boolean
   risk_score?: number | null
   risk_factors?: RiskFactor[] | null
+  /** 详情才返回：因子的来源 + 信号流（列表为 null） */
+  risk_explanation?: RiskExplanation | null
   assigned_to?: number | null
   resolved_at?: string | null
   closed_at?: string | null

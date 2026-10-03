@@ -41,6 +41,28 @@ const workspace = useWorkspaceStore()
 const exceptionId = computed(() => Number(route.params.id))
 
 const exception = ref<ExceptionDetail | null>(null)
+
+/**
+ * 风险可解释性（用户反馈："一个在途异常就对应一行异常单，信号像是凭空变成了单"）：
+ * 后端把「在途信号 → 因子」的链路一并返回，这里负责展开显示 —— 因子的证据来源 + 本单的信号流。
+ */
+const riskExplanation = computed(() => exception.value?.risk_explanation ?? null)
+const riskFactorRows = computed(
+  () => riskExplanation.value?.factors ?? exception.value?.risk_factors ?? [],
+)
+const SOURCE_KIND_LABEL: Record<string, string> = {
+  MANUAL_DELAY: '人工录入',
+  SLA_SNAPSHOT: '规则快照',
+  SLA_RULE: 'SLA 规则',
+  CUSTOMER_LEVEL: '客户等级',
+  VEHICLE_STATUS: '车辆现状',
+  ROOT_CAUSE: '原因记录',
+  SLA_EVAL: 'SLA 判定',
+}
+
+function sourceKindLabel(kind: string): string {
+  return SOURCE_KIND_LABEL[kind] ?? kind
+}
 const trackingEvents = ref<TrackingEvent[]>([])
 const messages = ref<CarrierMessage[]>([])
 const followups = ref<FollowupTask[]>([])
@@ -577,16 +599,53 @@ onMounted(async () => {
               <RiskTag :level="exception.level" :score="exception.risk_score" show-score size="large" />
               <span class="u-text-muted">0→低 / 1-2→中 / 3→高 / 4→严重（封顶）</span>
             </div>
-            <el-table
-              :data="exception.risk_factors ?? []"
-              size="small"
-              border
-              empty-text="无风险因子明细"
-            >
-              <el-table-column prop="label" label="因子" min-width="120" />
+            <el-table :data="riskFactorRows" size="small" border empty-text="无风险因子明细">
+              <el-table-column type="expand">
+                <template #default="{ row }">
+                  <div v-if="row.sources?.length" class="factor-sources">
+                    <div v-for="(source, index) in row.sources" :key="index" class="factor-source">
+                      <el-tag size="small" effect="plain">{{ sourceKindLabel(source.kind) }}</el-tag>
+                      <span>{{ source.text }}</span>
+                    </div>
+                  </div>
+                  <span v-else class="u-text-muted">该因子没有额外证据来源</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="label" label="因子" min-width="110" />
               <el-table-column prop="weight" label="权重" width="60" align="center" />
-              <el-table-column prop="detail" label="说明" min-width="180" />
+              <el-table-column prop="detail" label="说明" min-width="170" />
+              <el-table-column label="依据" width="110">
+                <template #default="{ row }">
+                  <span v-if="row.sources?.length" class="u-text-muted">
+                    {{ row.sources.length }} 条（展开）
+                  </span>
+                  <span v-else class="u-text-muted">—</span>
+                </template>
+              </el-table-column>
             </el-table>
+
+            <template v-if="riskExplanation">
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                class="u-mt-8"
+                :title="riskExplanation.note"
+                :description="`本单由 ${riskExplanation.summary.signals_total} 个信号构成：检测建单 ${riskExplanation.summary.by_kind.DETECTION ?? 0} 次 / 合并 ${riskExplanation.summary.merged_count} 次 / 轨迹 ${riskExplanation.summary.by_kind.TRACKING ?? 0} 条 / 承运商消息 ${riskExplanation.summary.by_kind.MESSAGE ?? 0} 条`"
+              />
+              <div class="u-text-muted u-mt-8 u-mb-8">信号流（新 → 旧）</div>
+              <el-timeline>
+                <el-timeline-item
+                  v-for="(signal, index) in riskExplanation.signals"
+                  :key="index"
+                  :timestamp="formatDateTime(signal.at, 'MM-DD HH:mm')"
+                  placement="top"
+                >
+                  <el-tag size="small" effect="plain">{{ signal.kind_label }}</el-tag>
+                  <span class="u-ml-8">{{ signal.text }}</span>
+                </el-timeline-item>
+              </el-timeline>
+            </template>
           </PanelCard>
         </div>
 
@@ -767,6 +826,21 @@ onMounted(async () => {
 .risk-head {
   display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+/* 因子展开行：这条因子是"哪些在途信号"算出来的（用户反馈：信号像是凭空变成了异常单） */
+.factor-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.factor-source {
+  display: flex;
+  align-items: baseline;
   gap: 8px;
 }
 </style>

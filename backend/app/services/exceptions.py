@@ -39,7 +39,7 @@ from app.models.exception import CarrierMessage, ExceptionCase
 from app.models.transport import Order
 from app.repositories import Repos
 from app.rules import state_machine
-from app.services import ai_bridge, detection_flow, eta_flow, read_models
+from app.services import ai_bridge, detection_flow, eta_flow, explain, read_models
 from app.services.common import (
     add_event,
     apply_transition,
@@ -1507,6 +1507,8 @@ class ExceptionService:
             "sla_breached": bool(case.sla_breached),
             "risk_score": case.risk_score,
             "risk_factors": case.risk_factors_json or [],
+            # 可解释性：每个因子的事实来源 + 这张单由哪些在途信号构成（用户反馈"信号像是凭空变成一张单"）
+            "risk_explanation": explain.risk_explanation(self.repos, case, order),
             "assigned_to": case.assigned_to,
             "resolved_at": read_models.iso(case.resolved_at),
             "closed_at": read_models.iso(case.closed_at),

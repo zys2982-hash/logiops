@@ -151,6 +151,7 @@ class ExceptionOut(BaseModel):
     sla_breached: bool | None = None
     risk_score: int | None = None
     risk_factors: list[dict[str, Any]] | None = None
+    risk_explanation: dict[str, Any] | None = None
     assigned_to: int | None = None
     resolved_at: str | None = None
     closed_at: str | None = None
