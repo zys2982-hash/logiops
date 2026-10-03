@@ -45,9 +45,12 @@ def test_seed_scale_and_idempotency(client, db_session, bootstrap):
     assert counts["exceptions"] == 50
     assert first["orders_by_status"] == {"CREATED": 300, "DELIVERED": 300, "DISPATCHED": 100, "IN_TRANSIT": 300}
     assert set(first["exceptions_by_level"]) == {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+    # 注意：演示数据**不铺 ANALYZING**——它是"分析任务正在跑"的瞬时状态，
+    # 单独铺出来会出现"显示分析中、没有分析记录、又不能发起分析"的死胡同
     assert set(first["exceptions_by_status"]) >= {
-        "DETECTED", "CONFIRMING", "ANALYZING", "PROCESSING", "RESOLVED", "CLOSED"
+        "DETECTED", "CONFIRMING", "PROCESSING", "RESOLVED", "CLOSED"
     }
+    assert "ANALYZING" not in first["exceptions_by_status"]
 
     second = seed_workspace(db_session, bootstrap)
     assert second["counts"] == counts
