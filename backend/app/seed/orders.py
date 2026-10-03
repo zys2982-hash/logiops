@@ -20,6 +20,11 @@ from app.seed import catalog
 ORDER_TOTAL = 1000
 ORDER_PREFIX = "SO20260930"
 
+# 精简演示规模（默认）：只建脚本化案例真正需要的那几张订单。
+# 21 = CASE-A（车辆故障全闭环）、24 = CASE-D1（延误 25min 不违约）、
+# 23 = 供 CASE-D2（延误 31min 违约）使用的空闲 IN_TRANSIT 单。
+COMPACT_ORDER_INDICES: tuple[int, ...] = (21, 23, 24)
+
 # 状态分布：300 已完成 / 400 运输中（300 IN_TRANSIT + 100 DISPATCHED）/ 300 待发车
 BASE_STATUS_COUNTS: dict[str, int] = {
     str(OrderStatus.DELIVERED): 300,
@@ -134,14 +139,19 @@ def build_orders(
     vehicles: list[Vehicle],
     drivers: list[Driver],
     sla_rules_list: list[SlaRule],
+    indices: tuple[int, ...] | None = None,
 ) -> tuple[list[Order], dict[int, dict[str, Any]]]:
-    """生成订单（含 SLA 快照）与"轨迹计划"，返回 (orders, plans)。"""
+    """生成订单（含 SLA 快照）与"轨迹计划"，返回 (orders, plans)。
+
+    ``indices`` 为空时生成全部 1000 单（完整规模）；传 ``COMPACT_ORDER_INDICES``
+    则只生成脚本化案例需要的那几张（精简演示规模）。
+    """
     statuses = status_plan(rng)
     orders: list[Order] = []
     plans: dict[int, dict[str, Any]] = {}
     match_cache: dict[str, Any] = {}
 
-    for index in range(1, ORDER_TOTAL + 1):
+    for index in indices or range(1, ORDER_TOTAL + 1):
         customer = _customer_for(index, rng, customers)
         plan = _route_for(index, rng)
         status = statuses[index]
@@ -302,8 +312,17 @@ def build_tracking_events(
     orders: list[Order],
     plans: dict[int, dict[str, Any]],
 ) -> list[TrackingEvent]:
+    """按"轨迹计划"生成轨迹事件。
+
+    计划键是**订单序号**（1 起，即 SO20260930XXX 的后三位）。精简规模下序号不连续
+    （只建 21/23/24），所以这里按订单号对应订单，不能用列表位置下标。
+    """
+    by_order_no = {order.order_no: order for order in orders}
     events: list[TrackingEvent] = []
-    for index, order in enumerate(orders, start=1):
+    for index in sorted(plans):
+        order = by_order_no.get(order_no_of(index))
+        if order is None:
+            continue
         for spec in plans[index]["events"]:
             city = spec["city"]
             coords = catalog.CITY_COORDS.get(city)

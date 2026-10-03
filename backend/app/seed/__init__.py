@@ -2,12 +2,16 @@
 
 对外契约（其他模块/AI/demo 只依赖这两个函数）::
 
-    reset_demo_data(session, *, workspace_id=None, scenario="case-a") -> dict  # 先清空该工作区业务数据再重建（幂等）
-    seed_all(session, *, workspace_id=None) -> dict                            # 只写入，不清空
+    reset_demo_data(session, *, workspace_id=None, scenario="case-a", scale=None) -> dict  # 先清空再重建（幂等）
+    seed_all(session, *, workspace_id=None, scale=None) -> dict                            # 只写入，不清空
 
-规模：1 工作区 / 4 用户 / 12 客户 / 4 承运商 / 24 车辆 / 24 司机 / 3 SLA 规则 /
-1000 订单 / 5500+ 轨迹 / 50 异常（含 CASE-A..E 脚本化案例）。
-随机种子固定 20260930；所有状态、等级、ETA、违约都由 app.rules 真算。
+两种规模（``scale`` 省略时取配置 ``SEED_SCALE``，默认 compact）：
+- **compact（默认，精简演示）**：3 订单 / 3 异常，覆盖全部 2 种异常类型
+  （CASE-A 车辆故障全闭环 + CASE-D 延误风险的 25min/31min 违约边界）
+- **full（完整规模）**：1000 订单 / 5500+ 轨迹 / 50 异常（含 CASE-A..E），用于压测/分页/统计演示
+
+固定元素（两种规模都有）：1 工作区 / 4 用户 / 12 客户 / 4 承运商 / 24 车辆 / 24 司机 /
+3 SLA 规则 / 知识库文档。随机种子固定 20260930；状态、等级、ETA、违约都由 app.rules 真算。
 """
 
 from __future__ import annotations
@@ -33,13 +37,22 @@ from app.models.ops import AuditLog
 from app.models.transport import Order, TrackingEvent
 from app.repositories import Repos
 from app.seed import catalog
-from app.seed.cases import add_audit, build_all_cases
-from app.seed.orders import ORDER_TOTAL, build_orders, build_tracking_events
+from app.seed.cases import add_audit, build_all_cases, build_case_a, build_case_d
+from app.seed.orders import COMPACT_ORDER_INDICES, ORDER_TOTAL, build_orders, build_tracking_events
 from app.seed.state import SeedContext
 
 logger = logging.getLogger("logiops.seed")
 
 DEFAULT_SCENARIO = "case-a"
+# 演示数据规模：compact（默认，3 单，每种异常类型 1 单）| full（1000 单完整规模）
+SCALE_COMPACT = "compact"
+SCALE_FULL = "full"
+
+
+def resolve_scale(scale: str | None = None) -> str:
+    """规模取值：显式参数 > 配置 SEED_SCALE > 默认 compact。"""
+    chosen = (scale or get_settings().seed_scale or SCALE_COMPACT).strip().lower()
+    return SCALE_FULL if chosen == SCALE_FULL else SCALE_COMPACT
 
 __all__ = ["prepare_demo_clock", "reset_demo_data", "seed_all", "sync_demo_clock_setting"]
 
@@ -438,8 +451,18 @@ def sync_demo_clock_setting(session: Session, workspace_id: int) -> int:
 
 
 # --- 公开 API -----------------------------------------------------------------
-def seed_all(session: Session, *, workspace_id: int | None = None) -> dict[str, Any]:
-    """只写入（不清空）：调用方负责保证工作区干净。"""
+def seed_all(
+    session: Session,
+    *,
+    workspace_id: int | None = None,
+    scale: str | None = None,
+) -> dict[str, Any]:
+    """只写入（不清空）：调用方负责保证工作区干净。
+
+    ``scale="compact"``（默认）：只建 3 张订单 + CASE-A/CASE-D 共 3 个异常
+    （覆盖全部 2 种异常类型）；``scale="full"``：完整 1000 单 / 50 异常。
+    """
+    chosen_scale = resolve_scale(scale)
     clock_info = prepare_demo_clock()
     rng = random.Random(catalog.RANDOM_SEED)
     now = utcnow_naive()
@@ -458,6 +481,7 @@ def seed_all(session: Session, *, workspace_id: int | None = None) -> dict[str, 
         vehicles=ctx.vehicles,
         drivers=ctx.drivers,
         sla_rules_list=ctx.sla_rules,
+        indices=COMPACT_ORDER_INDICES if chosen_scale == SCALE_COMPACT else None,
     )
     ctx.orders = orders
     ctx.plans = plans
@@ -466,7 +490,14 @@ def seed_all(session: Session, *, workspace_id: int | None = None) -> dict[str, 
     ctx.bump("orders", len(orders))
 
     # 先跑案例（会修正 CASE-A 的订单事实与轨迹计划），再落轨迹：保证时间线自洽
-    build_all_cases(ctx)
+    if chosen_scale == SCALE_COMPACT:
+        # 精简规模：只保留"每种异常类型各一单"的展示
+        #   CASE-A = 车辆故障全闭环（VEHICLE_BREAKDOWN）
+        #   CASE-D = 延误风险的违约边界（DELAY_RISK：25min 不违约 / 31min 违约）
+        build_case_a(ctx)
+        build_case_d(ctx)
+    else:
+        build_all_cases(ctx)
 
     events = build_tracking_events(workspace_id=workspace.id, orders=orders, plans=plans)
     session.add_all(events)
@@ -486,7 +517,8 @@ def seed_all(session: Session, *, workspace_id: int | None = None) -> dict[str, 
     session.flush()
 
     summary = _summary(ctx, scenario=DEFAULT_SCENARIO, cleared={})
-    summary["seed_total_orders"] = ORDER_TOTAL
+    summary["seed_scale"] = chosen_scale
+    summary["seed_total_orders"] = len(orders) if chosen_scale == SCALE_COMPACT else ORDER_TOTAL
     summary["clock"] = clock_info
     _persist_demo_settings(session, workspace.id, DEFAULT_SCENARIO)
     logger.info("seed 完成：%s", summary["counts"])
@@ -499,12 +531,16 @@ def reset_demo_data(
     workspace_id: int | None = None,
     scenario: str = DEFAULT_SCENARIO,
     with_knowledge: bool = True,
+    scale: str | None = None,
 ) -> dict[str, Any]:
-    """幂等重建：先清空该工作区的业务数据，再写入固定 seed（同样输入必然同样结果）。"""
+    """幂等重建：先清空该工作区的业务数据，再写入固定 seed（同样输入必然同样结果）。
+
+    ``scale`` 省略时取配置 ``SEED_SCALE``（默认 compact = 每种异常类型一单）。
+    """
     prepare_demo_clock()
     workspace = _ensure_workspace(session, workspace_id)
     cleared = _clear_workspace(session, workspace.id)
-    summary = seed_all(session, workspace_id=workspace.id)
+    summary = seed_all(session, workspace_id=workspace.id, scale=scale)
     summary["scenario"] = scenario
     summary["cleared"] = cleared
     _persist_demo_settings(session, workspace.id, scenario)

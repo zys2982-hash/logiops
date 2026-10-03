@@ -24,6 +24,10 @@ class TickRequest(BaseModel):
 
 class ResetRequest(BaseModel):
     scenario: str = Field(default="case-a", description="重置后停留的场景")
+    scale: str | None = Field(
+        default=None,
+        description="数据规模：compact（默认，每种异常类型一单）| full（1000 单完整规模）",
+    )
 
 
 class SetClockRequest(BaseModel):
@@ -174,8 +178,8 @@ def demo_reset(ctx: ContextDep, payload: ResetRequest) -> dict:
     if reset is None:
         raise AppError(ErrorCode.INTERNAL_ERROR, "seed 模块尚未实现（app/seed/__init__.py）")
     clock_state.reset()
-    summary = reset(ctx.session, workspace_id=ctx.workspace_id, scenario=payload.scenario)
-    return {"reset": True, "scenario": payload.scenario, "summary": summary}
+    summary = reset(ctx.session, workspace_id=ctx.workspace_id, scenario=payload.scenario, scale=payload.scale)
+    return {"reset": True, "scenario": payload.scenario, "scale": summary.get("seed_scale"), "summary": summary}
 
 
 @router.post("/actions/advance-to-less", summary="推进到主案例送达（用于演示自动关闭）")

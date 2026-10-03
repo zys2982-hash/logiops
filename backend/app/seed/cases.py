@@ -850,10 +850,18 @@ def build_case_e(ctx: SeedContext) -> list[ExceptionCase]:
 
 
 def _first_free_order(ctx: SeedContext, *, preferred_status: str) -> Any:
-    for index in range(30, len(ctx.orders) + 1):
+    """找一个"未被案例占用、且状态符合"的订单。
+
+    精简规模（compact）只生成脚本化案例需要的那几张订单，序号不连续，
+    因此这里按**实际存在的订单号**列举候选；完整规模仍从第 30 单开始找
+    （1..29 预留给 CASE-A..E，避免抢走它们的订单）。
+    """
+    indices = sorted(int(order.order_no[-3:]) for order in ctx.orders if order.order_no[-3:].isdigit())
+    start = 30 if any(index >= 30 for index in indices) else 0
+    for index in [item for item in indices if item >= start]:
         if index in ctx.used_order_indices:
             continue
-        if ctx.plans[index]["status"] == preferred_status:
+        if ctx.plans.get(index, {}).get("status") == preferred_status:
             ctx.used_order_indices.add(index)
             return ctx.order_at(index)
     raise RuntimeError(f"没有可用的 {preferred_status} 订单")

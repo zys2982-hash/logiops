@@ -43,8 +43,18 @@ class SeedContext:
         self.counts[key] = self.counts.get(key, 0) + amount
 
     def order_at(self, index: int) -> Order:
-        """订单序号（1 起）→ Order，即 SO20260930XXX。"""
-        return self.orders[index - 1]
+        """订单序号（1 起）→ Order，即 SO20260930XXX。
+
+        按**订单号**查找而不是列表下标：精简规模（compact）只生成脚本化案例需要的
+        那几张订单，列表不再按序号连续排列，下标取会越界。
+        """
+        from app.seed.orders import order_no_of
+
+        target = order_no_of(index)
+        for order in self.orders:
+            if order.order_no == target:
+                return order
+        raise IndexError(f"订单 {target} 不在本次 seed 范围内（当前规模可能为 compact）")
 
     def plan_at(self, index: int) -> dict[str, Any]:
         return self.plans[index]

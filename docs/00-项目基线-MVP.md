@@ -1149,15 +1149,27 @@ CLOCK_MODE=replay（默认）时全系统使用 ReplayClock，包括"订单送�
 
 ### 13.2 Seed 清单（固定随机种子 20260930，可 `--reset` 幂等重建）
 
+规模由 `SEED_SCALE` 控制（`reset_demo_data(..., scale=...)` / `POST /demo/actions/reset {scale}`）：
+
 ```text
+【compact（默认，界面清爽，面试演示用）】
+订单       3 单（SO20260930021/23/24，均为运输中）
+轨迹       24 条
+异常       3 个 —— 覆盖全部 2 种异常类型：
+             CASE-A 车辆故障 1 单（CRITICAL / CONFIRMING / 延误 270min 违约 / 含承运商消息）
+             CASE-D 延误风险 2 单（MEDIUM / RESOLVED：延误 25min 不违约 vs 31min 违约，SLA 边界对照）
+
+【full（完整规模，分页/统计/压测类演示用）】
+订单       1000 单（300 已完成 / 400 运输中 / 300 待发车）
+轨迹       5000+ 条（按订单时间线生成，固定种子）
+异常       50 个（含 CASE-A..E + 通用异常，覆盖各等级/各状态）
+
+两种规模共有的固定元素：
 workspace  1 个（"顺捷物流"）+ 4 个用户（owner/admin/operator/viewer，密码统一 Demo@12345）
 客户       12 个（NORMAL 8 / VIP 3 / SVIP 1），假电话 138****
 承运商     4 个      车辆 24 台      司机 24 名
 SLA 规则   DEFAULT(30h/30min)、CUSTOMER_LEVEL:VIP(24h/0)、CUSTOMER:VIP-01(24h/0)
-订单       1000 单（300 已完成 / 400 运输中 / 300 待发车，含 50 单异常订单）
-轨迹       5000+ 条（按订单时间线生成，固定种子）
 知识库     5 篇 Markdown → 约 40 个 chunk → 自动建索引
-异常       50 个（覆盖各等级/各状态分布，供列表与 Dashboard 演示）
 ```
 
 ### 13.3 脚本化案例（演示固定台词，每次结果一致）

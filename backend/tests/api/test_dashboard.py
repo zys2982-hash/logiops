@@ -21,6 +21,9 @@ CASE_A_ORDER_NO = "SO20260930021"
 
 
 def seed_workspace(db_session, bootstrap, **kwargs):
+    # 本文件断言的是**完整规模**（1000 单 / 50 异常），显式指定 scale="full"：
+    # 演示默认规模已改为 compact（每种异常类型一单，见 tests/test_seed_compact.py）
+    kwargs.setdefault("scale", "full")
     summary = reset_demo_data(
         db_session,
         workspace_id=bootstrap["workspace_id"],

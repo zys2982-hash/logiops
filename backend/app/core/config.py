@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # 演示与可复现
     demo_base_date: str = "2026-09-30T09:00:00+08:00"
     demo_random_seed: int = 20260930
+    # 演示数据规模：compact（默认，3 单，每种异常类型一单）| full（1000 单完整规模）
+    seed_scale: str = "compact"
     clock_mode: str = "replay"
     ai_mode: str = "replay"
     ai_replay_dir: str = "tests/fixtures/ai"
