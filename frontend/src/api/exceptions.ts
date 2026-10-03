@@ -82,6 +82,14 @@ export function resolveException(id: number, payload: ReasonPayload): Promise<Ex
   return post<ExceptionDetail>(`/exceptions/${id}/resolve`, payload)
 }
 
+/** POST /exceptions/{id}/delay  录入/修改人工延误（人报事实；是否违约仍由规则判） */
+export function recordDelay(
+  id: number,
+  payload: { expected_version: number; delay_minutes: number; note?: string },
+): Promise<ExceptionDetail> {
+  return post<ExceptionDetail>(`/exceptions/${id}/delay`, payload)
+}
+
 /** POST /exceptions/{id}/close  → CLOSED（body: reason_code, note） */
 export function closeException(id: number, payload: ClosePayload): Promise<ExceptionDetail> {
   return post<ExceptionDetail>(`/exceptions/${id}/close`, payload)

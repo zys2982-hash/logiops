@@ -552,7 +552,7 @@ onMounted(async () => {
             :loading="loading"
           />
 
-          <SlaImpactCard :exception="exception" />
+          <SlaImpactCard :exception="exception" @updated="refreshAfterWrite" />
 
           <PanelCard title="风险等级" subtitle="规则逐项加权，LLM 无权修改" icon="WarnTriangleFilled">
             <div class="risk-head u-mb-8">
