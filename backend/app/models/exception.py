@@ -49,6 +49,9 @@ class ExceptionCase(
     promised_delivery_at: Mapped[datetime | None] = mapped_column(DateTime)
     current_eta_at: Mapped[datetime | None] = mapped_column(DateTime)
     expected_eta_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 人工录入的延误分钟数（新口径：人报事实，是否违约仍由规则判）；
+    # 过渡期与 sla_delay_minutes 并存，ETA 引擎移除后它成为延误的唯一来源
+    delay_minutes: Mapped[int | None] = mapped_column(Integer)
     sla_delay_minutes: Mapped[int | None] = mapped_column(Integer)
     sla_breached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     risk_score: Mapped[int | None] = mapped_column(Integer)
