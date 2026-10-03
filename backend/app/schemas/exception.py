@@ -16,6 +16,20 @@ class ExceptionCreate(BaseModel):
     occurred_at: datetime
     note: str = Field(min_length=1, max_length=500)
     level: str | None = Field(default=None, description="LOW/MEDIUM/HIGH/CRITICAL，仅 ADMIN+")
+    delay_minutes: int | None = Field(
+        default=None,
+        ge=0,
+        le=100000,
+        description="人工录入的延误分钟（事实）；是否违约仍由 SLA 规则判定",
+    )
+
+
+class ExceptionDelay(BaseModel):
+    """POST /exceptions/{id}/delay 录入/修改人工延误。"""
+
+    expected_version: int
+    delay_minutes: int = Field(ge=0, le=100000, description="人工录入的延误分钟（负数/提前请填 0）")
+    note: str | None = Field(default=None, max_length=500)
 
 
 class ExceptionPatch(BaseModel):
@@ -132,6 +146,7 @@ class ExceptionOut(BaseModel):
     promised_delivery_at: str | None = None
     expected_eta_at: str | None = None
     current_eta_at: str | None = None
+    delay_minutes: int | None = None
     sla_delay_minutes: int | None = None
     sla_breached: bool | None = None
     risk_score: int | None = None

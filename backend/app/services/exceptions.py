@@ -124,6 +124,67 @@ class ExceptionService:
     def get(self, exception_id: int) -> ExceptionCase:
         return self.repos.exceptions.get_or_404(exception_id, "异常单不存在")
 
+    def _apply_manual_delay(self, case: ExceptionCase, order: Order, delay_minutes: int) -> None:
+        """人工录入的延误（事实）→ 反推 expected_eta_at，再用 SLA 规则判是否违约。
+
+        设计（docs/08）：人只报事实（延误多少分钟），**是否违约仍由规则算**。
+        这里刻意把 expected_eta_at 反推为「承诺 + 延误」，这样依赖该字段的既有逻辑
+        （AI 事实校验、guard、SLA 卡片）无需改动，口径仍然自洽。
+        """
+        from app.rules import sla as sla_rules  # 局部导入，避免模块级循环依赖
+        from app.services import eta_flow
+
+        match, promised = eta_flow.resolve_promised_at(self.repos, order)
+        if promised is None:
+            raise validation_error("该订单还没有承诺到达时间（未派车），无法录入延误")
+        delay = max(int(delay_minutes), 0)
+        case.delay_minutes = delay
+        case.promised_delivery_at = promised
+        case.expected_eta_at = promised + timedelta(minutes=delay)
+        impact = sla_rules.evaluate(
+            match, promised_delivery_at=promised, expected_eta_at=case.expected_eta_at
+        )
+        case.sla_delay_minutes = impact.delay_minutes
+        case.sla_breached = impact.breached
+
+    def set_delay(
+        self,
+        exception_id: int,
+        *,
+        delay_minutes: int,
+        note: str | None = None,
+        expected_version: int | None = None,
+        actor_id: int | None = None,
+    ) -> ExceptionCase:
+        """录入/修改人工延误：写 delay_minutes → 规则判违约 → 审计留痕。"""
+        case = self.get(exception_id)
+        check_version(case, expected_version, "异常单")
+        order = self.repos.orders.get_or_404(case.order_id, "订单不存在")
+        before = {
+            "delay_minutes": case.delay_minutes,
+            "sla_delay_minutes": case.sla_delay_minutes,
+            "sla_breached": case.sla_breached,
+        }
+        self._apply_manual_delay(case, order, delay_minutes)
+        bump_version(case)
+        self.repos.exceptions.save(case)
+        write_audit(
+            self.session,
+            self.repos,
+            "exception.delay_recorded",
+            resource_type="exception",
+            resource_id=case.id,
+            actor_id=actor_id,
+            before=before,
+            after={
+                "delay_minutes": case.delay_minutes,
+                "sla_delay_minutes": case.sla_delay_minutes,
+                "sla_breached": case.sla_breached,
+                "note": note,
+            },
+        )
+        return case
+
     def _enforce_analyze_rate_limit(self, actor_id: int | None) -> None:
         """AI 分析限流（基线 §10：1 次/5 秒 → 429 RATE_LIMITED）。
 
@@ -186,6 +247,7 @@ class ExceptionService:
         occurred_at: datetime | str,
         note: str,
         level: str | None = None,
+        delay_minutes: int | None = None,
         actor_id: int | None = None,
     ) -> ExceptionCase:
         order = self.repos.orders.get_or_404(order_id, "订单不存在")
@@ -220,6 +282,8 @@ class ExceptionService:
         case.impact_summary = note_text
         if level is not None:
             case.level = str(level).upper()
+        if delay_minutes is not None:
+            self._apply_manual_delay(case, order, delay_minutes)
         bump_version(case)
         self.repos.exceptions.save(case)
 

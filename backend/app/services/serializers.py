@@ -78,6 +78,7 @@ def exception_brief(repos: Repos, case: ExceptionCase) -> dict[str, Any]:
         "promised_delivery_at": read_models.iso(case.promised_delivery_at),
         "expected_eta_at": read_models.iso(case.expected_eta_at),
         "current_eta_at": read_models.iso(order.current_eta_at) if order else None,
+        "delay_minutes": getattr(case, "delay_minutes", None),
         "sla_delay_minutes": case.sla_delay_minutes,
         "sla_breached": bool(case.sla_breached),
         "risk_score": case.risk_score,
