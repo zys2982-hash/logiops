@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.core.clock import state as clock_state
 from app.core.clock import utcnow_naive
-from app.core.config import get_settings
+from app.core.config import current_clock_mode, get_settings
 from app.core.security import hash_password
 from app.models.ai import AiAnalysis, AiAnalysisStep, Approval
 from app.models.auth import User, Workspace, WorkspaceMember
@@ -415,11 +415,12 @@ def prepare_demo_clock() -> dict[str, Any]:
     （它在本进程内先 ``clock_state.reset()`` 再重建 seed，因此进程内自洽）。
     """
     settings = get_settings()
-    if settings.clock_mode.lower() == "system":
-        return {"clock_mode": settings.clock_mode, "offset_minutes": 0, "base_date": settings.demo_base_date}
+    mode = current_clock_mode()
+    if mode == "system":
+        return {"clock_mode": mode, "offset_minutes": 0, "base_date": settings.demo_base_date}
     clock_state.reset()
     return {
-        "clock_mode": settings.clock_mode,
+        "clock_mode": mode,
         "offset_minutes": clock_state.offset_minutes,
         "base_date": settings.demo_base_date,
     }

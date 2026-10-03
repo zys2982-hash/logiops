@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.api.v1 import build_router
-from app.core.config import get_settings
+from app.core.config import current_clock_mode, get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
 
@@ -59,5 +59,5 @@ def root() -> dict:
         "docs": "/docs",
         "api_prefix": settings.api_prefix,
         "ai_mode": settings.ai_mode,
-        "clock_mode": settings.clock_mode,
+        "clock_mode": current_clock_mode(),
     }

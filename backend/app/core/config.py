@@ -103,6 +103,28 @@ def current_ai_mode() -> str:
     return get_settings().ai_mode.lower()
 
 
+CLOCK_MODES: tuple[str, ...] = ("system", "replay")
+
+
+def set_clock_mode(mode: str) -> str:
+    """运行时切换时钟模式（system=真实时间 / replay=虚拟时钟），演示页开关用。
+
+    - 立即生效：``get_settings()`` 是 lru_cache 单例，``get_clock()`` 每次读它的
+      ``clock_mode``，所以改完下一次取时间就走新模式，**不需要重启**；
+    - 不写库：重启后回到 ``.env`` 的 ``CLOCK_MODE``（避免"库里写着 replay、实际跑 system"的错觉）；
+    - 只接受 system / replay，其余抛 ``ValueError``（由接口层转 422）。
+    """
+    normalized = (mode or "").strip().lower()
+    if normalized not in CLOCK_MODES:
+        raise ValueError(f"clock_mode 只能是 {CLOCK_MODES} 之一，收到 {mode!r}")
+    get_settings().clock_mode = normalized
+    return normalized
+
+
+def current_clock_mode() -> str:
+    return get_settings().clock_mode.lower()
+
+
 def reset_settings_cache() -> None:
     """测试用：清掉 lru_cache 重新读环境变量。"""
     get_settings.cache_clear()

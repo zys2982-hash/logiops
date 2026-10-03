@@ -22,6 +22,27 @@ const canControl = computed(() => auth.can(Perm.DEMO_CONTROL))
 /** 真实时间模式（CLOCK_MODE=system）下没有"虚拟时钟"可推：控件停用并说明原因，与后端 409 口径一致 */
 const isRealClock = computed(() => demo.clockMode !== 'replay')
 
+/** 运行时切换时钟模式：真实时间 ↔ 虚拟时钟（立即生效、不用重启，与顶部 AI 模式开关同一机制） */
+async function switchClockMode(mode: 'system' | 'replay'): Promise<void> {
+  if (mode === demo.clockMode) return
+  busy.value = true
+  try {
+    await demo.setClockMode(mode)
+    if (demo.lastError) {
+      logAction(`时钟模式切换失败：${demo.lastError}`)
+      ElMessage.error(`时钟模式切换失败：${demo.lastError}`)
+      return
+    }
+    const label = mode === 'replay' ? '虚拟时钟（可快进 / 跳转）' : '真实时间'
+    logAction(`时钟模式切到${label}`, `POST /demo/actions/set-clock-mode {clock_mode: "${mode}"}`)
+    if (demo.lastWarning) ElMessage.warning(demo.lastWarning)
+    else ElMessage.success(`时钟模式已切到${label}`)
+    fillTargetFromNow()
+  } finally {
+    busy.value = false
+  }
+}
+
 function logAction(action: string, api?: string): void {
   timeline.value.unshift({ time: new Date().toLocaleTimeString('zh-CN'), action, api })
   timeline.value = timeline.value.slice(0, 20)
@@ -130,14 +151,30 @@ onMounted(refresh)
             <el-tag v-else size="small" type="success" effect="plain">可控制</el-tag>
           </template>
 
+          <div class="clock-mode-row u-mb-12">
+            <span class="u-text-muted">时钟模式：</span>
+            <el-radio-group
+              :model-value="demo.clockMode"
+              size="small"
+              :disabled="!canControl || busy"
+              @change="(value: string) => switchClockMode(value as 'system' | 'replay')"
+            >
+              <el-radio-button value="system">真实时间</el-radio-button>
+              <el-radio-button value="replay">虚拟时钟</el-radio-button>
+            </el-radio-group>
+            <span class="u-text-muted" style="margin-left: 8px">
+              运行时切换、不用重启；重启后端后回到 .env 的默认值（当前 {{ demo.clockMode }}）
+            </span>
+          </div>
+
           <el-alert
             v-if="isRealClock"
             type="success"
             :closable="false"
             show-icon
             class="u-mb-12"
-            title="当前是真实时间模式（CLOCK_MODE=system）"
-            description="系统时间就是现实时间，不需要也不允许推进或跳转，因此下方「快进 / 跳到该时间」已停用；「重置到初始态」仍可用。需要可复现的虚拟时钟演示时，把 CLOCK_MODE 改成 replay 并重启后端。"
+            title="当前是真实时间模式：系统时间就是现实时间"
+            description="没有可推的虚拟时钟，所以下方「快进 / 跳到该时间」已停用；要演示这些就切到上面的「虚拟时钟」（立即生效，数据时间戳随之按虚拟时间写）。「重置到初始态」两种模式都可用。"
           />
 
           <el-descriptions :column="2" size="small" border class="u-mb-12">

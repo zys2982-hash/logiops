@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from sqlalchemy import text
 
 from app.core.clock import now_utc, state
-from app.core.config import get_settings
+from app.core.config import current_clock_mode, get_settings
 from app.db.session import get_engine
 from app.models import TABLES
 
@@ -30,7 +30,7 @@ def healthz() -> dict:
         "db": db_ok,
         "db_error": db_error,
         "app_env": settings.app_env,
-        "clock_mode": settings.clock_mode,
+        "clock_mode": current_clock_mode(),
         "ai_mode": settings.ai_mode,
         "demo_base_date": settings.demo_base_date,
         "clock_offset_minutes": state.offset_minutes,

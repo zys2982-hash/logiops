@@ -38,3 +38,19 @@ export interface DemoAiModeResult {
 export function demoSetAiMode(aiMode: 'replay' | 'live'): Promise<DemoAiModeResult> {
   return post<DemoAiModeResult>('/demo/actions/set-ai-mode', { ai_mode: aiMode })
 }
+
+/** POST /demo/actions/set-clock-mode 运行时切换时钟模式（system 真实时间 / replay 虚拟时钟） */
+export interface DemoClockModeResult {
+  ok: boolean
+  clock_mode: string
+  previous_clock_mode?: string
+  runtime_only?: boolean
+  now_utc: string
+  base_date: string
+  offset_minutes: number
+  warning?: string | null
+}
+
+export function demoSetClockMode(clockMode: 'system' | 'replay'): Promise<DemoClockModeResult> {
+  return post<DemoClockModeResult>('/demo/actions/set-clock-mode', { clock_mode: clockMode })
+}

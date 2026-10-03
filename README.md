@@ -38,7 +38,7 @@ FastAPI · SQLAlchemy 2.0 · MySQL 8 · Alembic · Vue 3.5 · Vite 6 · Element 
 > | **AI（T1 解析 / T2 分析 / T3 草稿）** | ⛔ **已停用**（`AI_ENABLED=false`） | 不调用大模型、不产出建议；界面显示「AI 已停用（待重构）」并隐藏分析按钮。代码保留，后续重新构造 |
 > | **ETA 速度模拟** | ⛔ **已停用**（`ETA_ENABLED=false`） | 不再按车速/里程推算到达时间；界面已无「当前 ETA / 首次 ETA / 速度」 |
 > | **延误时长** | ✅ 改为**人工录入** | 人在 SLA 卡填「预计送达」；**是否违约仍由 SLA 规则判定**（`延误 > 规则允许延迟`，`>` 而非 `>=`） |
-> | **时钟** | ✅ 改为**真实时间**（`CLOCK_MODE=system`） | 全系统直接用系统 `now()`，不再有"业务时间停在基准日"这回事；虚拟时钟（`ReplayClock` + `/demo/actions/tick`、`set-clock`）**代码保留、运行时不启用**：这三个入口在 system 模式下返回 409 `DEMO_CLOCK_DISABLED`，单元测试与一键验收仍用 `replay` 保证确定性 |
+> | **时钟** | ✅ 默认**真实时间**（`CLOCK_MODE=system`），可**运行时切换** | 全系统直接用系统 `now()`，不再有"业务时间停在基准日"这回事；演示页有「真实时间 / 虚拟时钟」开关（`POST /demo/actions/set-clock-mode`，与顶部 AI 模式开关同一机制：立即生效、不写库、重启后回到 `.env`）。切到虚拟时钟后 `ReplayClock` + `tick`/`set-clock` 照旧可用；真实时间模式下这三个接口返回 409 `DEMO_CLOCK_DISABLED`。单元测试与一键验收仍固定 `replay` 保证确定性 |
 > | 承诺到达时间 | ✅ 保留 | 仍由 SLA 规则算：发车时间 + 规则 `deadline_offset_hours`（匹配顺序 客户 → 等级 → 默认） |
 >
 > **因此下文凡提到「AI 分析 / 有界循环 ≤14 步 / ETA 三算法 / AI 事实校验 / 限流 / ReplayClock 固定基准日」的段落，指的是"保留在代码中、当前运行时不启用"的能力**——它们仍是设计与实现的组成部分，但演示与验收时不会执行。

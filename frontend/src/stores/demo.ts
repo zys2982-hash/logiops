@@ -161,6 +161,37 @@ export const useDemoStore = defineStore('demo', () => {
     }
   }
 
+  /** 运行时切换时钟模式（真实时间 / 虚拟时钟）：立即生效，后端重启后回到 .env 的 CLOCK_MODE */
+  async function setClockMode(mode: 'system' | 'replay'): Promise<void> {
+    loading.value = true
+    try {
+      const result = await demoApi.demoSetClockMode(mode)
+      state.value = {
+        ...state.value,
+        clock_mode: result.clock_mode,
+        now_utc: result.now_utc,
+        base_date: result.base_date,
+        offset_minutes: result.offset_minutes,
+      }
+      lastAction.value =
+        mode === 'replay' ? '时钟切到虚拟时钟（可快进 / 跳转）' : '时钟切到真实时间'
+      lastWarning.value = result.warning ?? null
+      lastError.value = null
+      mocked.value = false
+    } catch (error) {
+      if (!isFixtureFallback(error)) {
+        lastError.value = error instanceof Error ? error.message : '时钟模式切换失败'
+        return
+      }
+      state.value = { ...state.value, clock_mode: mode }
+      lastAction.value = `时钟模式切为 ${mode}（本地演示）`
+      lastWarning.value = null
+      mocked.value = true
+    } finally {
+      loading.value = false
+    }
+  }
+
   async function reset(scenario = 'case-a'): Promise<void> {
     loading.value = true
     try {
@@ -202,6 +233,7 @@ export const useDemoStore = defineStore('demo', () => {
     advanceToLess,
     setClock,
     setAiMode,
+    setClockMode,
     reset,
   }
 })

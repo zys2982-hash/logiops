@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from app.api.deps import ContextDep, require
 from app.core.clock import now_utc, parse_dt
 from app.core.clock import state as clock_state
-from app.core.config import get_settings, set_ai_mode
+from app.core.config import current_clock_mode, get_settings, set_ai_mode, set_clock_mode
 from app.core.errors import AppError, ErrorCode, validation_error
 from app.core.permissions import Perm
 
@@ -19,17 +19,17 @@ router = APIRouter(prefix="/demo", tags=["demo"], dependencies=[Depends(require(
 
 
 def _reject_when_real_clock(action: str) -> None:
-    """演示时钟只在 CLOCK_MODE=replay 下有意义；真实时间模式下明确拒绝，别让按钮"点了没反应"。
+    """演示时钟只在虚拟时钟（replay）下有意义；真实时间模式下明确拒绝，别让按钮"点了没反应"。
 
-    项目现行口径是真实时间（CLOCK_MODE=system）：系统时间就是现实时间，既不需要也无法推进。
-    需要虚拟时钟做可复现演示时，把 CLOCK_MODE 改回 replay 再重启后端。
+    项目默认口径是真实时间（CLOCK_MODE=system），但模式可**运行时切换**：
+    在演示页把时钟切到「虚拟时钟」即可恢复 tick/跳转（不需要重启）。
     """
-    mode = get_settings().clock_mode
-    if mode.lower() != "replay":
+    mode = current_clock_mode()
+    if mode != "replay":
         raise AppError(
             ErrorCode.DEMO_CLOCK_DISABLED,
             f"当前是真实时间模式（CLOCK_MODE={mode}），{action}已停用：系统时间就是现实时间，不需要推进",
-            {"clock_mode": mode, "hint": "把 CLOCK_MODE 改回 replay 并重启后端即可恢复虚拟时钟"},
+            {"clock_mode": mode, "hint": "在演示页把时钟切到「虚拟时钟」，或把 CLOCK_MODE 改成 replay 并重启后端"},
         )
 
 
@@ -61,6 +61,14 @@ class SetAiModeRequest(BaseModel):
     )
 
 
+class SetClockModeRequest(BaseModel):
+    clock_mode: str = Field(
+        min_length=4,
+        max_length=16,
+        description="时钟模式：system（真实时间，默认）或 replay（虚拟时钟：固定基准日 + tick/跳转推进）",
+    )
+
+
 def _seed_module():
     try:
         from app.seed import reset_demo_data  # type: ignore
@@ -77,11 +85,64 @@ def demo_state(ctx: ContextDep) -> dict:
         "base_date": clock_state.anchor().isoformat(),
         "offset_minutes": clock_state.offset_minutes,
         "now_utc": now_utc().isoformat(),
-        "clock_mode": settings.clock_mode,
+        "clock_mode": current_clock_mode(),
         "ai_mode": settings.ai_mode,
         "ai_enabled": settings.ai_enabled,
         "workspace_id": ctx.workspace_id,
         "seed_available": _seed_module() is not None,
+    }
+
+
+@router.post("/actions/set-clock-mode", summary="切换时钟模式（真实时间 / 虚拟时钟），立即生效")
+def demo_set_clock_mode(ctx: ContextDep, payload: SetClockModeRequest) -> dict:
+    """运行时切换时钟模式，不需要重启后端（与「切换 AI 模式」同一套机制）。
+
+    - 切到 ``replay``：进程内虚拟时钟重置回固定基准日（offset 0），此后 tick / 时间跳转可用，
+      新增与修改的数据时间戳也按虚拟时间写（演示可复现）；
+    - 切到 ``system``：清掉偏移，系统直接用现实时间（``now()``）；
+    - 只作用于**当前进程**，重启后回到 ``.env`` 的 ``CLOCK_MODE``。
+    """
+    before = current_clock_mode()
+    try:
+        mode = set_clock_mode(payload.clock_mode)
+    except ValueError as exc:
+        raise validation_error(
+            "时钟模式非法",
+            fields=[{"loc": "clock_mode", "msg": str(exc)}],
+        ) from exc
+
+    # 切换时刻把虚拟时钟归位：replay 从固定基准日重新开始；system 下偏移无意义，一并清零
+    clock_state.reset()
+    try:
+        from app.seed import sync_demo_clock_setting
+
+        sync_demo_clock_setting(ctx.session, ctx.workspace_id)
+    except Exception:  # pragma: no cover - seed 模块缺失时不影响切换主流程
+        pass
+
+    still = now_utc()
+    warning = None
+    if mode == "replay":
+        warning = (
+            "已切到虚拟时钟：业务时间回到固定基准日、需要点「快进」才往前走；"
+            "此后新增/修改的数据时间戳也按虚拟时间写"
+        )
+    ctx.audit(
+        "demo.set_clock_mode",
+        resource_type="workspace",
+        resource_id=ctx.workspace_id,
+        before={"clock_mode": before},
+        after={"clock_mode": mode, "now_utc": still.isoformat()},
+    )
+    return {
+        "ok": True,
+        "clock_mode": mode,
+        "previous_clock_mode": before,
+        "runtime_only": True,
+        "now_utc": still.isoformat(),
+        "base_date": clock_state.anchor().isoformat(),
+        "offset_minutes": clock_state.offset_minutes,
+        "warning": warning,
     }
 
 
