@@ -146,6 +146,8 @@ class ExceptionService:
         )
         case.sla_delay_minutes = impact.delay_minutes
         case.sla_breached = impact.breached
+        # 同步重算风险因子与等级：只改 SLA 字段会让「风险等级」卡继续显示旧延误（真机反馈过）
+        eta_flow.refresh_case_impact(self.repos, case, order, eta_at=case.expected_eta_at)
 
     def set_delay(
         self,
