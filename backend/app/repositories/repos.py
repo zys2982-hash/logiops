@@ -211,8 +211,16 @@ class ExceptionRepository(BaseRepository[ExceptionCase]):
         return self.session.scalars(stmt).unique().first()
 
     def next_sequence(self, prefix: str) -> int:
-        stmt = select(func.count()).select_from(ExceptionCase).where(ExceptionCase.case_no.like(f"{prefix}%"))
-        return int(self.session.scalar(stmt) or 0) + 1
+        """取已有 case_no 的**最大序号 + 1**（不能用 COUNT+1：seed 预置编号会让两者不一致）。"""
+        rows = self.session.scalars(
+            select(ExceptionCase.case_no).where(ExceptionCase.case_no.like(f"{prefix}%"))
+        ).all()
+        best = 0
+        for value in rows:
+            suffix = str(value)[len(prefix) :]
+            if suffix.isdigit():
+                best = max(best, int(suffix))
+        return best + 1
 
     def search(
         self,

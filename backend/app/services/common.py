@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.audit import record_audit, to_jsonable
@@ -164,6 +164,28 @@ def _day_stamp(moment: datetime | None = None) -> str:
     return (to_naive_utc(moment) or now_naive()).strftime("%Y%m%d")
 
 
+def next_sequence_from_max(
+    session: Any,
+    column: Any,
+    prefix: str,
+    *,
+    extra_conditions: tuple[Any, ...] = (),
+) -> int:
+    """按"已有编号的最大序号 + 1"取下一个序号。
+
+    不能用 ``COUNT(*) + 1``：seed 会预置特定编号（如 AI…000005 只有 4 行、SO…1000），
+    行数 ≠ 最大序号，算出来会与已有编号撞唯一索引（真实踩到：
+    重试分析时 `Duplicate entry 'AI20260930000005'` 直接 500）。
+    """
+    rows = session.scalars(select(column).where(column.like(f"{prefix}%"), *extra_conditions)).all()
+    best = 0
+    for value in rows:
+        suffix = str(value)[len(prefix) :]
+        if suffix.isdigit():
+            best = max(best, int(suffix))
+    return best + 1
+
+
 def next_case_no(repos: Repos, *, moment: datetime | None = None) -> str:
     prefix = f"EX{_day_stamp(moment)}"
     return f"{prefix}{repos.exceptions.next_sequence(prefix):04d}"
@@ -171,18 +193,14 @@ def next_case_no(repos: Repos, *, moment: datetime | None = None) -> str:
 
 def next_analysis_no(repos: Repos, *, moment: datetime | None = None) -> str:
     prefix = f"AI{_day_stamp(moment)}"
-    stmt = select(func.count()).select_from(AiAnalysis).where(AiAnalysis.analysis_no.like(f"{prefix}%"))
-    total = int(repos.session.scalar(stmt) or 0) + 1
-    return f"{prefix}{total:06d}"
+    seq = next_sequence_from_max(repos.session, AiAnalysis.analysis_no, prefix)
+    return f"{prefix}{seq:06d}"
 
 
 def next_order_no(repos: Repos, *, moment: datetime | None = None) -> str:
     prefix = f"SO{_day_stamp(moment)}"
-    conditions = [Order.order_no.like(f"{prefix}%")]
-    if repos.workspace_id is not None:
-        conditions.append(Order.workspace_id == repos.workspace_id)
-    stmt = select(func.count()).select_from(Order).where(*conditions)
-    seq = int(repos.session.scalar(stmt) or 0) + 1
+    extra = (Order.workspace_id == repos.workspace_id,) if repos.workspace_id is not None else ()
+    seq = next_sequence_from_max(repos.session, Order.order_no, prefix, extra_conditions=extra)
     return f"{prefix}{seq:04d}"
 
 

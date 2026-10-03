@@ -12,9 +12,10 @@ GuardError 由 agent 捕获 → 带错误信息修复重试 1 次 → 仍失败 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from types import UnionType
+from typing import Any, Union, get_args, get_origin
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from app.ai import facts as F
 from app.ai.tools import ToolOutcome, evidence_from_outcome
@@ -96,6 +97,56 @@ def _schema_errors(exc: ValidationError) -> list[str]:
     return errors
 
 
+# --- "话太多"的无损降级 ---------------------------------------------------------
+def _max_length(pydantic_field: Any) -> int | None:
+    for meta in getattr(pydantic_field, "metadata", ()):  # pydantic v2 的 MaxLen 约束
+        limit = getattr(meta, "max_length", None)
+        if isinstance(limit, int):
+            return limit
+    return None
+
+
+def _unwrap(annotation: Any) -> Any:
+    """只剥 ``Optional[X]``（``X | None``），**不要**动 ``list[X]``，否则嵌套模型就遍历不到了。"""
+    if get_origin(annotation) in (Union, UnionType):
+        args = [item for item in get_args(annotation) if item is not type(None)]
+        return args[0] if len(args) == 1 else annotation
+    return annotation
+
+
+def _normalize_lengths(model: Any, payload: Any, notes: list[str]) -> Any:
+    """按 schema 声明的长度上限做**无损降级**：超长文本截断、超长列表裁剪。
+
+    动机（真实模型实测）：模型很容易把 summary/rationale 写超（上限 300 字却写了 500 字），
+    若直接判 schema 失败，修复重试往往**仍然超长**（同样的提示词产生同样的输出），
+    用户看到的就是"重新分析没有用"。截断只压缩表述、不改变事实与结论。
+    """
+    if not (isinstance(model, type) and issubclass(model, BaseModel)) or not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    for name, pydantic_field in model.model_fields.items():
+        if name not in out:
+            continue
+        value = out[name]
+        annotation = _unwrap(pydantic_field.annotation)
+        limit = _max_length(pydantic_field)
+        if isinstance(value, str):
+            if limit and len(value) > limit:
+                out[name] = value[: max(limit - 1, 1)].rstrip() + "…"
+                notes.append(f"{name} 超过 {limit} 字，已截断")
+        elif isinstance(value, list):
+            args = get_args(annotation)
+            item_type = _unwrap(args[0]) if args else Any
+            if limit and len(value) > limit:
+                out[name] = value[:limit]
+                notes.append(f"{name} 超过 {limit} 条，已裁剪")
+            if isinstance(item_type, type) and issubclass(item_type, BaseModel):
+                out[name] = [_normalize_lengths(item_type, item, notes) for item in out[name]]
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel) and isinstance(value, dict):
+            out[name] = _normalize_lengths(annotation, value, notes)
+    return out
+
+
 # --- T1 ---------------------------------------------------------------------
 def validate_t1(
     raw: dict[str, Any] | None,
@@ -107,6 +158,8 @@ def validate_t1(
 
     if not isinstance(raw, dict):
         raise GuardError(["输出不是 JSON 对象"])
+    notes: list[str] = []
+    raw = _normalize_lengths(ParseMessageOutput, raw, notes)
     try:
         output = ParseMessageOutput.model_validate(raw)
     except ValidationError as exc:
@@ -121,7 +174,10 @@ def validate_t1(
         errors.append("location 不能为空")
     if errors:
         raise GuardError(errors)
-    return output.model_dump(mode="json")
+    result = output.model_dump(mode="json")
+    if notes:
+        result["_guard_notes"] = notes
+    return result
 
 
 # --- T2 ---------------------------------------------------------------------
@@ -135,6 +191,8 @@ def validate_t2(
 
     if not isinstance(raw, dict):
         raise GuardError(["输出不是 JSON 对象"])
+    notes: list[str] = []
+    raw = _normalize_lengths(AnalysisOutput, raw, notes)
     try:
         output = AnalysisOutput.model_validate(raw)
     except ValidationError as exc:
@@ -174,7 +232,10 @@ def validate_t2(
 
     if errors:
         raise GuardError(errors)
-    return output.model_dump(mode="json")
+    result = output.model_dump(mode="json")
+    if notes:
+        result["_guard_notes"] = notes
+    return result
 
 
 # --- T3 ---------------------------------------------------------------------
@@ -183,6 +244,8 @@ def validate_t3(raw: dict[str, Any] | None, *, facts: dict[str, Any]) -> dict[st
 
     if not isinstance(raw, dict):
         raise GuardError(["输出不是 JSON 对象"])
+    notes: list[str] = []
+    raw = _normalize_lengths(NoticeOutput, raw, notes)
     try:
         output = NoticeOutput.model_validate(raw)
     except ValidationError as exc:
@@ -238,7 +301,10 @@ def validate_t3(raw: dict[str, Any] | None, *, facts: dict[str, Any]) -> dict[st
 
     if errors:
         raise GuardError(errors)
-    return output.model_dump(mode="json")
+    result = output.model_dump(mode="json")
+    if notes:
+        result["_guard_notes"] = notes
+    return result
 
 
 __all__ = [
