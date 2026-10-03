@@ -393,6 +393,7 @@ export const EXCEPTION_EVENT_MAP: Record<ExceptionEventType, string> = {
   STATUS_CHANGED: '状态变更',
   COMMENT: '备注',
   FOLLOWUP_DONE: '跟进完成',
+  ISSUE_CLEARED: '问题解除（信号级闭环）',
   CLOSED: '异常关闭',
 }
 

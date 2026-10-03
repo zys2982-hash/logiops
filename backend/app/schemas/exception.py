@@ -60,6 +60,13 @@ class ExceptionClose(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class ExceptionClearIssue(BaseModel):
+    """POST /exceptions/{id}/clear-vehicle-issue：只解除「车辆故障」问题，**不结束整单**。"""
+
+    expected_version: int
+    note: str | None = Field(default=None, max_length=500)
+
+
 class CarrierMessageCreate(BaseModel):
     raw_text: str = Field(min_length=1, max_length=4000)
     channel: str = "MANUAL_PASTE"
@@ -193,6 +200,7 @@ __all__ = [
     "CarrierMessageCreate",
     "CarrierMessageOut",
     "ExceptionAnalyze",
+    "ExceptionClearIssue",
     "ExceptionClose",
     "ExceptionConfirm",
     "ExceptionCreate",

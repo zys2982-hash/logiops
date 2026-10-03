@@ -276,6 +276,101 @@ class ExceptionService:
         )
         return result
 
+    def clear_vehicle_issue(
+        self,
+        exception_id: int,
+        *,
+        note: str | None = None,
+        expected_version: int | None = None,
+        actor_id: int | None = None,
+    ) -> ExceptionCase:
+        """车辆已修复：只解除这张单上的「车辆故障」问题，**异常单继续存在**（用户口径）。
+
+        与 resolve / close 的区别：
+        - resolve / close = **整单结束**（状态变 RESOLVED/CLOSED，风险卡切成"历史判定"）；
+        - 本动作 = 只把"车辆故障"这条**信号**收掉：车辆状态恢复原值 + 重算风险（车辆故障因子 -1，
+          例如 4 分 → 3 分），异常状态不变（仍是待确认 / 处理中），延误、SLA 违约等因子继续计分。
+
+        适用场景：车修好了，但延误/违约等问题还在 —— 不该因此把整张单结束掉。
+        终态异常 / 非车辆故障异常调用会被拒（409）；重复点击是幂等的（没有该因子时只记事件）。
+        """
+        case = self.get(exception_id)
+        check_version(case, expected_version, "异常单")
+        if str(case.status) in {str(ExceptionStatus.RESOLVED), str(ExceptionStatus.CLOSED)}:
+            raise AppError(
+                ErrorCode.STATE_TRANSITION_INVALID,
+                "异常已结束，无需再解除车辆故障问题",
+                {"from": str(case.status)},
+            )
+        if str(case.type) != str(ExceptionType.VEHICLE_BREAKDOWN):
+            raise AppError(
+                ErrorCode.STATE_TRANSITION_INVALID,
+                "该异常不是车辆故障类，没有可解除的车辆问题",
+                {"type": str(case.type)},
+            )
+
+        order = self.repos.orders.get(case.order_id)
+        released = self._release_vehicle_repairing(case, actor_id=actor_id)
+        # 兜底：本单没记过原状态（例如车辆状态是人工改的），但车辆仍停在维修中 → 置空闲，
+        # 否则"车辆故障"因子会因为车辆仍在维修而继续计分，与"车已修好"的事实矛盾
+        fallback_released = False
+        if released is None and case.vehicle_id:
+            vehicle = self.repos.vehicles.get(case.vehicle_id)
+            if vehicle is not None and str(vehicle.status) == REPAIRING_STATUS:
+                vehicle.status = str(VehicleStatus.IDLE)
+                bump_version(vehicle)
+                self.repos.vehicles.save(vehicle)
+                fallback_released = True
+                write_audit(
+                    self.session,
+                    self.repos,
+                    "exception.vehicle_repairing_reverted",
+                    resource_type="exception",
+                    resource_id=case.id,
+                    actor_id=actor_id,
+                    before={"vehicle_status": REPAIRING_STATUS},
+                    after={"vehicle_status": str(VehicleStatus.IDLE), "fallback": True},
+                )
+
+        # 车辆已不在维修中 → 重算后「车辆故障」因子自然移除（分数随之下降；这里就是要允许降分）
+        if order is not None:
+            eta_flow.refresh_case_impact(self.repos, case, order, eta_at=case.expected_eta_at)
+
+        add_event(
+            self.session,
+            self.repos,
+            exception_id=case.id,
+            event_type=str(ExceptionEventType.ISSUE_CLEARED),
+            from_status=case.status,
+            to_status=case.status,
+            actor_type=ActorType.USER,
+            actor_id=actor_id,
+            note=note or "车辆已修复：解除「车辆故障」问题，异常继续跟进",
+            detail={
+                "issue": str(ExceptionType.VEHICLE_BREAKDOWN),
+                "vehicle_id": case.vehicle_id,
+                "released": bool(released or fallback_released),
+                "risk_score": case.risk_score,
+                "risk_factors": [f.get("code") for f in (case.risk_factors_json or [])],
+            },
+        )
+        write_audit(
+            self.session,
+            self.repos,
+            "exception.vehicle_issue_cleared",
+            resource_type="exception",
+            resource_id=case.id,
+            actor_id=actor_id,
+            after={
+                "issue": str(ExceptionType.VEHICLE_BREAKDOWN),
+                "vehicle_id": case.vehicle_id,
+                "released": bool(released or fallback_released),
+                "status": str(case.status),
+                "risk_score": case.risk_score,
+            },
+        )
+        return case
+
     def _apply_manual_delay(self, case: ExceptionCase, order: Order, delay_minutes: int) -> None:
         """人工录入的延误（事实）→ 反推 expected_eta_at，再用 SLA 规则判是否违约。
 

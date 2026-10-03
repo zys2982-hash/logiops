@@ -254,6 +254,52 @@ function onHeadCommand(command: string | number | object): void {
   else if (command === 'force-close') void closeCase(true)
 }
 
+/**
+ * 车辆已修复（信号级闭环）：只解除这张单上的「车辆故障」问题，**异常单继续**。
+ * 与「结束异常」的区别：后者是整单 RESOLVED（风险卡切成历史判定），前者只去掉车辆故障那 1 分。
+ */
+async function clearVehicleIssue(): Promise<void> {
+  if (!exception.value) return
+  let note = ''
+  try {
+    const result = await ElMessageBox.prompt(
+      '车辆已修复：只解除「车辆故障」问题（车辆状态恢复、该因子不再计分），异常单继续跟进',
+      '车辆已修复',
+      {
+        inputPlaceholder: '例如：轮胎已更换，车辆恢复在途',
+        inputValidator: (value) => (value && value.trim().length > 0 ? true : '请填写说明（会写进时间线与审计）'),
+      },
+    )
+    note = result.value ?? ''
+  } catch {
+    return
+  }
+  actionLoading.value = true
+  try {
+    const version = exception.value.version
+    if (typeof version !== 'number') {
+      ElMessage.warning('异常版本信息缺失，请刷新后重试')
+      return
+    }
+    await exceptionApi.clearVehicleIssue(exception.value.id, {
+      note,
+      expected_version: version,
+    })
+    ElMessage.success('已解除「车辆故障」问题，异常继续跟进（分数已按现状重算）')
+    await refreshAfterWrite()
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+/** 只有"未结束 + 车辆故障类 + 当前确实带着车辆故障因子"时才显示该动作 */
+const canClearVehicleIssue = computed(() => {
+  if (!canHandle.value || !exception.value) return false
+  if (isEnded.value) return false
+  if (exception.value.type !== 'VEHICLE_BREAKDOWN') return false
+  return riskFactorRows.value.some((factor) => factor.code === 'VEHICLE_BREAKDOWN')
+})
+
 async function closeCase(forced = false): Promise<void> {
   if (!exception.value) return
   let note = ''
@@ -585,6 +631,17 @@ onMounted(async () => {
             :subtitle="isEnded ? '该异常已结束，以下为结束时的判定依据' : '规则逐项加权，LLM 无权修改'"
             icon="WarnTriangleFilled"
           >
+            <template #actions>
+              <el-tooltip
+                v-if="canClearVehicleIssue"
+                placement="top"
+                content="只解除「车辆故障」这一条问题（车辆状态恢复、该因子不再计分，例如 4 分 → 3 分），异常单继续跟进；不是结束整单。"
+              >
+                <el-button size="small" :loading="actionLoading" @click="clearVehicleIssue">
+                  车辆已修复（只解除车辆故障）
+                </el-button>
+              </el-tooltip>
+            </template>
             <el-alert
               v-if="isEnded"
               type="success"

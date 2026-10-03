@@ -17,6 +17,7 @@ from app.schemas.exception import (
     CarrierMessageCreate,
     CarrierMessageOut,
     ExceptionAnalyze,
+    ExceptionClearIssue,
     ExceptionClose,
     ExceptionConfirm,
     ExceptionCreate,
@@ -200,6 +201,31 @@ def analyze_exception(
     if result.get("reused"):
         response.status_code = status.HTTP_200_OK
     return result
+
+
+@router.post(
+    "/{exception_id}/clear-vehicle-issue",
+    response_model=ExceptionOut,
+    summary="车辆已修复：只解除「车辆故障」问题，异常单继续（不是结束整单）",
+)
+def clear_vehicle_issue(
+    ctx: ExceptionHandle,
+    exception_id: int,
+    payload: ExceptionClearIssue,
+) -> Any:
+    """信号级闭环：把"车辆故障"这条问题从风险因子里去掉（车辆状态恢复），异常状态不变。
+
+    与 `/resolve` 的区别：resolve 是整单结束；本接口只解除其中一个问题，
+    延误 / SLA 违约等其它因子继续计分（用户口径："我想要的只是把车辆故障那 1 分去掉，异常仍然存在"）。
+    """
+    service = ExceptionService(ctx.repos)
+    case = service.clear_vehicle_issue(
+        exception_id,
+        note=payload.note,
+        expected_version=payload.expected_version,
+        actor_id=ctx.user.id,
+    )
+    return exception_brief(ctx.repos, case)
 
 
 @router.post("/{exception_id}/resolve", response_model=ExceptionOut, summary="→ RESOLVED（必填 note）")

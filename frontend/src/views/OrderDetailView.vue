@@ -76,6 +76,10 @@ const openExceptions = computed(() =>
 const resolvedExceptions = computed(() =>
   relatedExceptions.value.filter((item) => String(item.status) === 'RESOLVED'),
 )
+/** 可做"车辆已修复"（信号级闭环）的：未结束的车辆故障异常 —— 只去掉车辆故障那 1 分，异常继续 */
+const breakdownExceptions = computed(() =>
+  openExceptions.value.filter((item) => String(item.type) === 'VEHICLE_BREAKDOWN'),
+)
 
 const EXCEPTION_TYPE_OPTIONS: { value: ExceptionType; label: string }[] = [
   { value: 'VEHICLE_BREAKDOWN', label: '车辆故障' },
@@ -92,6 +96,10 @@ const resolveForm = reactive({
   note: '',
 })
 const archiveForm = reactive({
+  exception_id: null as number | null,
+  note: '',
+})
+const clearIssueForm = reactive({
   exception_id: null as number | null,
   note: '',
 })
@@ -328,9 +336,43 @@ async function endIncident(): Promise<void> {
   }
 }
 
+/**
+ * 车辆已修复（信号级闭环）：只解除这张单上的「车辆故障」问题（车辆状态恢复、该因子不再计分），
+ * **异常单继续存在**。与「结束异常」的区别：后者是整单结束。
+ */
+async function clearVehicleIssue(): Promise<void> {
+  if (!clearIssueForm.exception_id) {
+    ElMessage.warning('请选择要解除车辆故障的异常')
+    return
+  }
+  if (!clearIssueForm.note.trim()) {
+    ElMessage.warning('请填写说明（会写进时间线与审计）')
+    return
+  }
+  const target = breakdownExceptions.value.find((item) => item.id === clearIssueForm.exception_id)
+  if (!target || typeof target.version !== 'number') {
+    ElMessage.warning('该异常的版本信息缺失，请刷新页面后重试')
+    return
+  }
+  exceptionSaving.value = true
+  try {
+    await exceptionApi.clearVehicleIssue(clearIssueForm.exception_id, {
+      note: clearIssueForm.note.trim(),
+      expected_version: target.version,
+    })
+    ElMessage.success('已解除「车辆故障」问题，异常继续跟进（分数已按现状重算）')
+    clearIssueForm.exception_id = null
+    clearIssueForm.note = ''
+  } catch {
+    // 409（终态/非车辆故障/版本冲突）已由响应拦截器提示；这里刷新拿最新状态
+  } finally {
+    exceptionSaving.value = false
+    await load()
+  }
+}
+
 /** 归档（关闭）已解决的异常：CLOSED 是终态，关掉后该订单才能再录入新异常 */
-async function archiveIncident(): Promise<void> {
-  if (!archiveForm.exception_id) {
+async function archiveIncident(): Promise<void> {  if (!archiveForm.exception_id) {
     ElMessage.warning('请选择要归档的异常')
     return
   }
@@ -617,8 +659,41 @@ onMounted(async () => {
               </el-form>
             </template>
 
-            <!-- 已解决但未归档：占着"同一订单只能一个未关闭异常"的名额，归档后订单才能再录入 -->
-            <template v-if="canHandleException && resolvedExceptions.length > 0">
+            <!-- 车辆已修复：只解除车辆故障问题（信号级闭环），异常单继续 —— 与上面「结束异常」不同 -->
+            <template v-if="canHandleException && breakdownExceptions.length > 0">
+              <el-divider content-position="left">车辆已修复（只解除车辆故障，不结束异常）</el-divider>
+              <el-form label-width="80px" size="small">
+                <el-form-item label="选择异常">
+                  <el-select v-model="clearIssueForm.exception_id" style="width: 100%" placeholder="选择未结束的车辆故障异常">
+                    <el-option
+                      v-for="item in breakdownExceptions"
+                      :key="item.id"
+                      :label="`${item.case_no}　${exceptionTypeLabel(item.type)}　${exceptionStatusLabel(item.status)}`"
+                      :value="item.id"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="说明">
+                  <el-input
+                    v-model="clearIssueForm.note"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    placeholder="例如：轮胎已更换，车辆恢复在途"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button size="small" :loading="exceptionSaving" @click="clearVehicleIssue">
+                    车辆已修复（只去掉车辆故障风险）
+                  </el-button>
+                  <span class="u-text-muted">
+                    车辆状态恢复 + 该因子不再计分（例如 4 分 → 3 分）；<b>异常单继续跟进</b>，
+                    延误 / 违约等其它问题仍在。要结束整单请用上面的「结束异常」
+                  </span>
+                </el-form-item>
+              </el-form>
+            </template>
+
+            <!-- 已解决但未归档：占着"同一订单只能一个未关闭异常"的名额，归档后订单才能再录入 -->            <template v-if="canHandleException && resolvedExceptions.length > 0">
               <el-divider content-position="left">归档异常（已解决 → 已关闭）</el-divider>
               <el-form label-width="80px" size="small">
                 <el-form-item label="选择异常">

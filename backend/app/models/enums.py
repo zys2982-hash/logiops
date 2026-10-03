@@ -152,6 +152,8 @@ class ExceptionEventType(StrEnum):
     STATUS_CHANGED = "STATUS_CHANGED"
     COMMENT = "COMMENT"
     FOLLOWUP_DONE = "FOLLOWUP_DONE"
+    # 信号级闭环：只解除这张单上的某个问题（如"车辆已修复"），异常单继续存在
+    ISSUE_CLEARED = "ISSUE_CLEARED"
     CLOSED = "CLOSED"
 
 

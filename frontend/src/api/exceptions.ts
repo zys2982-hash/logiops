@@ -90,6 +90,14 @@ export function recordDelay(
   return post<ExceptionDetail>(`/exceptions/${id}/delay`, payload)
 }
 
+/** POST /exceptions/{id}/clear-vehicle-issue  车辆已修复：只解除「车辆故障」问题，异常单继续（不是结束整单） */
+export function clearVehicleIssue(
+  id: number,
+  payload: { expected_version: number; note?: string },
+): Promise<ExceptionDetail> {
+  return post<ExceptionDetail>(`/exceptions/${id}/clear-vehicle-issue`, payload)
+}
+
 /** POST /exceptions/{id}/close  → CLOSED（body: reason_code, note） */
 export function closeException(id: number, payload: ClosePayload): Promise<ExceptionDetail> {
   return post<ExceptionDetail>(`/exceptions/${id}/close`, payload)

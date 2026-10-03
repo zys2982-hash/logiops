@@ -626,6 +626,14 @@ vehicle 1─0..1 driver（vehicle.current_driver_id，固定主驾）
   - 异常仍停在 `DETECTED`（尚未人工确认）→ 直接 `CLOSED`，`close_reason=DELIVERED`。
     理由："只有 PROCESSING 才能 RESOLVED"这条纪律要保留；未进入处理阶段的异常，订单送达即归档，
     同样不会"货到了异常还挂着"。
+- **信号级闭环（只解除一个问题，不结束整单）**：`POST /exceptions/{id}/clear-vehicle-issue`
+  用于"车修好了，但延误 / 违约等问题还在"——车辆状态恢复原值 + 风险按现状重算
+  （`车辆故障` 因子不再计分），**异常状态不变**（仍是待确认 / 处理中），并写 `ISSUE_CLEARED` 事件
+  与 `exception.vehicle_issue_cleared` 审计。两条边界：
+  ① 分数遵循封顶口径 `min(4, Σ权重)`：原始分 ≥5 的单（例如 延误2+VIP1+车辆1+违约1）解除后
+     显示分数仍是 4，但因子确实已移除；
+  ② 同车若还有**其它未结束**的车辆故障异常，车辆按既有规则保持"维修中"，该单的车辆故障因子
+     也随之保留（车辆状态是全局事实）。
 - **机器提议阶段等级只升不降**：异常处于 `DETECTED` 时，`tick` 不刷新（跳过非 PROCESSING）；
   `tick` 对 `PROCESSING` 的合并刷新用 `refresh_case_impact(allow_downgrade=False)` ——
   `level / risk_score / risk_factors` 保持，SLA 数字仍按事实刷新。
@@ -843,6 +851,7 @@ GET    /exceptions/{id}          详情：主单 + 订单/客户/车辆快照 + 
 PATCH  /exceptions/{id}          改 assigned_to / remark（不改 status）
 POST   /exceptions/{id}/confirm          DETECTED → PROCESSING
 POST   /exceptions/{id}/analyze          仅 PROCESSING 可发起，202 + {analysis_id}（状态不变）
+POST   /exceptions/{id}/clear-vehicle-issue  车辆已修复：只解除车辆故障问题（不结束整单）
 POST   /exceptions/{id}/resolve          → RESOLVED（body: note）
 POST   /exceptions/{id}/close            → CLOSED（body: reason_code, note）
 GET    /exceptions/{id}/events           时间线（分页）

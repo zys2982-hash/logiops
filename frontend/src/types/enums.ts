@@ -125,6 +125,7 @@ export const ExceptionEventType = {
   STATUS_CHANGED: 'STATUS_CHANGED',
   COMMENT: 'COMMENT',
   FOLLOWUP_DONE: 'FOLLOWUP_DONE',
+  ISSUE_CLEARED: 'ISSUE_CLEARED',
   CLOSED: 'CLOSED',
 } as const
 export type ExceptionEventType = (typeof ExceptionEventType)[keyof typeof ExceptionEventType]
