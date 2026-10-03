@@ -84,6 +84,23 @@ async function load(): Promise<void> {
   }
 }
 
+/** 查询/筛选：必须重置到第 1 页（否则在第 2 页筛选会出现"查了却空列表"） */
+function search(): void {
+  query.page = 1
+  void load()
+}
+
+function onPageChange(page: number): void {
+  query.page = page
+  void load()
+}
+
+function onSizeChange(size: number): void {
+  query.page_size = size
+  query.page = 1
+  void load()
+}
+
 function openCreate(): void {
   editingId.value = null
   Object.assign(form, {
@@ -177,21 +194,24 @@ onMounted(async () => {
         <el-tag v-else size="small" effect="plain">只读（vehicle.manage 才可编辑）</el-tag>
       </template>
 
-      <el-form inline class="u-mb-8" @submit.prevent="load">
+      <el-form inline class="u-mb-8" @submit.prevent="search">
         <el-form-item label="车牌">
-          <el-input v-model="query.plate_no" placeholder="津A·12345" clearable style="width: 160px" @keyup.enter="load" />
+          <el-input v-model="query.plate_no" placeholder="津A·12345" clearable style="width: 160px" @keyup.enter="search" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="query.status" clearable placeholder="全部" style="width: 130px" @change="load">
+          <el-select v-model="query.status" clearable placeholder="全部" style="width: 130px" @change="search">
             <el-option v-for="option in statusOptions" :key="option.value" :label="option.label" :value="option.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="承运商">
-          <el-select v-model="query.carrier_id" clearable placeholder="全部" style="width: 170px" @change="load">
+          <el-select v-model="query.carrier_id" clearable placeholder="全部" style="width: 170px" @change="search">
             <el-option v-for="carrier in carriers" :key="carrier.id" :label="carrier.name" :value="carrier.id" />
           </el-select>
         </el-form-item>
-        <el-form-item><el-button type="primary" @click="load">查询</el-button></el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="search">查询</el-button>
+          <el-button @click="() => { query.plate_no = ''; query.status = ''; query.carrier_id = ''; search() }">重置</el-button>
+        </el-form-item>
       </el-form>
 
       <el-table :data="result.items" v-loading="loading" size="small" border stripe>
@@ -221,6 +241,20 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 分页：此前缺失，导致只能看到第 1 页 20 台，第 2 页的车（如 津A·12345）永远看不到 -->
+      <div class="table-foot">
+        <el-pagination
+          :current-page="result.page"
+          :page-size="result.page_size"
+          :total="result.total"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          background
+          @current-change="onPageChange"
+          @size-change="onSizeChange"
+        />
+      </div>
 
       <div class="u-text-muted u-mt-8">契约：GET|POST /vehicles?status&amp;carrier_id · GET|PATCH /vehicles/{id}</div>
     </PanelCard>
