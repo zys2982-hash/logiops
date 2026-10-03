@@ -180,9 +180,6 @@ onMounted(async () => {
         <el-table-column label="承诺到达" width="150">
           <template #default="{ row }">{{ formatDateTime(row.promised_delivery_at) }}</template>
         </el-table-column>
-        <el-table-column label="当前 ETA" width="150">
-          <template #default="{ row }">{{ formatDateTime(row.current_eta_at) }}</template>
-        </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button size="small" text type="primary" @click.stop="router.push(`/orders/${row.id}`)">详情</el-button>

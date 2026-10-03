@@ -163,7 +163,8 @@ const customerName = computed(
 )
 
 const trackForm = reactive({
-  event_type: 'NOTE',
+  // 录入只开放 4 种事件（发车/到达/停靠/送达），默认发车
+  event_type: 'DEPART',
   city: '',
   address: '',
   // 默认值在 onMounted 里按**业务时间**填充（syncFormsToBusinessTime），这里不放真实时间
@@ -405,8 +406,6 @@ onMounted(async () => {
               <el-descriptions-item label="送达时间">{{ formatDateTime(order.delivered_at) }}</el-descriptions-item>
               <el-descriptions-item label="承诺到达（SLA 快照）">{{ formatDateTime(order.promised_delivery_at) }}</el-descriptions-item>
               <el-descriptions-item label="SLA 规则">{{ slaRuleName }}</el-descriptions-item>
-              <el-descriptions-item label="首次 ETA">{{ formatDateTime(order.original_eta_at) }}</el-descriptions-item>
-              <el-descriptions-item label="当前 ETA">{{ formatDateTime(order.current_eta_at) }}</el-descriptions-item>
             </el-descriptions>
             <div v-if="order.remark" class="u-text-muted u-mt-8">备注：{{ order.remark }}</div>
           </PanelCard>

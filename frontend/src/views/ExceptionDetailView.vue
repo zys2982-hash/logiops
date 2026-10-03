@@ -516,7 +516,7 @@ onMounted(async () => {
         </div>
         <div class="u-text-muted u-mt-8">
           业务时间 {{ demo.businessTimeText }} · 承诺到达 {{ formatDateTime(exception.promised_delivery_at) }} ·
-          当前 ETA {{ formatDateTime(exception.current_eta_at) }} · 预计到达 {{ formatDateTime(exception.expected_eta_at) }}
+          预计送达 {{ formatDateTime(exception.expected_eta_at) }}
         </div>
       </el-card>
 

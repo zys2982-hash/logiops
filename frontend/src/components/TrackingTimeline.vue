@@ -99,9 +99,6 @@ const subtitle = computed(() => {
           </div>
           <div class="u-text-muted">
             {{ entry.event.address ?? '—' }} · 来源 {{ trackingSourceLabel(entry.event.source) }}
-            <template v-if="entry.event.speed_kmh !== null && entry.event.speed_kmh !== undefined">
-              · 速度 {{ entry.event.speed_kmh }} km/h
-            </template>
           </div>
           <div v-if="entry.event.payload_json" class="u-text-muted u-mono">
             {{ JSON.stringify(entry.event.payload_json) }}
