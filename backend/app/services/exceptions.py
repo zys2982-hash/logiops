@@ -29,6 +29,7 @@ from app.models.enums import (
     ExceptionEventType,
     ExceptionLevel,
     ExceptionStatus,
+    ExceptionType,
     MessageChannel,
     ParseStatus,
     RootCauseCode,
@@ -56,6 +57,17 @@ EXCEPTION_KIND = state_machine.EntityKind.EXCEPTION
 REUSE_WINDOW_MINUTES = 15
 ANALYSIS_TIMEOUT_SECONDS = 90
 VALID_CLOSE_REASONS = {"INVALID", "DELIVERED", "MANUAL", "ORDER_CANCELLED", "FORCED_CLOSE"}
+# 车辆故障异常驱动的车辆状态：录入 → 维修中；结束（resolve/close）→ 回到录入时记录的原状态
+REPAIRING_STATUS = str(VehicleStatus.REPAIRING)
+# "还占着车辆维修状态"的异常状态：RESOLVED 已经算"结束"（车辆该改回来了），
+# 所以只有还没结束的故障异常才让车辆继续留在维修中（不能直接用 OPEN_EXCEPTION_STATUSES，
+# 它按自动关闭的需要把 RESOLVED 也算"打开"，会让车辆永远等下去）。
+VEHICLE_HOLDING_STATUSES: tuple[str, ...] = (
+    str(ExceptionStatus.DETECTED),
+    str(ExceptionStatus.CONFIRMING),
+    str(ExceptionStatus.ANALYZING),
+    str(ExceptionStatus.PROCESSING),
+)
 # "预计晚上 8 点恢复" / "20:30 恢复" 这类相对时间（确定性兜底解析）
 TIME_HINT_RE = re.compile(
     r"(?:(凌晨|早上|上午|中午|下午|傍晚|晚上)\s*)?(\d{1,2})\s*(?:[:：]\s*(\d{2})|点\s*(\d{0,2})?)"
@@ -123,6 +135,144 @@ class ExceptionService:
     # --- 基础设施 ---------------------------------------------------------
     def get(self, exception_id: int) -> ExceptionCase:
         return self.repos.exceptions.get_or_404(exception_id, "异常单不存在")
+
+    # --- 车辆状态（由车辆故障异常驱动） -------------------------------------
+    def _open_breakdown_siblings(self, case: ExceptionCase) -> list[ExceptionCase]:
+        """同车、**其它**还没结束的车辆故障异常（判断"恢复时机"用）。
+
+        当前单必须按 id 排除而不是按状态排除：本方法在流转前后都可用，而流转目标
+        RESOLVED 仍在 OPEN_EXCEPTION_STATUSES 里（自动关闭还要靠 RESOLVED 触发）。
+        """
+        if not case.vehicle_id:
+            return []
+        return self.repos.exceptions.all(
+            filters=[
+                ExceptionCase.vehicle_id == case.vehicle_id,
+                ExceptionCase.type == str(ExceptionType.VEHICLE_BREAKDOWN),
+                ExceptionCase.id != case.id,
+                ExceptionCase.status.in_(VEHICLE_HOLDING_STATUSES),
+            ],
+            order_by=[ExceptionCase.id.asc()],
+        )
+
+    def _apply_vehicle_repairing(
+        self,
+        case: ExceptionCase,
+        *,
+        actor_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        """车辆故障异常录入 → 车辆置"维修中"，并把录入时的状态记进 vehicle_status_before。
+
+        边界：非 VEHICLE_BREAKDOWN 类型不动车辆；订单没有车辆（vehicle_id 为空、
+        车辆已删）直接跳过，不报错。车辆本来就是 REPAIRING 时也照实记录原状态
+        （"改回原状态"就要改回当时那个状态）。
+        """
+        if str(case.type) != str(ExceptionType.VEHICLE_BREAKDOWN) or not case.vehicle_id:
+            return None
+        vehicle = self.repos.vehicles.get(case.vehicle_id)
+        if vehicle is None:
+            return None
+        # vehicle.status 在库里有默认值 IDLE，理论上不为 NULL；这里兜底成 IDLE，
+        # 免得 NULL 被后面当成"本单没驱动过车辆状态"。
+        previous = str(vehicle.status) if vehicle.status is not None else str(VehicleStatus.IDLE)
+        changed = previous != REPAIRING_STATUS
+        case.vehicle_status_before = previous
+        if changed:
+            vehicle.status = REPAIRING_STATUS
+            bump_version(vehicle)
+            self.repos.vehicles.save(vehicle)
+        self.repos.exceptions.save(case)
+        write_audit(
+            self.session,
+            self.repos,
+            "exception.vehicle_repairing_applied",
+            resource_type="exception",
+            resource_id=case.id,
+            actor_id=actor_id,
+            before={"vehicle_status": previous},
+            after={
+                "vehicle_id": vehicle.id,
+                "plate_no": vehicle.plate_no,
+                "vehicle_status": str(vehicle.status),
+                "vehicle_status_before": previous,
+                "changed": changed,
+                "order_id": case.order_id,
+                "case_no": case.case_no,
+            },
+        )
+        return {
+            "vehicle_id": vehicle.id,
+            "vehicle_status": str(vehicle.status),
+            "vehicle_status_before": previous,
+            "changed": changed,
+        }
+
+    def _release_vehicle_repairing(
+        self,
+        case: ExceptionCase,
+        *,
+        actor_id: int | None = None,
+    ) -> dict[str, Any] | None:
+        """异常结束（resolve / close）→ 恢复车辆状态，并清空 vehicle_status_before。
+
+        恢复时机：同车还有**其它未结束**的车辆故障异常时保持"维修中"，并把"真实原状态"
+        （非 REPAIRING）转交给那张仍打开的单子，等它结束时再恢复——否则后结束的单子只
+        知道自己录入时车辆已是 REPAIRING，会把车辆永久留在维修中（津A·12345 卡住的那个问题）。
+        车辆当前不是 REPAIRING（例如轨迹 REPAIR_END 已改过）或原本就是 REPAIRING 时不覆盖，
+        免得把别的流程写的状态改错。边界：非车辆故障类型 / 本单没驱动过车辆状态直接返回。
+        """
+        if str(case.type) != str(ExceptionType.VEHICLE_BREAKDOWN) or not case.vehicle_id:
+            return None
+        if not case.vehicle_status_before:
+            return None  # 自动检测建单，或本单此前已恢复过（close 跟在 resolve 后面）
+        vehicle = self.repos.vehicles.get(case.vehicle_id)
+        origin = str(case.vehicle_status_before)
+        status_before_release = (
+            str(vehicle.status) if vehicle is not None and vehicle.status is not None else None
+        )
+        siblings = self._open_breakdown_siblings(case)
+        kept_repairing = bool(siblings)
+        restored = False
+        if siblings:
+            carries = [
+                item
+                for item in siblings
+                if item.vehicle_status_before and str(item.vehicle_status_before) != REPAIRING_STATUS
+            ]
+            if origin != REPAIRING_STATUS and not carries:
+                siblings[0].vehicle_status_before = origin
+                self.repos.exceptions.save(siblings[0])
+        elif (
+            vehicle is not None
+            and status_before_release == REPAIRING_STATUS
+            and origin != REPAIRING_STATUS
+        ):
+            vehicle.status = origin
+            bump_version(vehicle)
+            self.repos.vehicles.save(vehicle)
+            restored = True
+        case.vehicle_status_before = None
+        self.repos.exceptions.save(case)
+        result: dict[str, Any] = {
+            "vehicle_id": case.vehicle_id,
+            "order_id": case.order_id,
+            "vehicle_status_before": origin,
+            "vehicle_status": str(vehicle.status) if vehicle is not None else None,
+            "restored": restored,
+            "kept_repairing": kept_repairing,
+            "sibling_exception_ids": [item.id for item in siblings],
+        }
+        write_audit(
+            self.session,
+            self.repos,
+            "exception.vehicle_repairing_reverted",
+            resource_type="exception",
+            resource_id=case.id,
+            actor_id=actor_id,
+            before={"vehicle_status": status_before_release, "vehicle_status_before": origin},
+            after=result,
+        )
+        return result
 
     def _apply_manual_delay(self, case: ExceptionCase, order: Order, delay_minutes: int) -> None:
         """人工录入的延误（事实）→ 反推 expected_eta_at，再用 SLA 规则判是否违约。
@@ -282,6 +432,9 @@ class ExceptionService:
             actor_id=actor_id,
         )
         case.impact_summary = note_text
+        # 车辆故障异常：先把车辆置"维修中"并记下原状态，再重算风险（车辆故障因子按现状计入）
+        if self._apply_vehicle_repairing(case, actor_id=actor_id) is not None:
+            eta_flow.refresh_case_impact(self.repos, case, order, eta_at=case.expected_eta_at)
         if level is not None:
             case.level = str(level).upper()
         if delay_minutes is not None:
@@ -1194,6 +1347,8 @@ class ExceptionService:
         check_version(case, expected_version, "异常单")
         note_text = require_text(note, "note", max_len=500)
         order = self.repos.orders.get(case.order_id)
+        # 先恢复车辆状态，后面的重算才会看到"车辆已不再维修中"的现状（风险因子才能降下来）
+        self._release_vehicle_repairing(case, actor_id=actor_id)
 
         if order is not None:
             eta = eta_flow.recalc_order_eta(self.repos, order)
@@ -1277,6 +1432,11 @@ class ExceptionService:
             reason = "MANUAL"
         if forced and not (note or "").strip():
             raise validation_error("强制关闭必须填写 note")
+
+        # 强制关闭也可能终结一张"车辆维修中"的异常单：同样要恢复车辆并重算风险
+        order = self.repos.orders.get(case.order_id)
+        if self._release_vehicle_repairing(case, actor_id=actor_id) is not None and order is not None:
+            eta_flow.refresh_case_impact(self.repos, case, order)
 
         plan = apply_transition(case, EXCEPTION_KIND, ExceptionStatus.CLOSED, reason=reason)
         case.closed_at = now_naive()
