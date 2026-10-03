@@ -476,9 +476,22 @@ export interface ExceptionQuery extends PageQuery {
 export interface ExceptionCreatePayload {
   order_id: number
   type: ExceptionType
-  level: ExceptionLevel
+  /** 省略则由规则算等级（OPERATOR 可建单）；显式指定等级仅 ADMIN+（后端强制） */
+  level?: ExceptionLevel
   occurred_at: string
   note: string
+}
+
+/** 运输轨迹时间线上的异常条目（详情页把 exception 折算成"开始/结束"两条） */
+export interface TimelineIncident {
+  id: number
+  case_no?: string | null
+  type?: ExceptionType | null
+  level?: ExceptionLevel | null
+  status?: ExceptionStatus | null
+  startedAt: string
+  endedAt?: string | null
+  endedLabel?: string | null
 }
 
 /** POST /exceptions/{id}/analyze → 202 新建 / 200 复用（实测还带 reused/exception_status） */

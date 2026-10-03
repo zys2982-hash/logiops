@@ -6,21 +6,31 @@ import { ElMessage } from 'element-plus'
 import PanelCard from '@/components/PanelCard.vue'
 import RiskTag from '@/components/RiskTag.vue'
 import TrackingTimeline from '@/components/TrackingTimeline.vue'
-import { masterApi, orderApi } from '@/api'
+import { exceptionApi, masterApi, orderApi } from '@/api'
 import { Perm } from '@/types'
 import type {
   Carrier,
   Customer,
   Driver,
   ExceptionListItem,
+  ExceptionType,
   Order,
   SlaRule,
+  TimelineIncident,
   TrackingEvent,
   Vehicle,
 } from '@/types'
 import { useAuthStore } from '@/stores/auth'
+import { useDemoStore } from '@/stores/demo'
 import { formatDateTime, formatDelay } from '@/utils/datetime'
-import { customerLevelLabel, orderStatusLabel, orderStatusType, TRACKING_EVENT_OPTIONS } from '@/utils/format'
+import {
+  customerLevelLabel,
+  exceptionStatusLabel,
+  exceptionTypeLabel,
+  orderStatusLabel,
+  orderStatusType,
+  TRACKING_EVENT_OPTIONS,
+} from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,6 +50,46 @@ const saving = ref(false)
 
 const canManage = computed(() => auth.can(Perm.ORDER_MANAGE))
 const canTrack = computed(() => auth.can(Perm.TRACKING_WRITE))
+const canCreateException = computed(() => auth.can(Perm.EXCEPTION_CREATE))
+const canHandleException = computed(() => auth.can(Perm.EXCEPTION_HANDLE))
+
+/* ------------------------------------------------ 在途异常（录入 / 结束） */
+const demo = useDemoStore()
+const OPEN_EXCEPTION_STATUSES = new Set(['DETECTED', 'CONFIRMING', 'ANALYZING', 'PROCESSING'])
+/** 该订单当前未结束的异常（后端约束：同一订单同时只能有一个未关闭异常） */
+const openExceptions = computed(() =>
+  relatedExceptions.value.filter((item) => OPEN_EXCEPTION_STATUSES.has(String(item.status))),
+)
+
+const EXCEPTION_TYPE_OPTIONS: { value: ExceptionType; label: string }[] = [
+  { value: 'VEHICLE_BREAKDOWN', label: '车辆故障' },
+  { value: 'DELAY_RISK', label: '延误风险' },
+]
+
+const exceptionForm = reactive({
+  type: 'VEHICLE_BREAKDOWN' as ExceptionType,
+  occurred_at: '',
+  note: '',
+})
+const resolveForm = reactive({
+  exception_id: null as number | null,
+  note: '',
+})
+const exceptionSaving = ref(false)
+
+/** 时间线条目：把每个异常折算成"开始（+ 结束）"，交给时间线按时间混排 */
+const timelineIncidents = computed<TimelineIncident[]>(() =>
+  relatedExceptions.value.map((item) => ({
+    id: item.id,
+    case_no: item.case_no,
+    type: item.type,
+    level: item.level,
+    status: item.status,
+    startedAt: item.occurred_at,
+    endedAt: item.resolved_at ?? item.closed_at ?? null,
+    endedLabel: String(item.status) === 'CLOSED' ? '已关闭' : '已解决',
+  })),
+)
 
 /** 派车三步级联：先选承运商（合同主体）→ 再选它名下的车与司机 */
 const dispatchForm = reactive({
@@ -177,7 +227,64 @@ async function createEvent(): Promise<void> {
   }
 }
 
+async function createIncident(): Promise<void> {
+  if (!order.value) return
+  if (!exceptionForm.occurred_at) {
+    ElMessage.warning('请选择异常发生时间')
+    return
+  }
+  if (!exceptionForm.note.trim()) {
+    ElMessage.warning('请填写异常说明')
+    return
+  }
+  exceptionSaving.value = true
+  try {
+    await exceptionApi.createException({
+      order_id: order.value.id,
+      type: exceptionForm.type,
+      occurred_at: new Date(exceptionForm.occurred_at).toISOString(),
+      note: exceptionForm.note.trim(),
+    })
+    ElMessage.success('异常已录入（待确认）；可在异常详情里继续「确认 → AI 分析」')
+    exceptionForm.note = ''
+    await load()
+  } finally {
+    exceptionSaving.value = false
+  }
+}
+
+async function endIncident(): Promise<void> {
+  if (!resolveForm.exception_id) {
+    ElMessage.warning('请选择要结束的异常')
+    return
+  }
+  if (!resolveForm.note.trim()) {
+    ElMessage.warning('请填写结束说明')
+    return
+  }
+  exceptionSaving.value = true
+  try {
+    await exceptionApi.resolveException(resolveForm.exception_id, { note: resolveForm.note.trim() })
+    ElMessage.success('异常已结束（已解决）')
+    resolveForm.exception_id = null
+    resolveForm.note = ''
+    await load()
+  } finally {
+    exceptionSaving.value = false
+  }
+}
+
+/** 两个表单的时间默认取**业务时间**（演示时钟），不要用电脑真实时间 */
+function syncFormsToBusinessTime(): void {
+  const business = demo.businessTimeText
+  if (!business) return
+  trackForm.occurred_at = business
+  exceptionForm.occurred_at = business
+}
+
 onMounted(async () => {
+  if (!demo.businessTimeText) await demo.refresh()
+  syncFormsToBusinessTime()
   await Promise.all([load(), loadOptions()])
 })
 </script>
@@ -223,7 +330,7 @@ onMounted(async () => {
             <div v-if="order.remark" class="u-text-muted u-mt-8">备注：{{ order.remark }}</div>
           </PanelCard>
 
-          <TrackingTimeline :events="tracking" :loading="loading" />
+          <TrackingTimeline :events="tracking" :incidents="timelineIncidents" :loading="loading" />
         </el-col>
 
         <el-col :md="10">
@@ -319,7 +426,12 @@ onMounted(async () => {
                 <el-input v-model="trackForm.address" placeholder="京沪高速济南东服务区" />
               </el-form-item>
               <el-form-item label="发生时间">
-                <el-date-picker v-model="trackForm.occurred_at" type="datetime" style="width: 100%" />
+                <el-date-picker
+                  v-model="trackForm.occurred_at"
+                  type="datetime"
+                  value-format="YYYY-MM-DD HH:mm"
+                  style="width: 100%"
+                />
               </el-form-item>
               <el-form-item>
                 <el-button type="primary" size="small" :loading="saving" @click="createEvent">写入轨迹</el-button>
@@ -330,6 +442,99 @@ onMounted(async () => {
               :closable="false"
               title="写入后同步执行：ETA 重算 → 异常检测（§8.4），可能自动建单"
             />
+          </PanelCard>
+
+          <PanelCard
+            v-if="canCreateException || canHandleException"
+            title="在途异常"
+            subtitle="路上出问题就记一笔；问题消除后点「结束异常」"
+            icon="Warning"
+            class="u-mb-12"
+          >
+            <template v-if="canCreateException">
+              <div class="form-section-title u-mb-8">录入异常</div>
+              <el-alert
+                v-if="openExceptions.length > 0"
+                type="warning"
+                :closable="false"
+                show-icon
+                class="u-mb-8"
+                :title="`该订单已有未结束的异常（${openExceptions[0]?.case_no}）`"
+                description="同一订单同时只能有一个未关闭异常：请先在下方「结束异常」结束它，再录入新的。"
+              />
+              <el-form label-width="80px" size="small">
+                <el-form-item label="类型">
+                  <el-select v-model="exceptionForm.type" style="width: 100%">
+                    <el-option
+                      v-for="option in EXCEPTION_TYPE_OPTIONS"
+                      :key="option.value"
+                      :label="option.label"
+                      :value="option.value"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="发生时间">
+                  <el-date-picker
+                    v-model="exceptionForm.occurred_at"
+                    type="datetime"
+                    value-format="YYYY-MM-DD HH:mm"
+                    style="width: 100%"
+                  />
+                </el-form-item>
+                <el-form-item label="说明">
+                  <el-input
+                    v-model="exceptionForm.note"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    placeholder="例如：右后轮胎压异常，已在服务区处理"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button
+                    type="danger"
+                    plain
+                    size="small"
+                    :loading="exceptionSaving"
+                    :disabled="openExceptions.length > 0"
+                    @click="createIncident"
+                  >
+                    录入异常
+                  </el-button>
+                  <span class="u-text-muted">等级由规则算，不用选</span>
+                </el-form-item>
+              </el-form>
+            </template>
+
+            <template v-if="canHandleException">
+              <el-divider content-position="left">结束异常</el-divider>
+              <el-empty v-if="openExceptions.length === 0" description="当前没有未结束的异常" :image-size="40" />
+              <el-form v-else label-width="80px" size="small">
+                <el-form-item label="选择异常">
+                  <el-select v-model="resolveForm.exception_id" style="width: 100%" placeholder="选择未结束的异常">
+                    <el-option
+                      v-for="item in openExceptions"
+                      :key="item.id"
+                      :label="`${item.case_no}　${exceptionTypeLabel(item.type)}　${exceptionStatusLabel(item.status)}`"
+                      :value="item.id"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="结束说明">
+                  <el-input
+                    v-model="resolveForm.note"
+                    type="textarea"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    placeholder="例如：轮胎已更换，恢复正常行驶"
+                  />
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" size="small" :loading="exceptionSaving" @click="endIncident">
+                    结束异常（已解决）
+                  </el-button>
+                  <span class="u-text-muted">结束后时间线上该异常变灰点</span>
+                </el-form-item>
+              </el-form>
+            </template>
           </PanelCard>
 
           <PanelCard v-if="!canManage && !canTrack" title="只读视图" icon="View" class="u-mb-12">
@@ -353,6 +558,10 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.form-section-title {
+  font-weight: 600;
+  font-size: 13px;
+}
 .detail-head {
   display: flex;
   align-items: center;

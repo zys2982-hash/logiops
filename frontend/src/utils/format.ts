@@ -150,9 +150,16 @@ export function trackingSourceLabel(source?: TrackingSource | null): string {
   return source ? (TRACKING_SOURCE_MAP[source] ?? source) : '—'
 }
 
-export const TRACKING_EVENT_OPTIONS = Object.entries(TRACKING_EVENT_MAP).map(([value, label]) => ({
+/**
+ * 运营手工录入只开放这 4 种事件（发车/到达/停靠/送达）。
+ * 其余类型（恢复行驶 / 开始维修 / 维修完成 / 备注）由系统或车辆维修流程产生，
+ * **标签映射保留**（历史数据仍要正常显示），只是不出现在录入下拉里。
+ */
+export const TRACKING_EVENT_INPUT_TYPES: TrackingEventType[] = ['DEPART', 'ARRIVE', 'STOP', 'DELIVER']
+
+export const TRACKING_EVENT_OPTIONS = TRACKING_EVENT_INPUT_TYPES.map((value) => ({
   value,
-  label,
+  label: TRACKING_EVENT_MAP[value],
 }))
 
 /* -------------------------------------------------------------- 主数据 */
