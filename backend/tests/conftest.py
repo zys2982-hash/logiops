@@ -69,6 +69,9 @@ os.environ.setdefault("RATE_LIMIT_AI_ANALYZE_SECONDS", "0")
 # 运行时 AI 默认停用（app/core/config.py 的 ai_enabled=False）；
 # 测试里打开，以便继续覆盖 AI 层（保留代码、后续重建），停用行为见 tests/test_ai_disabled.py
 os.environ.setdefault("AI_ENABLED", "true")
+# 运行时 ETA 重算默认停用（eta_enabled=False，docs/08：不再做速度模拟）；
+# 测试里打开，以便继续覆盖 ETA 引擎（保留代码），停用行为见 tests/test_eta_disabled.py
+os.environ.setdefault("ETA_ENABLED", "true")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

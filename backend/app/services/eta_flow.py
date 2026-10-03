@@ -101,6 +101,20 @@ def recalc_order_eta(
             resume_at=delivered_at,
             detail="订单已送达，ETA 锁定为送达时间",
         )
+    # ETA 重算总开关（docs/08：不再做速度模拟）。停用时沿用既有 ETA 快照，一处拦住所有调用方
+    # （tick / 写轨迹 / 消息解析 / 送达都会走到这里），且不抛异常、不改变订单。
+    from app.core.config import get_settings  # 局部导入，避免模块级循环依赖
+
+    if not get_settings().eta_enabled:
+        locked = to_naive_utc(order.current_eta_at) or to_naive_utc(order.promised_delivery_at) or now_naive()
+        return eta_rules.EtaResult(
+            eta_at=locked,
+            method=eta_rules.EtaMethod.FALLBACK,
+            remaining_km=0.0,
+            avg_speed_kmh=eta_rules.DEFAULT_SPEED_KMH,
+            resume_at=locked,
+            detail="ETA 重算已停用（docs/08）：不再按车速/里程模拟到达时间，沿用既有 ETA 快照",
+        )
     now = to_naive_utc(moment) or now_naive()
     events = repos.tracking.list_for_order(order.id, limit=50)
     recovery = to_naive_utc(repair_recovery_at)

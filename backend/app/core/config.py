@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # AI 总开关（默认 **关闭**）：项目拥有者决定先停掉全部 AI 逻辑，后续重建。
     # 关闭时不调用任何大模型、不产出建议；代码保留以便重建。测试经 conftest 置 true。
     ai_enabled: bool = False
+    # ETA 重算总开关（默认 **关闭**，docs/08）：不再按车速/里程模拟到达时间。
+    # 关闭后 recalc_order_eta 直接沿用既有 ETA 快照（不再变动）；代码保留以便回溯。
+    eta_enabled: bool = False
     clock_mode: str = "replay"
     ai_mode: str = "replay"
     ai_replay_dir: str = "tests/fixtures/ai"
