@@ -13,7 +13,6 @@ import type {
   Customer,
   Driver,
   ExceptionListItem,
-  ExceptionType,
   Order,
   SlaRule,
   TimelineIncident,
@@ -81,13 +80,7 @@ const breakdownExceptions = computed(() =>
   openExceptions.value.filter((item) => String(item.type) === 'VEHICLE_BREAKDOWN'),
 )
 
-const EXCEPTION_TYPE_OPTIONS: { value: ExceptionType; label: string }[] = [
-  { value: 'VEHICLE_BREAKDOWN', label: '车辆故障' },
-  { value: 'DELAY_RISK', label: '延误风险' },
-]
-
 const exceptionForm = reactive({
-  type: 'VEHICLE_BREAKDOWN' as ExceptionType,
   occurred_at: '',
   note: '',
 })
@@ -281,7 +274,7 @@ async function createIncident(): Promise<void> {
     }
     await exceptionApi.createException({
       order_id: order.value.id,
-      type: exceptionForm.type,
+      type: 'VEHICLE_BREAKDOWN', // 订单页只手工录「车辆故障」；延误风险由系统检测 / 延误录入产生
       occurred_at: occurredAt,
       note: exceptionForm.note.trim(),
     })
@@ -573,7 +566,7 @@ onMounted(async () => {
             class="u-mb-12"
           >
             <template v-if="canCreateException">
-              <div class="form-section-title u-mb-8">录入异常</div>
+              <div class="form-section-title u-mb-8">录入异常（车辆故障）</div>
               <el-alert
                 v-if="unclosedExceptions.length > 0"
                 type="warning"
@@ -585,14 +578,11 @@ onMounted(async () => {
               />
               <el-form label-width="80px" size="small">
                 <el-form-item label="类型">
-                  <el-select v-model="exceptionForm.type" style="width: 100%">
-                    <el-option
-                      v-for="option in EXCEPTION_TYPE_OPTIONS"
-                      :key="option.value"
-                      :label="option.label"
-                      :value="option.value"
-                    />
-                  </el-select>
+                  <el-tag type="danger" size="small">车辆故障</el-tag>
+                  <span class="u-text-muted" style="margin-left: 8px">
+                    订单页只手工录「车辆故障」；延误风险不手工建单 —— 由系统按轨迹 / ETA 自动检测，
+                    或在异常单的 SLA 卡里「录入延误」（人报事实，是否违约由规则判）
+                  </span>
                 </el-form-item>
                 <el-form-item label="发生时间">
                   <el-date-picker
@@ -619,7 +609,7 @@ onMounted(async () => {
                     :disabled="unclosedExceptions.length > 0"
                     @click="createIncident"
                   >
-                    录入异常
+                    录入车辆故障异常
                   </el-button>
                   <span class="u-text-muted">等级由规则算，不用选</span>
                 </el-form-item>

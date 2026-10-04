@@ -7,7 +7,7 @@ import ExceptionTable from '@/components/ExceptionTable.vue'
 import PanelCard from '@/components/PanelCard.vue'
 import { exceptionApi, orderApi } from '@/api'
 import { Perm } from '@/types'
-import type { ExceptionLevel, ExceptionListItem, ExceptionStatus, ExceptionType, OrderBrief, Page } from '@/types'
+import type { ExceptionLevel, ExceptionListItem, ExceptionStatus, OrderBrief, Page } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useDemoStore } from '@/stores/demo'
 import { businessNowText, displayIsoToUtc } from '@/utils/datetime'
@@ -50,16 +50,10 @@ const creating = ref(false)
 const orderOptions = ref<OrderBrief[]>([])
 const createForm = reactive({
   order_id: null as number | null,
-  type: 'VEHICLE_BREAKDOWN' as ExceptionType,
   level: 'MEDIUM' as ExceptionLevel,
   occurred_at: '',
   note: '',
 })
-
-const typeOptions = [
-  { value: 'VEHICLE_BREAKDOWN', label: '车辆故障' },
-  { value: 'DELAY_RISK', label: '延误风险' },
-]
 
 async function load(): Promise<void> {
   loading.value = true
@@ -138,7 +132,7 @@ async function submitCreate(): Promise<void> {
     }
     const created = await exceptionApi.createException({
       order_id: createForm.order_id,
-      type: createForm.type,
+      type: 'VEHICLE_BREAKDOWN', // 手工建单只提供车辆故障；延误风险由检测 / 延误录入产生
       // 指定等级仅 ADMIN 可用（后端强制）；非 ADMIN 不传，由规则算等级
       level: canForceClose.value ? createForm.level : undefined,
       occurred_at: occurredAt,
@@ -260,9 +254,10 @@ onMounted(load)
           </el-select>
         </el-form-item>
         <el-form-item label="异常类型">
-          <el-select v-model="createForm.type" style="width: 100%">
-            <el-option v-for="option in typeOptions" :key="option.value" :label="option.label" :value="option.value" />
-          </el-select>
+          <el-tag type="danger" size="small">车辆故障</el-tag>
+          <span class="u-text-muted" style="margin-left: 8px">
+            手工建单只提供「车辆故障」；延误风险由系统按轨迹 / ETA 检测产生（或在该异常的 SLA 卡里「录入延误」）
+          </span>
         </el-form-item>
         <el-form-item v-if="canForceClose" label="等级">
           <el-select v-model="createForm.level" style="width: 100%">

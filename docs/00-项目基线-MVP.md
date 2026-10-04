@@ -667,7 +667,7 @@ Seed 内置规则：`DEFAULT` = 发车后 30h / 允许延迟 30min；`CUSTOMER_L
 |---|---|---|
 | `STALL_OVER_THRESHOLD` | 订单 `IN_TRANSIT` 且距最后一条位置变化 ≥ `DETECT_STALL_MINUTES`（默认 120） | 判定为疑似车辆故障，`type=VEHICLE_BREAKDOWN`，`detection_rule=STALL_OVER_THRESHOLD` |
 | `ETA_BREACH_SLA` | 重算后 `expected_eta_at > promised_delivery_at + max_delay_minutes` | `type=DELAY_RISK`；若已有未关闭异常则合并升级为 `VEHICLE_BREAKDOWN` |
-| `MANUAL` | `POST /exceptions` | 运营手工建单，必须填 `type/occurred_at/note` |
+| `MANUAL` | `POST /exceptions` | 运营手工建单，必须填 `type/occurred_at/note`。**界面只提供「车辆故障」**：延误风险不在订单页手工建单 —— 它由 `ETA_BREACH_SLA` 自动检测，或在异常单的 SLA 卡里「录入延误」报事实（是否违约仍由规则判） |
 
 - 去抖：同订单、同规则、`DETECT_DEBOUNCE_MINUTES`（默认 30）内不重复生成，仅合并刷新。
 - 误报兜底：所有自动创建的异常都停在 `DETECTED`，必须人工（或承运商消息）确认后才进入分析流程——即"机器提议，人确认"。
