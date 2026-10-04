@@ -35,6 +35,7 @@ class OpenExceptionBrief(BaseModel):
     id: int
     case_no: str | None = None
     type: str | None = None
+    current_type: str | None = None
     level: str | None = None
     status: str | None = None
     risk_score: int | None = None

@@ -220,6 +220,24 @@ ENDED_EXCEPTION_STATUSES: frozenset[str] = frozenset(
 )
 
 
+def current_case_type(case: ExceptionCase) -> str:
+    """异常单的**当前问题**（实时推导），与"建单原因" `case.type` 区分开。
+
+    用户口径（2026-10-04）：「一个异常订单的异常是实时改变的，不要用类型固定他」——
+    同一张单会随现实变化（车辆修好了、只剩延误/违约），所以界面该显示"现在是什么问题"：
+    · 未结束（DETECTED / PROCESSING）：按风险因子实时推导 —— 还带「车辆故障」因子 → 车辆故障，
+      否则 → 延误风险（延误时长 / SLA 违约 / VIP 都属延误口径）；
+    · 已结束（RESOLVED / CLOSED）：没有"当前"了，直接沿用建单原因（历史判定，见 ENDED_EXCEPTION_STATUSES）。
+    `case.type` 始终保留为建单原因（历史），两者不同时前端会一起标出来。
+    """
+    if str(case.status) in ENDED_EXCEPTION_STATUSES:
+        return str(case.type)
+    codes = {str(factor.get("code")) for factor in (case.risk_factors_json or []) if isinstance(factor, dict)}
+    if VEHICLE_BREAKDOWN_FACTOR in codes:
+        return str(ExceptionType.VEHICLE_BREAKDOWN)
+    return str(ExceptionType.DELAY_RISK)
+
+
 def sync_case_vehicle_factor(repos: Repos, case: ExceptionCase, order: Order | None = None) -> bool:
     """读取时自愈：把「车辆故障」因子对齐到订单车辆的**现状**（用户口径：卡片显示当前风险）。
 

@@ -98,6 +98,7 @@ const timelineIncidents = computed<TimelineIncident[]>(() => {
       id: current.id,
       case_no: current.case_no,
       type: current.type,
+      currentType: current.current_type ?? current.type,
       level: current.level,
       status: current.status,
       startedAt: current.occurred_at,
@@ -536,7 +537,14 @@ onMounted(async () => {
         <div class="detail-head">
           <div class="detail-head-main">
             <h3>{{ displayOrderNo }}</h3>
-            <el-tag effect="plain">{{ exceptionTypeLabel(exception.type) }}</el-tag>
+            <el-tag effect="plain">{{ exceptionTypeLabel(exception.current_type ?? exception.type) }}</el-tag>
+            <el-tooltip
+              v-if="exception.current_type && exception.current_type !== exception.type"
+              placement="top"
+              :content="`建单原因：${exceptionTypeLabel(exception.type)}；当前问题按风险因子实时推导，会随现实变化`"
+            >
+              <span class="u-text-muted">（建单原因：{{ exceptionTypeLabel(exception.type) }}）</span>
+            </el-tooltip>
             <RiskTag :level="exception.level" :score="exception.risk_score" show-score />
             <el-tag :type="exceptionStatusType(exception.status)">{{ exceptionStatusLabel(exception.status) }}</el-tag>
             <el-tag v-if="exception.sla_breached" type="danger" effect="dark">SLA 违约 {{ formatDelay(exception.sla_delay_minutes) }}</el-tag>

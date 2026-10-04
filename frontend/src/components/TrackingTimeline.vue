@@ -110,7 +110,7 @@ const subtitle = computed(() => {
         <template v-else-if="entry.kind === 'incident-start'">
           <div class="event-title">
             <b class="u-clickable" @click="openIncident(entry.incident.id)">
-              异常 · {{ exceptionTypeLabel(entry.incident.type) }}
+              异常 · {{ exceptionTypeLabel(entry.incident.currentType ?? entry.incident.type) }}
             </b>
             <el-tag size="small" :type="isOpenIncident(entry.incident) ? 'danger' : 'info'" effect="plain">
               {{ isOpenIncident(entry.incident) ? '未结束' : exceptionStatusLabel(entry.incident.status) }}
@@ -127,7 +127,7 @@ const subtitle = computed(() => {
         <template v-else>
           <div class="event-title">
             <b class="u-clickable" @click="openIncident(entry.incident.id)">
-              异常结束 · {{ exceptionTypeLabel(entry.incident.type) }}
+              异常结束 · {{ exceptionTypeLabel(entry.incident.currentType ?? entry.incident.type) }}
             </b>
             <span class="u-text-muted u-mono">{{ entry.incident.case_no }}</span>
           </div>

@@ -492,7 +492,7 @@ class ExceptionService:
         self,
         *,
         order_id: int,
-        type: str,
+        type: str | None = None,
         occurred_at: datetime | str,
         note: str,
         level: str | None = None,
@@ -500,7 +500,12 @@ class ExceptionService:
         actor_id: int | None = None,
     ) -> ExceptionCase:
         order = self.repos.orders.get_or_404(order_id, "订单不存在")
-        kind = detection_flow.validate_exception_type(type)
+        # 手工建单不再让用户选类型（用户口径：异常单的问题会实时变化，不该用类型固定它）。
+        # type 只是"建单原因"，默认按订单现场推：有车就按车辆故障记，否则按延误风险记。
+        if type is None or not str(type).strip():
+            kind = str(ExceptionType.VEHICLE_BREAKDOWN) if order.vehicle_id else str(ExceptionType.DELAY_RISK)
+        else:
+            kind = detection_flow.validate_exception_type(type)
         occurred = parse_iso_naive(occurred_at)
         if occurred is None:
             raise validation_error("occurred_at 必填且格式合法")
@@ -1614,6 +1619,8 @@ class ExceptionService:
             "vehicle_id": case.vehicle_id,
             "carrier_id": case.carrier_id,
             "type": case.type,
+            # 当前问题（按风险因子实时推导）：界面显示用这个，type 只是建单原因
+            "current_type": eta_flow.current_case_type(case),
             "level": case.level,
             "status": case.status,
             "detected_by": case.detected_by,

@@ -132,7 +132,8 @@ async function submitCreate(): Promise<void> {
     }
     const created = await exceptionApi.createException({
       order_id: createForm.order_id,
-      type: 'VEHICLE_BREAKDOWN', // 手工建单只提供车辆故障；延误风险由检测 / 延误录入产生
+      // 不传 type：异常单的问题会实时变化，类型不作为录入项；
+      // 后端按订单现场推"建单原因"，界面显示的「当前问题」按风险因子实时推导
       // 指定等级仅 ADMIN 可用（后端强制）；非 ADMIN 不传，由规则算等级
       level: canForceClose.value ? createForm.level : undefined,
       occurred_at: occurredAt,
@@ -242,6 +243,14 @@ onMounted(load)
     </PanelCard>
 
     <el-dialog v-model="createVisible" title="手工建单（MANUAL，ADMIN+）" width="520px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        class="u-mb-8"
+        title="不需要选异常类型"
+        description="一张异常单的问题是实时变化的（车辆修好、只剩延误/违约都会被自动重算），所以类型不作为录入项：系统按风险因子实时推导「当前问题」。"
+      />
       <el-form label-width="90px">
         <el-form-item label="订单">
           <el-select v-model="createForm.order_id" filterable placeholder="选择订单" style="width: 100%">
@@ -252,12 +261,6 @@ onMounted(load)
               :value="order.id"
             />
           </el-select>
-        </el-form-item>
-        <el-form-item label="异常类型">
-          <el-tag type="danger" size="small">车辆故障</el-tag>
-          <span class="u-text-muted" style="margin-left: 8px">
-            手工建单只提供「车辆故障」；延误风险由系统按轨迹 / ETA 检测产生（或在该异常的 SLA 卡里「录入延误」）
-          </span>
         </el-form-item>
         <el-form-item v-if="canForceClose" label="等级">
           <el-select v-model="createForm.level" style="width: 100%">

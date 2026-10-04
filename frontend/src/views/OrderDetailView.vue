@@ -104,6 +104,7 @@ const timelineIncidents = computed<TimelineIncident[]>(() =>
     id: item.id,
     case_no: item.case_no,
     type: item.type,
+    currentType: item.current_type ?? item.type,
     level: item.level,
     status: item.status,
     startedAt: item.occurred_at,
@@ -274,7 +275,8 @@ async function createIncident(): Promise<void> {
     }
     await exceptionApi.createException({
       order_id: order.value.id,
-      type: 'VEHICLE_BREAKDOWN', // 订单页只手工录「车辆故障」；延误风险由系统检测 / 延误录入产生
+      // 不传 type：类型不再是"录入项"，后端按订单现场推建单原因；
+      // 界面上的「当前问题」由风险因子实时推导（车辆修好了就显示延误风险）
       occurred_at: occurredAt,
       note: exceptionForm.note.trim(),
     })
@@ -566,7 +568,15 @@ onMounted(async () => {
             class="u-mb-12"
           >
             <template v-if="canCreateException">
-              <div class="form-section-title u-mb-8">录入异常（车辆故障）</div>
+              <div class="form-section-title u-mb-8">录入异常</div>
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                class="u-mb-8"
+                title="不需要选异常类型"
+                description="异常单的问题是实时变化的（车辆修好、只剩延误/违约会被自动重算），类型不作为录入项：系统按风险因子实时推导「当前问题」。"
+              />
               <el-alert
                 v-if="unclosedExceptions.length > 0"
                 type="warning"
@@ -577,13 +587,6 @@ onMounted(async () => {
                 description="同一订单同时只能有一个未关闭异常：请先在下方「结束异常」把它解决；已解决但未归档的，再点「归档异常」关闭它，之后才能录入新的。"
               />
               <el-form label-width="80px" size="small">
-                <el-form-item label="类型">
-                  <el-tag type="danger" size="small">车辆故障</el-tag>
-                  <span class="u-text-muted" style="margin-left: 8px">
-                    订单页只手工录「车辆故障」；延误风险不手工建单 —— 由系统按轨迹 / ETA 自动检测，
-                    或在异常单的 SLA 卡里「录入延误」（人报事实，是否违约由规则判）
-                  </span>
-                </el-form-item>
                 <el-form-item label="发生时间">
                   <el-date-picker
                     v-model="exceptionForm.occurred_at"
@@ -609,7 +612,7 @@ onMounted(async () => {
                     :disabled="unclosedExceptions.length > 0"
                     @click="createIncident"
                   >
-                    录入车辆故障异常
+                    录入异常
                   </el-button>
                   <span class="u-text-muted">等级由规则算，不用选</span>
                 </el-form-item>
@@ -625,7 +628,7 @@ onMounted(async () => {
                     <el-option
                       v-for="item in openExceptions"
                       :key="item.id"
-                      :label="`${item.case_no}　${exceptionTypeLabel(item.type)}　${exceptionStatusLabel(item.status)}`"
+                      :label="`${item.case_no}　${exceptionTypeLabel(item.current_type ?? item.type)}　${exceptionStatusLabel(item.status)}`"
                       :value="item.id"
                     />
                   </el-select>
@@ -656,7 +659,7 @@ onMounted(async () => {
                     <el-option
                       v-for="item in breakdownExceptions"
                       :key="item.id"
-                      :label="`${item.case_no}　${exceptionTypeLabel(item.type)}　${exceptionStatusLabel(item.status)}`"
+                      :label="`${item.case_no}　${exceptionTypeLabel(item.current_type ?? item.type)}　${exceptionStatusLabel(item.status)}`"
                       :value="item.id"
                     />
                   </el-select>
@@ -689,7 +692,7 @@ onMounted(async () => {
                     <el-option
                       v-for="item in resolvedExceptions"
                       :key="item.id"
-                      :label="`${item.case_no}　${exceptionTypeLabel(item.type)}　已解决`"
+                      :label="`${item.case_no}　${exceptionTypeLabel(item.current_type ?? item.type)}　已解决`"
                       :value="item.id"
                     />
                   </el-select>

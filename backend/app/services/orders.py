@@ -760,6 +760,7 @@ class OrderService:
                 "id": case.id,
                 "case_no": case.case_no,
                 "type": case.type,
+                "current_type": eta_flow.current_case_type(case),
                 "level": case.level,
                 "status": case.status,
                 "risk_score": case.risk_score,

@@ -14,6 +14,7 @@ class ExceptionBrief(BaseModel):
     order_no: str | None = None
     customer_name: str | None = None
     type: str
+    current_type: str | None = None
     level: str
     status: str
     risk_score: int | None = None

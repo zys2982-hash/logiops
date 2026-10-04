@@ -12,7 +12,14 @@ class ExceptionCreate(BaseModel):
     """POST /exceptions 手工建单（MANUAL）；带 level 时仅 ADMIN+ 可用。"""
 
     order_id: int
-    type: str = Field(description="VEHICLE_BREAKDOWN / DELAY_RISK")
+    type: str | None = Field(
+        default=None,
+        description=(
+            "建单原因（可省略）。界面不再让用户选类型：省略时按订单现场推"
+            "（有车→VEHICLE_BREAKDOWN，否则 DELAY_RISK）；"
+            "界面上的「当前问题」由风险因子实时推导，见响应里的 current_type"
+        ),
+    )
     occurred_at: datetime
     note: str = Field(min_length=1, max_length=500)
     level: str | None = Field(default=None, description="LOW/MEDIUM/HIGH/CRITICAL，仅 ADMIN+")
@@ -142,6 +149,7 @@ class ExceptionOut(BaseModel):
     vehicle_id: int | None = None
     carrier_id: int | None = None
     type: str | None = None
+    current_type: str | None = None
     level: str | None = None
     status: str | None = None
     detected_by: str | None = None

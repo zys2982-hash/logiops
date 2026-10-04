@@ -52,7 +52,7 @@ function subText(row: ExceptionListItem): string {
     </el-table-column>
     <el-table-column label="异常" min-width="140">
       <template #default="{ row }">
-        <el-tag size="small" effect="plain">{{ exceptionTypeLabel(row.type) }}</el-tag>
+        <el-tag size="small" effect="plain">{{ exceptionTypeLabel(row.current_type ?? row.type) }}</el-tag>
         <div class="u-text-muted">{{ row.detection_rule ?? '—' }}</div>
       </template>
     </el-table-column>

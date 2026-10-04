@@ -434,6 +434,8 @@ export interface ExceptionListItem {
   vehicle_plate?: string | null
   carrier_id?: number | null
   type: ExceptionType
+  /** 当前问题（按风险因子实时推导；与 type＝建单原因 不同，界面显示用这个） */
+  current_type?: ExceptionType | null
   level: ExceptionLevel
   status: ExceptionStatus
   detected_by?: ActorType | string | null
@@ -510,7 +512,8 @@ export interface ExceptionQuery extends PageQuery {
 
 export interface ExceptionCreatePayload {
   order_id: number
-  type: ExceptionType
+  /** 建单原因（可省略）：界面不再让用户选类型，省略时后端按订单现场推 */
+  type?: ExceptionType
   /** 省略则由规则算等级（OPERATOR 可建单）；显式指定等级仅 ADMIN+（后端强制） */
   level?: ExceptionLevel
   occurred_at: string
@@ -522,6 +525,8 @@ export interface TimelineIncident {
   id: number
   case_no?: string | null
   type?: ExceptionType | null
+  /** 当前问题（实时推导） */
+  currentType?: ExceptionType | null
   level?: ExceptionLevel | null
   status?: ExceptionStatus | null
   startedAt: string

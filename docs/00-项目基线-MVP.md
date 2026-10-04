@@ -667,10 +667,17 @@ Seed 内置规则：`DEFAULT` = 发车后 30h / 允许延迟 30min；`CUSTOMER_L
 |---|---|---|
 | `STALL_OVER_THRESHOLD` | 订单 `IN_TRANSIT` 且距最后一条位置变化 ≥ `DETECT_STALL_MINUTES`（默认 120） | 判定为疑似车辆故障，`type=VEHICLE_BREAKDOWN`，`detection_rule=STALL_OVER_THRESHOLD` |
 | `ETA_BREACH_SLA` | 重算后 `expected_eta_at > promised_delivery_at + max_delay_minutes` | `type=DELAY_RISK`；若已有未关闭异常则合并升级为 `VEHICLE_BREAKDOWN` |
-| `MANUAL` | `POST /exceptions` | 运营手工建单，必须填 `type/occurred_at/note`。**界面只提供「车辆故障」**：延误风险不在订单页手工建单 —— 它由 `ETA_BREACH_SLA` 自动检测，或在异常单的 SLA 卡里「录入延误」报事实（是否违约仍由规则判） |
+| `MANUAL` | `POST /exceptions` | 运营手工建单，只需 `order_id/occurred_at/note`：**界面不提供异常类型选择**（一张单的问题是实时变化的，类型不作为录入项）。`type` 只作"建单原因"，省略时后端按订单现场推（有车→`VEHICLE_BREAKDOWN`，否则→`DELAY_RISK`）；界面显示的"当前问题"见下面的 `current_type` |
 
 - 去抖：同订单、同规则、`DETECT_DEBOUNCE_MINUTES`（默认 30）内不重复生成，仅合并刷新。
 - 误报兜底：所有自动创建的异常都停在 `DETECTED`，必须人工（或承运商消息）确认后才进入分析流程——即"机器提议，人确认"。
+- **「异常类型」不是固定标签（`type` vs `current_type`）**：`exception.type` 是**建单原因**（历史，永不改变，
+  例如"车辆故障"）；响应里的 `current_type` 是**当前问题**，按风险因子实时推导：
+  未结束的单（`DETECTED`/`PROCESSING`）—— 仍带 `VEHICLE_BREAKDOWN` 因子 → 车辆故障，否则 → 延误风险
+  （延误时长 / SLA 违约 / VIP 都属延误口径）；已结束的单（`RESOLVED`/`CLOSED`）没有"当前"了，
+  直接沿用建单原因（历史判定口径，与因子存档一致）。
+  界面上（异常列表、异常详情、订单时间线、选单下拉）一律显示 `current_type`，所以"车修好了、只剩延误"
+  时标签会自己变过来 —— 这正是"不要用类型固定它"的落地。
 - 触发时机：`POST /orders/{id}/tracking-events` 写入后**同步**执行"ETA 重算 → 检测"；`POST /demo/actions/tick` 用于演示推进。
 
 ### 8.5 ETA 重算规则（可解释，不用 ML）
