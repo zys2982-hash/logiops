@@ -23,6 +23,7 @@ class ExceptionBrief(BaseModel):
     sla_breached: bool = False
     sla_delay_minutes: int | None = None
     expected_eta_at: str | None = None
+    delivered_at: str | None = None
     updated_at: str | None = None
 
 

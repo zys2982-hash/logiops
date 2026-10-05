@@ -105,17 +105,33 @@ def main() -> int:
             if order is None:
                 continue
             if order.status in {"DELIVERED", "CLOSED", "CANCELLED"} and case.status in OPEN:
-                bad(f"ex#{case.id} {case.case_no} 未结束，但订单 {order.order_no} 已 {order.status}（送达即闭环没生效）")
+                # 例外：**送达后按实际时间自动建的延误单**本来就是"送达才出现、等人处置"，
+                # 未结束是正常的（2026-10-05 新模型）；车辆/其它类型的单在送达时必须已收口。
+                is_delivered_delay = (
+                    str(case.type) == "DELAY_RISK"
+                    and str(case.detection_rule) == "DELIVERED_BREACH"
+                    and order.delivered_at is not None
+                )
+                if not is_delivered_delay:
+                    bad(f"ex#{case.id} {case.case_no} 未结束，但订单 {order.order_no} 已 {order.status}（送达即闭环没生效）")
             if order.status == "CREATED" and case.status in OPEN:
                 bad(f"ex#{case.id} {case.case_no} 未结束，但订单 {order.order_no} 还在「待发车」（未派车就出异常）")
             if order.status == "CREATED" and order.vehicle_id:
                 bad(f"订单 {order.order_no} 未派车却已绑定车辆（应在派车时才绑定）")
 
-        # 5) 同一订单最多一张未结束异常
+        # 5) 同一订单最多一张未结束异常（例外：送达结算允许"已解决的车辆单 + 待确认的延误单"并存，
+        #    因为送达那刻车辆单会被收口为已解决（仍算"未关闭"），随后按实际时间建的延误单必须能落下来）
         for order in orders:
             open_cases = [c for c in cases if c.order_id == order.id and c.status in OPEN]
             if len(open_cases) > 1:
-                bad(f"订单 {order.order_no} 有 {len(open_cases)} 张未结束异常：{[c.case_no for c in open_cases]}")
+                delay_cases = [c for c in open_cases if str(c.type) == "DELAY_RISK"]
+                others = [c for c in open_cases if str(c.type) != "DELAY_RISK"]
+                if not (
+                    len(delay_cases) == 1
+                    and str(delay_cases[0].detection_rule) == "DELIVERED_BREACH"
+                    and all(str(c.status) == "RESOLVED" for c in others)
+                ):
+                    bad(f"订单 {order.order_no} 有 {len(open_cases)} 张未结束异常：{[c.case_no for c in open_cases]}")
 
         # 6) 时间顺序：建单 ≤ 派车 ≤ 发生 ≤（解决/关闭）；不允许未来时间；轨迹在派车之后
         for order in orders:
@@ -134,6 +150,51 @@ def main() -> int:
                     bad(f"订单 {order.order_no} 轨迹 {event.event_type}@{event.city} 早于建单时间")
             if events and base and max(e.occurred_at for e in events) < base:
                 bad(f"订单 {order.order_no} 轨迹全部早于派车时间")
+
+        # 6b) 新风险模型不变量（2026-10-05）
+        #     · 车辆故障单不做 SLA 判定 → 不应有 sla_delay_minutes / sla_breached
+        #     · 延误单只在送达后产生 → 订单必须已送达，且延误 = 实际送达 − 承诺送达，且必须违约
+        #     · 已送达且未超允许延迟的订单 → 不应有未结束的延误单
+        for case in cases:
+            order = next((o for o in orders if o.id == case.order_id), None)
+            if str(case.type) == "VEHICLE_BREAKDOWN":
+                if case.sla_delay_minutes is not None or case.sla_breached:
+                    bad(
+                        f"ex#{case.id} {case.case_no} 车辆故障单不应有 SLA 判定："
+                        f"delay={case.sla_delay_minutes} breached={case.sla_breached}"
+                    )
+                codes = {str(f.get("code")) for f in (case.risk_factors_json or [])}
+                if codes & {"DELAY_BASE", "SLA_BREACH"}:
+                    bad(f"ex#{case.id} {case.case_no} 车辆故障单不该带延误/违约因子：{sorted(codes)}")
+            if str(case.type) == "DELAY_RISK":
+                if order is None or order.delivered_at is None:
+                    bad(f"ex#{case.id} {case.case_no} 延误单必须产生于送达之后，但订单未送达")
+                    continue
+                if order.promised_delivery_at is not None and case.sla_delay_minutes is not None:
+                    expected_delay = int(
+                        round((order.delivered_at - order.promised_delivery_at).total_seconds() / 60)
+                    )
+                    if abs(int(case.sla_delay_minutes) - expected_delay) > 1:
+                        bad(
+                            f"ex#{case.id} {case.case_no} 延误 {case.sla_delay_minutes} ≠ "
+                            f"实际送达−承诺送达 {expected_delay}"
+                        )
+                if not case.sla_breached:
+                    bad(f"ex#{case.id} {case.case_no} 延误单必须是违约产生的（sla_breached=False）")
+                codes = {str(f.get("code")) for f in (case.risk_factors_json or [])}
+                if "SLA_BREACH" in codes:
+                    bad(f"ex#{case.id} {case.case_no} 延误单不该再有 SLA_BREACH 因子（新版不重复计违约）")
+
+        for order in orders:
+            if order.status != "DELIVERED" or order.delivered_at is None or order.promised_delivery_at is None:
+                continue
+            delay = int(round((order.delivered_at - order.promised_delivery_at).total_seconds() / 60))
+            open_delay = [
+                c for c in cases
+                if c.order_id == order.id and str(c.type) == "DELAY_RISK" and str(c.status) in OPEN
+            ]
+            if delay <= 0 and open_delay:
+                bad(f"订单 {order.order_no} 未超时（提前 {-delay} 分钟）却有未结束延误单 {[c.case_no for c in open_delay]}")
 
         for case in cases:
             if case.occurred_at > now:

@@ -100,7 +100,12 @@ def detected_exception(
     customer: str = "vip",
     delay_minutes: int = 180,
 ) -> ExceptionCase:
-    """构造一条命中 STALL 规则的自动异常（DETECTED），并把 ETA 推到"违约但 121..360 分档"上。"""
+    """构造一条命中 STALL 规则的自动异常（DETECTED）。
+
+    2026-10-05 新模型下在途只检测停滞，且"车辆故障"因子按**车辆现状**计——
+    这里按 CASE-A 的真实故事把车辆置为「维修中」，因子才是 车辆故障(1) + 客户等级，
+    风险分不再受 ETA/违约影响（delay_minutes 仍写进 ETA 快照，只作订单事实）。
+    """
     from app.core.clock import state as clock_state
     from app.services import detection_flow, eta_flow
 
@@ -110,8 +115,13 @@ def detected_exception(
     OrderService(repos).update_eta(
         order.id,
         eta_at=promised + timedelta(minutes=delay_minutes),
-        reason="单测构造：把 ETA 推到违约分档",
+        reason="单测构造：把 ETA 推到违约分档（仅作订单事实，不影响风险分）",
     )
+    if order.vehicle_id:
+        vehicle = repos.vehicles.get(order.vehicle_id)
+        if vehicle is not None:
+            vehicle.status = "REPAIRING"
+            repos.vehicles.save(vehicle)
     clock_state.advance(stall_minutes)
     case = detection_flow.detect_for_order(repos, order)
     assert case is not None, "数据构造失败：未命中停滞规则"

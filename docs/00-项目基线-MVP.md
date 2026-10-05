@@ -666,8 +666,9 @@ Seed 内置规则：`DEFAULT` = 发车后 30h / 允许延迟 30min；`CUSTOMER_L
 | 规则码 | 条件 | 说明 |
 |---|---|---|
 | `STALL_OVER_THRESHOLD` | 订单 `IN_TRANSIT` 且距最后一条位置变化 ≥ `DETECT_STALL_MINUTES`（默认 120） | 判定为疑似车辆故障，`type=VEHICLE_BREAKDOWN`，`detection_rule=STALL_OVER_THRESHOLD` |
-| `ETA_BREACH_SLA` | 重算后 `expected_eta_at > promised_delivery_at + max_delay_minutes` | `type=DELAY_RISK`；若已有未关闭异常则合并升级为 `VEHICLE_BREAKDOWN` |
+| `DELIVERED_BREACH` | 订单**送达**后 `实际送达 − 承诺送达 > 允许延迟` | `type=DELAY_RISK`，`detection_rule=DELIVERED_BREACH`（2026-10-05 起：延误**只在送达时**按实际时间判定） |
 | `MANUAL` | `POST /exceptions` | 运营手工建单，只需 `order_id/occurred_at/note`：**界面不提供异常类型选择**（一张单的问题是实时变化的，类型不作为录入项）。`type` 只作"建单原因"，省略时后端按订单现场推（有车→`VEHICLE_BREAKDOWN`，否则→`DELAY_RISK`）；界面显示的"当前问题"见下面的 `current_type` |
+| ~~`ETA_BREACH_SLA`~~ | —— | **已下线**（在途按预测 ETA 建延误单的口径作废；保留枚举值仅供历史数据读取） |
 
 - 去抖：同订单、同规则、`DETECT_DEBOUNCE_MINUTES`（默认 30）内不重复生成，仅合并刷新。
 - 误报兜底：所有自动创建的异常都停在 `DETECTED`，必须人工（或承运商消息）确认后才进入分析流程——即"机器提议，人确认"。
@@ -705,23 +706,30 @@ eta_method = 'REPAIR_WAIT' | 'MOVING_AVG_SPEED' | 'FALLBACK'
 
 ### 8.6 风险等级规则（`level` 由这里决定，LLM 无权改）
 
+**口径（2026-10-05 用户定稿）：一张异常单只受一个问题影响，两类问题互不叠加。**
+
 ```text
-step1 基础分：按 sla_delay_minutes（无 ETA 时按 0）
-   未违约或延误 ≤ 0      → 0
-   1 .. 120 min         → 1
-   121 .. 360 min       → 2
-   > 360 min            → 3
-step2 加分：
-   customer.level == VIP   → +1   (SVIP → +2)
-   type == VEHICLE_BREAKDOWN → +1
-   sla_breached            → +1
-step3 映射（score, 上限 4）：
+车辆故障单（type=VEHICLE_BREAKDOWN）—— 不做 SLA 判定：
+   step1 车辆故障（车辆维修中）        → +1
+   step2 客户等级 VIP +1 / SVIP +2
+   合计 1~3 → MEDIUM / MEDIUM / HIGH（sla_delay_minutes=None、sla_breached=False）
+
+延误单（type=DELAY_RISK，**只在订单送达时按"实际送达 − 承诺送达"产生**）：
+   step1 延误档位（实际延误分钟）
+         ≤0 → 0 | 1..120 → 1 | 121..360 → 2 | >360 → 3
+   step2 客户等级 VIP +1 / SVIP +2
+   合计 → 封顶 4（建单前提本身就是"超出允许延迟"，所以**不再额外加"违约 1"**）
+
+step3 映射（score, 上限 MAX_SCORE=4）：
    0 → LOW | 1-2 → MEDIUM | 3 → HIGH | 4 → CRITICAL
 输出：risk_score、risk_factors_json（逐项列出 code/label/weight/detail，前端直接展示"为什么是高危"）
 ```
 
-Seed 主案例（`SO20260930021`）：延误 270min → 基础分 2；VIP +1；VEHICLE_BREAKDOWN +1；SLA 违约 +1
-→ 合计 5，封顶后 `risk_score=4` → `CRITICAL`。前端列表按 `risk_score desc` 排序，Demo 用它占据榜首。
+- 未结束的异常最低是 **MEDIUM**（车辆故障 1 分起）；`LOW / 0 分` 只会出现在"已结束"的**当前风险**里（§8.2 的 `current_risk_score`）。
+- 车辆故障单的因子只有 `VEHICLE_BREAKDOWN`（+ 客户等级）；延误单的因子只有 `DELAY_BASE`（+ 客户等级）。
+  旧的 `SLA_BREACH` 因子已取消（同一事实不再计两次）。
+- Seed 主案例（`SO20260930021` / CASE-A）在新口径下是**车辆故障单**：车辆故障 1 + VIP 1 = **2 → MEDIUM**（不再有"延误 270min → CRITICAL"）。
+  列表按 `risk_score desc` 排序。
 
 ### 8.7 值的格式化与脱敏
 
@@ -1235,11 +1243,16 @@ promised_delivery_at             2026-10-01 01:30 (+08) = 2026-09-30T17:30Z  （
 estimated_recovery_at            2026-09-30 20:00 (+08)
 distance_km / 剩余里程            800 km / 400 km，按 40 km/h ≈ 10h
 expected_eta_at                  2026-10-01 06:00 (+08) = 2026-09-30T22:00Z
-sla_delay_minutes                270  → sla_breached = true（0 分钟容忍）
-risk_score                       2(延误 270min) + 1(VIP) + 1(车辆故障) + 1(违约) = 5 → 封顶 4 → CRITICAL
-risk_factors                     DELAY_BASE(2) / CUSTOMER_VIP(1) / VEHICLE_BREAKDOWN(1) / SLA_BREACH(1)
-验收断言                          level=CRITICAL、risk_score=4、sla_breached=true、240 ≤ delay ≤ 300
+sla_delay_minutes                None（**车辆故障单不做 SLA 判定**；2026-10-05 起）
+risk_score                       1(车辆故障) + 1(VIP) = 2 → **MEDIUM**
+risk_factors                     VEHICLE_BREAKDOWN(1) / CUSTOMER_VIP(1)
+验收断言                          level=MEDIUM、risk_score=2、sla_delay_minutes is None、sla_breached=False、
+                                 因子恰为 {VEHICLE_BREAKDOWN, CUSTOMER_VIP}
 ```
+
+> 2026-10-05 口径变更：CASE-A 仍是"停滞 → 车辆故障单"的主案例，但它**不再叠加延误/违约分**
+> （"一张异常单只受一个问题影响"）；订单自身的承诺/预计快照仍在订单侧可见。
+> 延误只在**订单送达**后按 `实际送达 − 承诺送达` 判定（`DELIVERED_BREACH`，见 §8.4）。
 
 Seed 生成器**必须用 `app/rules` 真算**上述 ETA/延误/等级，不允许硬编码等级字段。
 前端 mock fixture 需与本表一致，保证"无后端兜底视图"和真实接口讲同一个故事。

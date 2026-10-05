@@ -439,6 +439,8 @@ export interface ExceptionListItem {
   /** 当前风险（已解决/已关闭 → LOW / 0 分；历史等级见 level / risk_score） */
   current_level?: ExceptionLevel | null
   current_risk_score?: number | null
+  /** 订单实际送达时间（延误单的 SLA 卡要显示"承诺到达 / 实际送达 / 延误时长"） */
+  delivered_at?: string | null
   level: ExceptionLevel
   status: ExceptionStatus
   detected_by?: ActorType | string | null

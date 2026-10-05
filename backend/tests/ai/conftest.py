@@ -27,7 +27,13 @@ def repos(db_session, bootstrap) -> Repos:
 
 @pytest.fixture()
 def case_a(db_session, bootstrap, base_time) -> dict:
-    """CASE-A：VIP 客户 + 车辆故障 + SLA 违约 270 分钟 → risk_score=4 CRITICAL。"""
+    """CASE-A（AI 层夹具）：VIP 客户 + **送达延误 270 分钟** → 延误档位 2 + VIP 1 = 3 → HIGH。
+
+    2026-10-05 新模型下"车辆故障单不做 SLA 判定"（`sla_delay_minutes`/`sla_breached` 恒为
+    None/False），而"建单前提就是违约"的只有**延误单**。T2 夹具要覆盖
+    "LLM 说的 sla_breached 必须等于后端口径"、T3 要覆盖「延误通知」，所以这张单按延误口径构造；
+    `root_cause_code` 仍是车辆故障（车坏 → 送达延误，事实自洽）。
+    """
     workspace_id = bootstrap["workspace_id"]
     promised = naive(base_time + timedelta(hours=24))
     expected_eta = naive(base_time + timedelta(hours=24, minutes=CASE_A_DELAY_MINUTES))
@@ -90,8 +96,8 @@ def case_a(db_session, bootstrap, base_time) -> dict:
         customer_id=bootstrap["customers"]["vip"].id,
         vehicle_id=bootstrap["vehicle"].id,
         carrier_id=bootstrap["carrier"].id,
-        type="VEHICLE_BREAKDOWN",
-        level="CRITICAL",
+        type="DELAY_RISK",
+        level="HIGH",
         status="PROCESSING",
         detected_by="SYSTEM",
         detection_rule="STALL_OVER_THRESHOLD",
@@ -103,7 +109,7 @@ def case_a(db_session, bootstrap, base_time) -> dict:
         expected_eta_at=expected_eta,
         sla_delay_minutes=CASE_A_DELAY_MINUTES,
         sla_breached=True,
-        risk_score=4,
+        risk_score=3,
     )
     db_session.add(case)
     db_session.flush()

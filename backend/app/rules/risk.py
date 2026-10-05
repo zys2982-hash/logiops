@@ -71,22 +71,43 @@ def vehicle_breakdown_factor() -> RiskFactor:
 
 def evaluate_risk(
     *,
-    delay_minutes: int | None,
+    delay_minutes: int | None = None,
     customer_level: str | None = None,
     exception_type: str | None = None,
-    sla_breached: bool = False,
     vip_upgrade: bool = True,
     vehicle_repairing: bool | None = None,
 ) -> RiskResult:
-    score = base_score(delay_minutes)
-    factors: list[RiskFactor] = [
-        RiskFactor(
-            code="DELAY_BASE",
-            label="延误时长",
-            weight=score,
-            detail=f"预计延误 {delay_minutes or 0} 分钟",
+    """风险分 = **这一个异常本身**的权重 + 客户等级放大（用户口径 2026-10-05）。
+
+    用户原话：「一个异常订单的逻辑应该只受到一个异常的影响，比如我在某个订单里创建了车辆异常，
+    并且这个客户是 vip 客户，那么风险等级就是车辆异常的 1 加上 vip 的 1 等于 2」。
+
+    所以按"问题类型"分流，两种问题**互不叠加**：
+    · `VEHICLE_BREAKDOWN`（车辆故障）：车辆故障 1 + 客户等级（VIP 1 / SVIP 2）—— 不计延误、不计违约；
+    · `DELAY_RISK`（延误，送达后按实际时间产生）：延误档位 1/2/3 + 客户等级 —— 建单前提就是
+      "实际送达已超允许延迟"，不再重复加"违约 1"（旧模型会，导致同一事实计两次）；
+    · `type` 未指定（历史调用）：按延误口径算，保持兼容。
+    客户等级是"放大项"，不算另一个异常。分数封顶 4。
+    """
+    score = 0
+    factors: list[RiskFactor] = []
+    kind = str(exception_type) if exception_type is not None else str(ExceptionType.DELAY_RISK)
+
+    if kind == str(ExceptionType.DELAY_RISK):
+        base = base_score(delay_minutes)
+        score += base
+        factors.append(
+            RiskFactor(
+                code="DELAY_BASE",
+                label="延误时长",
+                weight=base,
+                detail=f"实际延误 {delay_minutes or 0} 分钟",
+            )
         )
-    ]
+    # 车辆故障因子按**现状**计：None = 只看类型；False = 车辆已恢复，不再计入（显示当前风险）
+    if kind == str(ExceptionType.VEHICLE_BREAKDOWN) and vehicle_repairing is not False:
+        score += 1
+        factors.append(vehicle_breakdown_factor())
 
     if vip_upgrade:
         if str(customer_level) == str(CustomerLevel.SVIP):
@@ -95,16 +116,6 @@ def evaluate_risk(
         elif str(customer_level) == str(CustomerLevel.VIP):
             score += 1
             factors.append(RiskFactor("CUSTOMER_VIP", "VIP 客户", 1, "VIP 客户需优先处理"))
-
-    # 车辆故障因子按**现状**计：None = 旧行为（只看类型，兼容既有测试）；
-    # False = 车辆已恢复，不再计入（用户口径：显示当前风险等级）
-    if str(exception_type) == str(ExceptionType.VEHICLE_BREAKDOWN) and vehicle_repairing is not False:
-        score += 1
-        factors.append(vehicle_breakdown_factor())
-
-    if sla_breached:
-        score += 1
-        factors.append(RiskFactor("SLA_BREACH", "SLA 已违约", 1, "已超出客户承诺时间"))
 
     capped = min(score, MAX_SCORE)
     return RiskResult(score=capped, level=level_of(capped), factors=factors)

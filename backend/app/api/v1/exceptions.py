@@ -21,7 +21,6 @@ from app.schemas.exception import (
     ExceptionClose,
     ExceptionConfirm,
     ExceptionCreate,
-    ExceptionDelay,
     ExceptionOut,
     ExceptionPage,
     ExceptionPatch,
@@ -121,23 +120,6 @@ def create_exception(ctx: ExceptionCreatePerm, payload: ExceptionCreate) -> Any:
         occurred_at=payload.occurred_at,
         note=payload.note,
         level=payload.level,
-        delay_minutes=payload.delay_minutes,
-        actor_id=ctx.user.id,
-    )
-    return exception_brief(ctx.repos, case)
-
-
-@router.post(
-    "/{exception_id}/delay",
-    response_model=ExceptionOut,
-    summary="录入/修改延误分钟（人工事实；是否违约仍由规则判定）",
-)
-def record_delay(ctx: ExceptionHandle, exception_id: int, payload: ExceptionDelay) -> Any:
-    case = ExceptionService(ctx.repos).set_delay(
-        exception_id,
-        delay_minutes=payload.delay_minutes,
-        note=payload.note,
-        expected_version=payload.expected_version,
         actor_id=ctx.user.id,
     )
     return exception_brief(ctx.repos, case)

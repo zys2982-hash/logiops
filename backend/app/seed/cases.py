@@ -50,21 +50,27 @@ from app.seed.catalog import EVENT_FRACTIONS
 from app.seed.state import SeedContext
 
 STALL_THRESHOLD_MINUTES = 120
-GENERIC_CASE_TOTAL = 40
+# 通用异常条数：脚本化案例（A/B/C/D2/E×5 = 9）+ 通用池 = 50。
+# 2026-10-05 新模型下 CASE-D1（送达未违约）**不再建单**（负样本），所以通用池 +1 保持总数 50。
+GENERIC_CASE_TOTAL = 41
 CASE_A_RAW_TEXT = "车在济南爆胎了，现在联系修理厂，预计晚上 8 点恢复。"
 CASE_A_RECOVERY_LOCAL_HOUR = 20
 
 # 通用异常"证据带"：固定 客户等级 × 类型 × 延误分钟 → 期望等级（等级仍由规则算出，这里只做自检）
+#
+# 2026-10-05 新风险模型：车辆故障单 = 车辆故障 1 + 客户等级；延误单 = 延误档位 1/2/3 + 客户等级
+# （建单前提已是违约，不再加"违约 1"）。所以期望等级按新公式重算：
+#   车辆单 → 1 + (NORM 0 / VIP 1 / SVIP 2) = 1~3；延误单 → 档位 + 客户等级（封顶 4）
 GENERIC_BANDS: list[dict[str, Any]] = [
-    {"level": "LOW", "code": "NORM-01", "case_type": ExceptionType.DELAY_RISK, "delay": 0},
-    {"level": "MEDIUM", "code": "NORM-02", "case_type": ExceptionType.DELAY_RISK, "delay": 25},
-    {"level": "MEDIUM", "code": "NORM-03", "case_type": ExceptionType.DELAY_RISK, "delay": 31},
-    {"level": "HIGH", "code": "NORM-04", "case_type": ExceptionType.DELAY_RISK, "delay": 200},
+    {"level": "MEDIUM", "code": "NORM-01", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 0},
+    {"level": "MEDIUM", "code": "NORM-02", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 0},
+    {"level": "MEDIUM", "code": "NORM-03", "case_type": ExceptionType.DELAY_RISK, "delay": 45},
+    {"level": "MEDIUM", "code": "NORM-04", "case_type": ExceptionType.DELAY_RISK, "delay": 200},
     {"level": "MEDIUM", "code": "NORM-05", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 0},
-    {"level": "CRITICAL", "code": "NORM-06", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 200},
-    {"level": "CRITICAL", "code": "VIP-02", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 300},
-    {"level": "HIGH", "code": "VIP-03", "case_type": ExceptionType.DELAY_RISK, "delay": 100},
-    {"level": "HIGH", "code": "SVIP-01", "case_type": ExceptionType.DELAY_RISK, "delay": 25},
+    {"level": "HIGH", "code": "NORM-06", "case_type": ExceptionType.DELAY_RISK, "delay": 400},
+    {"level": "MEDIUM", "code": "VIP-02", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 0},
+    {"level": "CRITICAL", "code": "VIP-03", "case_type": ExceptionType.DELAY_RISK, "delay": 400},
+    {"level": "HIGH", "code": "SVIP-01", "case_type": ExceptionType.DELAY_RISK, "delay": 45},
     {"level": "CRITICAL", "code": "VIP-01", "case_type": ExceptionType.DELAY_RISK, "delay": 400},
 ]
 GENERIC_STATUS_CYCLE: list[str] = [
@@ -120,7 +126,6 @@ def rule_facts(
         delay_minutes=impact.delay_minutes,
         customer_level=customer.level,
         exception_type=case_type,
-        sla_breached=impact.breached,
     )
     return match, promised, expected, impact, risk
 
@@ -227,6 +232,14 @@ def build_exception(
         promised_override=promised_override,
     )
     stamp = created_at or occurred_at
+    # 车辆故障单不做 SLA 判定（用户口径 2026-10-05：普通的车辆异常订单不应该有 SLA 影响）；
+    # 延误单才有延误/SLA 字段（且建单前提是"实际送达已超允许延迟"）
+    vehicle_case = str(case_type) == str(ExceptionType.VEHICLE_BREAKDOWN)
+    impact_summary = (
+        f"车辆故障：{root_cause_note or '车辆异常，待人工确认处置'}"
+        if vehicle_case
+        else _impact_summary(order, customer, impact, expected)
+    )
     case = ExceptionCase(
         workspace_id=ctx.workspace_id,
         case_no=ctx.next_case_no(occurred_at),
@@ -243,12 +256,12 @@ def build_exception(
         stall_since=stall_since,
         root_cause_code=root_cause_code,
         root_cause_note=root_cause_note,
-        impact_summary=_impact_summary(order, customer, impact, expected),
+        impact_summary=impact_summary,
         promised_delivery_at=promised,
         current_eta_at=order.current_eta_at or promised,
         expected_eta_at=expected,
-        sla_delay_minutes=impact.delay_minutes,
-        sla_breached=bool(impact.breached),
+        sla_delay_minutes=None if vehicle_case else impact.delay_minutes,
+        sla_breached=False if vehicle_case else bool(impact.breached),
         risk_score=risk.score,
         risk_factors_json=risk.factor_dicts,
         assigned_to=assigned_to,
@@ -335,9 +348,6 @@ def build_case_a(ctx: SeedContext) -> ExceptionCase:
         order_status=order.status,
         last_move_at=last_move_at,
         stall_threshold_minutes=STALL_THRESHOLD_MINUTES,
-        expected_eta_at=expected_eta,
-        promised_delivery_at=promised,
-        max_delay_minutes=match.max_delay_minutes,
         has_open_exception=False,
     )
     if decision.rule != str(DetectionRule.STALL_OVER_THRESHOLD) or not decision.should_create:
@@ -361,13 +371,21 @@ def build_case_a(ctx: SeedContext) -> ExceptionCase:
         root_cause_code="VEHICLE_BREAKDOWN",
         root_cause_note="承运商反馈右后轮爆胎，正在联系修理厂",
     )
-    if not (240 <= int(case.sla_delay_minutes or 0) <= 300) or not case.sla_breached or case.level != "CRITICAL":
+    # 新风险模型自检（2026-10-05）：车辆故障单 = 车辆故障 1 + VIP 1 = 2 → MEDIUM；
+    # 且**不做 SLA 判定**（没有延误/违约因子与字段）
+    if case.level != "MEDIUM" or int(case.risk_score or 0) != 2:
         raise RuntimeError(
-            f"CASE-A 规则自检失败：delay={case.sla_delay_minutes} breached={case.sla_breached} "
-            f"level={case.level} score={case.risk_score}"
+            f"CASE-A 规则自检失败：level={case.level} score={case.risk_score}（应为 MEDIUM/2）"
         )
-    ctx.counts["case_a_delay_minutes"] = int(case.sla_delay_minutes or 0)
+    if case.sla_delay_minutes is not None or case.sla_breached:
+        raise RuntimeError(
+            f"CASE-A 车辆单不应有 SLA 判定：delay={case.sla_delay_minutes} breached={case.sla_breached}"
+        )
+    factor_codes = [str(f.get("code")) for f in (case.risk_factors_json or [])]
+    if sorted(factor_codes) != ["CUSTOMER_VIP", "VEHICLE_BREAKDOWN"]:
+        raise RuntimeError(f"CASE-A 因子应为 车辆故障 + VIP：{factor_codes}")
     ctx.counts["case_a_risk_score"] = int(case.risk_score or 0)
+    ctx.counts["case_a_level"] = case.level
     ctx.counts["case_a_stall_minutes"] = catalog.CASE_A_STALL_MINUTES
     ctx.counts["case_a_eta_method"] = eta_result.method
     ctx.counts["case_a_eta_detail"] = eta_result.detail
@@ -739,65 +757,76 @@ def build_case_c(ctx: SeedContext) -> ExceptionCase:
     return case
 
 
-# --- CASE-D（延误边界：25min 不违约 vs 31min 违约） ---------------------------
-def build_case_d(ctx: SeedContext) -> tuple[ExceptionCase, ExceptionCase]:
+# --- CASE-D（送达边界：25min 不建单 vs 31min 建单） ---------------------------
+def build_case_d(ctx: SeedContext) -> ExceptionCase:
+    """新模型（2026-10-05）：延误只在**送达时**用 `实际送达 − 承诺送达` 与允许延迟比对。
+
+    · D1：**25min ≤ 允许 30min → 不产生异常单**（负样本，证明"未违约就不建单"）；
+    · D2：**31min > 允许 30min → 自动建延误单**（detection_rule=DELIVERED_BREACH）。
+    """
     operator = ctx.users["OPERATOR"]
     now = ctx.now
 
-    # D1：延误 25min ≤ 允许 30min → 不违约
+    # D1：送达未违约 → 没有异常单
     order = ctx.order_at(24)
     ctx.used_order_indices.add(24)
-    customer = _customer(ctx, "NORM-04")
-    order.status = str(OrderStatus.IN_TRANSIT)
+    match = sla_rules.match_rule(ctx.sla_rules, customer_code=_customer(ctx, "NORM-04").code,
+                                 customer_level=_customer(ctx, "NORM-04").level)
+    d1_promised = order.promised_delivery_at or sla_rules.compute_promised_at(
+        order.dispatched_at, match.deadline_offset_hours
+    )
+    d1_delivered = d1_promised + timedelta(minutes=25)
+    order.status = str(OrderStatus.DELIVERED)
+    order.delivered_at = d1_delivered
+    order.current_eta_at = d1_delivered
     order.updated_at = now
     ctx.session.add(order)
-    created_at = now - timedelta(minutes=150)
-    case_d = build_exception(
-        ctx,
-        order=order,
-        customer=customer,
-        case_type=str(ExceptionType.DELAY_RISK),
-        status=str(ExceptionStatus.RESOLVED),
-        occurred_at=created_at - timedelta(minutes=20),
-        detection_rule=str(DetectionRule.MANUAL),
-        delay_minutes=25,
-        detected_by="OPERATOR",
-        created_at=created_at,
-        assigned_to=operator.id,
-        resolved_at=created_at + timedelta(minutes=90),
-        root_cause_code="TRAFFIC",
-        root_cause_note="京沪高速拥堵，已恢复正常通行",
-    )
-    if case_d.sla_breached or case_d.level != "MEDIUM":
-        raise RuntimeError(
-            f"CASE-D 边界自检失败：delay={case_d.sla_delay_minutes} breached={case_d.sla_breached} level={case_d.level}"
-        )
-    ctx.counts["case_d_delay_minutes"] = int(case_d.sla_delay_minutes or 0)
-    ctx.counts["case_d_level"] = case_d.level
+    delay_d1 = int(round((d1_delivered - d1_promised).total_seconds() / 60))
+    if delay_d1 > match.max_delay_minutes:
+        raise RuntimeError(f"CASE-D1 自检失败：{delay_d1}min 不应超过允许 {match.max_delay_minutes}min")
+    ctx.counts["case_d_delay_minutes"] = delay_d1
+    ctx.counts["case_d_breached"] = False
+    ctx.counts["case_d_has_case"] = False
 
-    # D2：延误 31min > 允许 30min → 违约（同一等级 MEDIUM，但 sla_breached 翻转）
+    # D2：送达超允许延迟 → 建延误单
     d2_order = _first_free_order(ctx, preferred_status=str(OrderStatus.IN_TRANSIT))
     d2_customer = _customer(ctx, "NORM-05")
-    d2_created = created_at - timedelta(hours=6)
+    d2_match = sla_rules.match_rule(
+        ctx.sla_rules, customer_code=d2_customer.code, customer_level=d2_customer.level
+    )
+    d2_promised = d2_order.promised_delivery_at or sla_rules.compute_promised_at(
+        d2_order.dispatched_at, d2_match.deadline_offset_hours
+    )
+    d2_delivered = d2_promised + timedelta(minutes=31)
+    d2_order.status = str(OrderStatus.DELIVERED)
+    d2_order.delivered_at = d2_delivered
+    d2_order.current_eta_at = d2_delivered
+    d2_order.updated_at = now
+    ctx.session.add(d2_order)
+    created_at = d2_delivered + timedelta(minutes=5)
     case_d2 = build_exception(
         ctx,
         order=d2_order,
         customer=d2_customer,
         case_type=str(ExceptionType.DELAY_RISK),
         status=str(ExceptionStatus.RESOLVED),
-        occurred_at=d2_created - timedelta(minutes=10),
-        detection_rule=str(DetectionRule.ETA_BREACH_SLA),
+        occurred_at=d2_delivered,
+        detection_rule=str(DetectionRule.DELIVERED_BREACH),
         delay_minutes=31,
         detected_by="SYSTEM",
-        created_at=d2_created,
+        created_at=created_at,
         assigned_to=operator.id,
-        resolved_at=d2_created + timedelta(minutes=60),
+        resolved_at=created_at + timedelta(minutes=60),
         root_cause_code="TRAFFIC",
-        root_cause_note="边界案例：31 分钟 > 允许 30 分钟，规则判定违约",
+        root_cause_note="边界案例：送达超时 31 分钟 > 允许 30 分钟，自动建单",
     )
     if not case_d2.sla_breached:
         raise RuntimeError(f"CASE-D2 边界自检失败：delay={case_d2.sla_delay_minutes} 应当违约")
-    return case_d, case_d2
+    if str(case_d2.detection_rule) != str(DetectionRule.DELIVERED_BREACH):
+        raise RuntimeError(f"CASE-D2 建单规则应为 DELIVERED_BREACH：{case_d2.detection_rule}")
+    ctx.counts["case_d2_delay_minutes"] = int(case_d2.sla_delay_minutes or 0)
+    ctx.counts["case_d2_level"] = case_d2.level
+    return case_d2
 
 
 # --- CASE-E（多单并存） -------------------------------------------------------
@@ -805,11 +834,11 @@ def build_case_e(ctx: SeedContext) -> list[ExceptionCase]:
     operator = ctx.users["OPERATOR"]
     now = ctx.now
     definitions = [
-        (25, "VIP-03", ExceptionType.VEHICLE_BREAKDOWN, 400, ExceptionStatus.PROCESSING, "CRITICAL"),
-        (26, "VIP-01", ExceptionType.DELAY_RISK, 100, ExceptionStatus.PROCESSING, "HIGH"),
-        (27, "NORM-01", ExceptionType.DELAY_RISK, 60, ExceptionStatus.DETECTED, "MEDIUM"),
-        (28, "SVIP-01", ExceptionType.DELAY_RISK, 25, ExceptionStatus.RESOLVED, "HIGH"),
-        (29, "NORM-03", ExceptionType.VEHICLE_BREAKDOWN, 25, ExceptionStatus.CLOSED, "MEDIUM"),
+        (25, "VIP-03", ExceptionType.VEHICLE_BREAKDOWN, 0, ExceptionStatus.PROCESSING, "MEDIUM"),
+        (26, "VIP-01", ExceptionType.DELAY_RISK, 400, ExceptionStatus.PROCESSING, "CRITICAL"),
+        (27, "NORM-01", ExceptionType.DELAY_RISK, 200, ExceptionStatus.DETECTED, "MEDIUM"),
+        (28, "SVIP-01", ExceptionType.DELAY_RISK, 45, ExceptionStatus.RESOLVED, "HIGH"),
+        (29, "NORM-03", ExceptionType.VEHICLE_BREAKDOWN, 0, ExceptionStatus.CLOSED, "MEDIUM"),
     ]
     cases: list[ExceptionCase] = []
     for index, code, case_type, delay, status, expected_level in definitions:
@@ -920,9 +949,6 @@ def build_generic_cases(ctx: SeedContext, count: int = GENERIC_CASE_TOTAL) -> li
             order_status=order.status,
             last_move_at=last_move_at,
             stall_threshold_minutes=STALL_THRESHOLD_MINUTES,
-            expected_eta_at=expected,
-            promised_delivery_at=promised,
-            max_delay_minutes=match.max_delay_minutes,
             has_open_exception=False,
         )
         detection_rule = decision.rule or str(DetectionRule.MANUAL)
@@ -978,8 +1004,9 @@ def build_generic_cases(ctx: SeedContext, count: int = GENERIC_CASE_TOTAL) -> li
             )
         cases.append(case)
 
-    if not {"LOW", "MEDIUM", "HIGH", "CRITICAL"} <= levels_seen:
-        raise RuntimeError(f"通用异常未覆盖全部等级：{sorted(levels_seen)}")
+    # 新模型下未结束的异常最低是 MEDIUM（车辆故障 1 分起），LOW 只会出现在"已结束"的当前风险里
+    if not {"MEDIUM", "HIGH", "CRITICAL"} <= levels_seen:
+        raise RuntimeError(f"通用异常未覆盖关键等级：{sorted(levels_seen)}")
     if not {str(ExceptionStatus.DETECTED), str(ExceptionStatus.PROCESSING)} <= statuses_seen:
         raise RuntimeError(f"通用异常未覆盖关键状态：{sorted(statuses_seen)}")
     return cases

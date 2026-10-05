@@ -215,6 +215,7 @@ export type NotificationStatus = (typeof NotificationStatus)[keyof typeof Notifi
 
 export const DetectionRule = {
   STALL_OVER_THRESHOLD: 'STALL_OVER_THRESHOLD',
+  DELIVERED_BREACH: 'DELIVERED_BREACH',
   ETA_BREACH_SLA: 'ETA_BREACH_SLA',
   MANUAL: 'MANUAL',
 } as const

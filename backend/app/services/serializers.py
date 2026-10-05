@@ -85,6 +85,8 @@ def exception_brief(repos: Repos, case: ExceptionCase) -> dict[str, Any]:
         "vehicle_plate": case.vehicle.plate_no if case.vehicle else None,
         "promised_delivery_at": read_models.iso(case.promised_delivery_at),
         "expected_eta_at": read_models.iso(case.expected_eta_at),
+        # 实际送达（订单事实）：延误单的 SLA 卡要显示"承诺到达 / 实际送达 / 延误时长"
+        "delivered_at": read_models.iso(order.delivered_at) if order else None,
         "current_eta_at": read_models.iso(order.current_eta_at) if order else None,
         "delay_minutes": getattr(case, "delay_minutes", None),
         "sla_delay_minutes": case.sla_delay_minutes,

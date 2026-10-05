@@ -115,10 +115,14 @@ def main() -> int:
                 fixed.append(vehicle.plate_no)
         check(True, f"车辆卫生：把 {len(fixed)} 台仍在「在途/维修中」的车归位到空闲 {fixed}")
 
-        customers = {
-            item["name"]: item
-            for item in c.get("/customers", headers=h, params={"page_size": 50}).json()["items"]
-        }
+        customer_list = c.get("/customers", headers=h, params={"page_size": 50}).json()["items"]
+        # 按客户等级挑三个代表（风险分里客户等级是唯一"放大项"：VIP +1 / SVIP +2）
+        by_level: dict[str, dict] = {}
+        for item in customer_list:
+            by_level.setdefault(str(item.get("level")), item)
+        vip = by_level.get("VIP") or customer_list[0]
+        svip = by_level.get("SVIP") or vip
+        normal = by_level.get("NORMAL") or customer_list[-1]
         free_vehicles = [
             v
             for v in c.get("/vehicles", headers=h, params={"page_size": 100}).json()["items"]
@@ -129,12 +133,12 @@ def main() -> int:
             return 1
         pools = free_vehicles[:6]
 
-        def create_order(customer: str, origin: str, dest: str, km: int, cargo: str, *, minutes_ago: int) -> dict:
+        def create_order(customer: dict, origin: str, dest: str, km: int, cargo: str, *, minutes_ago: int) -> dict:
             created = c.post(
                 "/orders",
                 headers=h,
                 json={
-                    "customer_id": customers[customer]["id"],
+                    "customer_id": customer["id"],
                     "origin_city": origin,
                     "dest_city": dest,
                     "distance_km": km,
@@ -187,15 +191,14 @@ def main() -> int:
                     trigger_detection=False,
                 )
 
-        def create_case(order_id: int, kind: str, minutes_ago: int, note: str, delay: int | None = None) -> dict:
+        def create_case(order_id: int, kind: str, minutes_ago: int, note: str) -> dict:
+            """手工建单（车辆故障；新模型下手工建单不选类型、也不再有"录入延误"）。"""
             body = {
                 "order_id": order_id,
                 "type": kind,
                 "occurred_at": at(minutes_ago),
                 "note": note,
             }
-            if delay is not None:
-                body["delay_minutes"] = delay
             response = c.post("/exceptions", headers=h, json=body)
             assert response.status_code == 201, response.text
             return response.json()
@@ -212,69 +215,88 @@ def main() -> int:
         # ---------------- 订单 1：待发车（现场演示派车/录轨迹/自动检测） ----------------
         # 注意：这两张放在"最近 1 小时内"，保证它们落在**当地今天**，看板「今日订单」不为 0；
         # 其余订单是跨夜的长期运输故事（真实场景里也常常跨夜），时间线都落在当地昨天 → 趋势图能看到历史。
-        o1 = create_order("远洋集团", "天津", "上海", 800, "精密仪器 6.5 吨", minutes_ago=20)
+        o1 = create_order(vip, "天津", "上海", 800, "精密仪器 6.5 吨", minutes_ago=20)
         check(o1["status"] == "CREATED" and not o1["vehicle_id"], f"O1 {o1['order_no']} 待发车（无车辆、无异常）")
 
         # ---------------- 订单 2：已派车未发车 ----------------
-        o2 = create_order("中远海运", "上海", "广州", 1450, "冷链药品 8 吨", minutes_ago=45)
+        o2 = create_order(vip, "上海", "广州", 1450, "冷链药品 8 吨", minutes_ago=45)
         o2 = dispatch(o2, pools[0]["plate_no"], minutes_ago=35)
         with session_scope() as session:
             vehicle = session.get(Vehicle, o2["vehicle_id"])
             vehicle.status = str(VehicleStatus.IDLE)  # 已派车但未发车 → 车还在待命
         check(o2["status"] == "DISPATCHED", f"O2 {o2['order_no']} 已派车（{pools[0]['plate_no']}，未发车）")
 
-        # ---------------- 订单 3：在途 + 车辆故障（处理中，济南爆胎） ----------------
-        o3 = create_order("远洋集团", "天津", "上海", 800, "汽车配件 12 吨", minutes_ago=540)
+        # ---------------- 订单 3：在途 + 车辆故障（处理中；VIP → 2 分 MEDIUM，无 SLA 影响） ----------------
+        o3 = create_order(vip, "天津", "上海", 800, "汽车配件 12 吨", minutes_ago=540)
         o3 = dispatch(o3, pools[1]["plate_no"], minutes_ago=510)
         track(o3["id"], "DEPART", "天津", 480, speed=64)
         track(o3["id"], "NOTE", "德州", 390, speed=58, address="京沪高速德州南服务区")
         track(o3["id"], "STOP", "济南", 240, speed=0, address="京沪高速济南服务区")
         case3 = confirm(create_case(o3["id"], "VEHICLE_BREAKDOWN", 240, "车辆在济南爆胎，已联系修理厂，预计今晚 20:00 恢复"))
+        codes3 = [f["code"] for f in case3["risk_factors"] or []]
         check(
-            case3["status"] == "PROCESSING" and "VEHICLE_BREAKDOWN" in [f["code"] for f in case3["risk_factors"] or []],
-            f"O3 {o3['order_no']} 在途 + 车辆故障处理中（{pools[1]['plate_no']} 置于维修中）",
+            case3["status"] == "PROCESSING"
+            and codes3 == ["VEHICLE_BREAKDOWN", "CUSTOMER_VIP"]
+            and case3["sla_delay_minutes"] is None
+            and int(case3["risk_score"]) == 2,
+            f"O3 {o3['order_no']} 车辆故障单 = 车辆故障1 + VIP1 = 2 分 {case3['level']}，且无 SLA 影响（{pools[1]['plate_no']} 维修中）",
         )
 
-        # ---------------- 订单 4：在途 + 延误风险（25 分钟，规则判未违约） ----------------
-        o4 = create_order("齐鲁化工", "北京", "郑州", 690, "化工原料 20 吨", minutes_ago=420)
+        # ---------------- 订单 4：在途 + 车辆故障（待确认；SVIP → 1+2 = 3 分 HIGH） ----------------
+        o4 = create_order(svip, "北京", "郑州", 690, "化工原料 20 吨", minutes_ago=420)
         o4 = dispatch(o4, pools[2]["plate_no"], minutes_ago=390)
         track(o4["id"], "DEPART", "北京", 360, speed=55)
         track(o4["id"], "NOTE", "石家庄", 180, speed=48, address="京港澳高速石家庄段")
-        case4 = confirm(create_case(o4["id"], "DELAY_RISK", 180, "京沪高速拥堵，预计延误 25 分钟", delay=25))
+        case4 = create_case(o4["id"], "VEHICLE_BREAKDOWN", 180, "传动轴异响，服务区检修中")
         check(
-            case4["sla_breached"] is False and int(case4["risk_score"]) == 1,
-            f"O4 {o4['order_no']} 延误 25min → 未违约（分数 {case4['risk_score']}，{case4['level']}）",
+            case4["status"] == "DETECTED" and int(case4["risk_score"]) == 3 and case4["level"] == "HIGH",
+            f"O4 {o4['order_no']} 车辆故障单（{o4['customer_level']}）= 1+2 = 3 分 HIGH，待确认",
         )
 
-        # ---------------- 订单 5：在途 + 延误风险（300 分钟，已违约 CRITICAL） ----------------
-        o5 = create_order("中远海运", "青岛", "上海", 750, "家电 15 吨", minutes_ago=600)
-        o5 = dispatch(o5, pools[3]["plate_no"], minutes_ago=570)
-        track(o5["id"], "DEPART", "青岛", 540, speed=60)
-        track(o5["id"], "NOTE", "日照", 420, speed=52, address="沈海高速日照段")
-        track(o5["id"], "STOP", "连云港", 240, speed=0, address="沈海高速连云港服务区")
-        case5 = confirm(create_case(o5["id"], "DELAY_RISK", 300, "青岛港压港，预计延误 300 分钟", delay=300))
-        check(
-            case5["sla_breached"] is True and case5["level"] == "CRITICAL",
-            f"O5 {o5['order_no']} 延误 300min → 违约 CRITICAL（分数 {case5['risk_score']}）",
-        )
-
-        # ---------------- 订单 6：已送达 + 车辆故障已解决（送达即闭环） ----------------
-        o6 = create_order("远洋集团", "杭州", "南京", 280, "休闲食品 9 吨", minutes_ago=780)
-        o6 = dispatch(o6, pools[4]["plate_no"], minutes_ago=750)
-        track(o6["id"], "DEPART", "杭州", 720, speed=58)
-        track(o6["id"], "STOP", "湖州", 600, speed=0, address="杭宁高速湖州服务区")
-        case6 = confirm(create_case(o6["id"], "VEHICLE_BREAKDOWN", 600, "右后轮爆胎，现场更换备胎"))
+        # ---------------- 订单 5：已送达**超时** → 自动建延误单（VIP，实际延误 400min → 4 分 CRITICAL） ----------------
+        # 派车时间要足够久远（这里约 34h 前）：承诺 = 派车 + 规则偏移（VIP 24h），再加 400min 延误仍落在"现在之前"
+        o5 = create_order(vip, "青岛", "上海", 750, "家电 15 吨", minutes_ago=2060)
+        o5 = dispatch(o5, pools[3]["plate_no"], minutes_ago=2030)
+        track(o5["id"], "DEPART", "青岛", 1950, speed=60)
+        track(o5["id"], "NOTE", "日照", 1500, speed=52, address="沈海高速日照段")
+        track(o5["id"], "STOP", "连云港", 900, speed=0, address="沈海高速连云港服务区")
         with session_scope() as session:
             repos = Repos(session, workspace_id=1)
-            OrderService(repos).mark_delivered(o6["id"], occurred_at=at(480), actor_id=None)
-        detail6 = c.get(f"/exceptions/{case6['id']}", headers=h).json()
+            row = repos.orders.get(o5["id"])
+            promised5 = to_naive_utc(row.promised_delivery_at)
+            OrderService(repos).mark_delivered(
+                o5["id"], occurred_at=promised5 + timedelta(minutes=400), actor_id=None
+            )
+        cases5 = c.get(f"/orders/{o5['id']}/exceptions", headers=h).json()
+        case5 = next((x for x in cases5 if x["detection_rule"] == "DELIVERED_BREACH"), None)
         check(
-            detail6["status"] == "RESOLVED",
-            f"O6 {o6['order_no']} 已送达 → 异常 RESOLVED（送达即闭环；车辆已释放）",
+            case5 is not None and case5["type"] == "DELAY_RISK" and int(case5["risk_score"]) == 4
+            and case5["sla_breached"] is True and case5["detection_rule"] == "DELIVERED_BREACH",
+            f"O5 {o5['order_no']} 送达超时 400min → 自动建延误单 4 分 {case5['level'] if case5 else '?'}（{case5['case_no'] if case5 else '未建单'}）",
+        )
+        case5 = confirm(case5) if case5 else None
+
+        # ---------------- 订单 6：已送达**准时** → 不建任何异常单（负样本） ----------------
+        # 同样把派车时间放久远（40h 前），这样"承诺 − 30min"的实际送达仍在过去
+        o6 = create_order(normal, "杭州", "南京", 280, "休闲食品 9 吨", minutes_ago=2460)
+        o6 = dispatch(o6, pools[4]["plate_no"], minutes_ago=2400)
+        track(o6["id"], "DEPART", "杭州", 2350, speed=58)
+        track(o6["id"], "NOTE", "湖州", 2000, speed=60, address="杭宁高速湖州服务区")
+        with session_scope() as session:
+            repos = Repos(session, workspace_id=1)
+            row = repos.orders.get(o6["id"])
+            promised6 = to_naive_utc(row.promised_delivery_at)
+            OrderService(repos).mark_delivered(
+                o6["id"], occurred_at=promised6 - timedelta(minutes=30), actor_id=None
+            )
+        cases6 = c.get(f"/orders/{o6['id']}/exceptions", headers=h).json()
+        check(
+            not cases6,
+            f"O6 {o6['order_no']} 准时送达 → 不建任何异常单（实际比承诺早 30 分钟；负样本 {len(cases6)} 张）",
         )
 
         # ---------------- 订单 7：在途 + 车辆故障误报已关闭 ----------------
-        o7 = create_order("中远海运", "重庆", "贵阳", 480, "机械备件 11 吨", minutes_ago=360)
+        o7 = create_order(normal, "重庆", "贵阳", 480, "机械备件 11 吨", minutes_ago=360)
         o7 = dispatch(o7, pools[5]["plate_no"], minutes_ago=330)
         track(o7["id"], "DEPART", "重庆", 300, speed=50)
         track(o7["id"], "NOTE", "遵义", 240, speed=46, address="兰海高速遵义段")

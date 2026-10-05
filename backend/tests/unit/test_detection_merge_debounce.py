@@ -44,18 +44,20 @@ def test_not_in_transit_never_detects():
     assert decision.rule is None
 
 
-def test_eta_breach_rule_uses_allowance():
+def test_in_transit_eta_breach_no_longer_creates_case():
+    """2026-10-05：在途**不再**按预测 ETA 建延误单（旧的 ETA_BREACH_SLA 规则已下线）。
+
+    延误只在订单送达时按"实际送达 − 承诺送达"判定（见 tests/test_delivered_at_settlement.py）。
+    """
     decision = detection.decide(
         now=NOW,
         order_status="IN_TRANSIT",
-        last_move_at=NOW - timedelta(minutes=5),
+        last_move_at=NOW - timedelta(minutes=5),  # 未停滞
         stall_threshold_minutes=120,
-        expected_eta_at=NOW + timedelta(hours=2),
-        promised_delivery_at=NOW + timedelta(hours=1),
-        max_delay_minutes=30,
     )
-    assert decision.rule == str(DetectionRule.ETA_BREACH_SLA)
-    assert decision.exception_type == str(ExceptionType.DELAY_RISK)
+    assert decision.rule is None
+    assert decision.should_create is False
+    assert "延误" in decision.reason
 
 
 def test_debounce_window_helper():
@@ -73,9 +75,9 @@ def test_automatic_case_stops_at_detected_with_rule_level(db_session, bootstrap)
     assert case.detected_by == "SYSTEM"
     assert case.detection_rule == str(DetectionRule.STALL_OVER_THRESHOLD)
     assert case.type == str(ExceptionType.VEHICLE_BREAKDOWN)
-    # VIP-01：停滞 130min → 基础 2 + VIP 1 + 故障 1 = 4 → CRITICAL
-    assert case.risk_score == 4
-    assert case.level == "CRITICAL"
+    # VIP-01：车辆故障单 = 车辆故障 1 + VIP 1 = 2 → MEDIUM（新版不再叠加延误/违约分）
+    assert case.risk_score == 2
+    assert case.level == "MEDIUM"
     assert case.merged_count == 0
     events, _ = repos.exception_events.list_for_case(case.id)
     assert [event.event_type for event in events] == ["DETECTED"]
@@ -105,7 +107,8 @@ def test_second_hit_merges_and_debounces(db_session, bootstrap):
     assert total == 1
 
 
-def test_eta_breach_merge_upgrades_type(db_session, bootstrap):
+def test_in_transit_eta_breach_does_not_touch_existing_case(db_session, bootstrap):
+    """在途 ETA 违约不再触发检测（2026-10-05）：已有单不会被合并、也不会被"升级"成车辆故障。"""
     repos = _support.repos_for(db_session, bootstrap)
     order = _support.in_transit(repos, bootstrap, customer="normal")
 
@@ -120,7 +123,6 @@ def test_eta_breach_merge_upgrades_type(db_session, bootstrap):
     )
     assert case.type == str(ExceptionType.DELAY_RISK)
 
-    # NORMAL 客户允许 30min：把 ETA 推到承诺 +1h → 命中的是 ETA_BREACH_SLA
     clock_state.advance(10)
     OrderService(repos).update_eta(
         order.id,
@@ -128,15 +130,10 @@ def test_eta_breach_merge_upgrades_type(db_session, bootstrap):
         reason="承运商反馈延后",
     )
     decision = detection_flow.evaluate_detection(repos, repos.orders.get(order.id))
-    assert decision.rule == str(DetectionRule.ETA_BREACH_SLA)
-    assert decision.merge_only is True
-
-    detection_flow.detect_for_order(repos, repos.orders.get(order.id))  # 去抖窗口内
-    assert case.merged_count == 0
+    assert decision.rule is None  # 在途只检测停滞；延误在送达时判定
+    assert decision.should_create is False
 
     clock_state.advance(60)
-    merged = detection_flow.detect_for_order(repos, repos.orders.get(order.id))
-    assert merged is not None
-    assert merged.id == case.id
-    assert merged.type == str(ExceptionType.VEHICLE_BREAKDOWN)  # §8.4 合并升级
-    assert merged.merged_count == 1
+    assert detection_flow.detect_for_order(repos, repos.orders.get(order.id)) is None
+    assert case.merged_count == 0
+    assert case.type == str(ExceptionType.DELAY_RISK)  # 不会被"升级"改写类型

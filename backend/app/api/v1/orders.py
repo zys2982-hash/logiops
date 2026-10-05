@@ -15,7 +15,13 @@ from app.core.errors import perm_denied, validation_error
 from app.core.permissions import Perm, has_perm
 from app.models.transport import Order
 from app.schemas.exception import ExceptionOut
-from app.schemas.order import OrderCreate, OrderOut, OrderPage, OrderUpdate
+from app.schemas.order import (
+    OrderCreate,
+    OrderDeliveredAtCorrect,
+    OrderOut,
+    OrderPage,
+    OrderUpdate,
+)
 from app.services.common import to_naive_utc
 from app.services.orders import OrderService
 from app.services.serializers import exception_brief, order_out
@@ -125,6 +131,28 @@ def patch_order(ctx: OrderPatch, order_id: int, payload: OrderUpdate) -> Any:
         expected_version=payload.expected_version,
         actor_id=ctx.user.id,
         **fields,
+    )
+    return order_out(ctx.repos, order, full=True)
+
+
+@router.patch(
+    "/{order_id}/delivered-at",
+    response_model=OrderOut,
+    summary="修正实际送达时间（延误单只在送达后按实际时间判定；修正后自动重算）",
+)
+def correct_delivered_at(ctx: OrderPatch, order_id: int, payload: OrderDeliveredAtCorrect) -> Any:
+    """订单已送达后，若实际送达时间录错，用这里修正。
+
+    修正后立即按新时间重算该订单的延误异常：仍违约 → 重算延误与分数；不再违约 → 自动解决那张延误单。
+    在途（未送达）不允许调用 —— 没有实际送达时间就没有延误可言（409 STATE_TRANSITION_INVALID）。
+    """
+    if not has_perm(ctx.role, Perm.ORDER_MANAGE):
+        raise perm_denied("修正实际送达时间需要 ADMIN+", required=str(Perm.ORDER_MANAGE))
+    order = OrderService(ctx.repos).update_delivered_at(
+        order_id,
+        delivered_at=to_naive_utc(payload.delivered_at),
+        note=payload.note,
+        actor_id=ctx.user.id,
     )
     return order_out(ctx.repos, order, full=True)
 

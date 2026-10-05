@@ -1,18 +1,24 @@
 """风险可解释性：因子的事实来源 + 这张单由哪些在途信号构成。
 
-用户口径（原话）："订单里的在途异常应该归于异常中心风险等级的一部分组份……
-我感觉现在一个在途异常就对应了一个异常中心的异常订单"。
-确认下来是两层：异常单粒度 = 一个订单一张（检测只合并 / 手工建单会 409），
-而在途信号以 risk_factors 参与定级。所以详情页要把「信号 → 因子」这条链显式给出。
+口径（2026-10-05）：
+- **车辆故障单** = 车辆故障(1) + 客户等级；因子只有 `VEHICLE_BREAKDOWN` / `CUSTOMER_*`；
+- **延误单** = 延误档位 + 客户等级（**只在订单送达后按"实际送达 − 承诺送达"产生**）；
+  因子只有 `DELAY_BASE` / `CUSTOMER_*`，其"依据"给出 承诺到达 / 实际送达 / 规则允许 / 超出多少；
+- 旧的 `SLA_BREACH` 因子不再产生（同一事实不重复计分），只在读历史老单时可能仍出现。
 
 覆盖：
-- 每个因子都能说出"为什么存在"（人工录入延误 / 客户等级 / 车辆现状 / SLA 承诺与预计）；
-- 信号流包含 检测建单 / 人工录入延误 / 轨迹信号；
-- 车辆故障因子的来源指向**车辆当前状态**（维修中才计入）；
+- 车辆单：车辆故障因子的来源指向**车辆当前状态**（维修中才计入）、VIP 因子指向客户等级；
+- 延误单：因子与"承诺/实际送达"依据；
 - 列表接口不带这层解释（只有详情才返回，避免列表变重）。
 """
 
 from __future__ import annotations
+
+from datetime import timedelta
+
+from app.repositories import Repos
+from app.services.common import to_naive_utc
+from app.services.orders import OrderService
 
 ORDERS = "/api/v1/orders"
 EXCEPTIONS = "/api/v1/exceptions"
@@ -38,16 +44,15 @@ def _order_with_vehicle(client, headers, bootstrap, *, admin_headers=None, custo
     return created
 
 
-def _create_delay_case(client, headers, bootstrap, order_id: int, delay_minutes: int) -> dict:
+def _vehicle_case(client, headers, bootstrap, order_id: int, *, note: str = "车辆在济南爆胎，已联系修理厂") -> dict:
     response = client.post(
         EXCEPTIONS,
         headers=headers,
         json={
             "order_id": order_id,
-            "type": "DELAY_RISK",
+            "type": "VEHICLE_BREAKDOWN",
             "occurred_at": bootstrap["base_time"].isoformat(),
-            "note": "京沪高速拥堵，预计延误 300 分钟",
-            "delay_minutes": delay_minutes,
+            "note": note,
         },
     )
     assert response.status_code == 201, response.text
@@ -59,11 +64,13 @@ def _explanation(client, headers, case_id: int) -> dict:
     return detail["risk_explanation"]
 
 
-def test_factor_sources_and_signal_flow(client, db_session, bootstrap, operator_headers, admin_headers):
+def test_vehicle_case_factor_sources_and_signal_flow(
+    client, db_session, bootstrap, operator_headers, admin_headers
+):
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    case = _create_delay_case(client, operator_headers, bootstrap, order["id"], delay_minutes=300)
+    case = _vehicle_case(client, operator_headers, bootstrap, order["id"])
 
-    # 在途事实：写入一条轨迹信号（会同步跑检测，若命中就合并进这张单）
+    # 在途事实：写一条轨迹信号
     tracked = client.post(
         f"{ORDERS}/{order['id']}/tracking-events",
         headers=operator_headers,
@@ -81,22 +88,19 @@ def test_factor_sources_and_signal_flow(client, db_session, bootstrap, operator_
     assert explanation["note"].startswith("同一订单同时只有一张未结束异常单")
 
     by_code = {factor["code"]: factor for factor in explanation["factors"]}
-    assert by_code, "风险因子不能为空"
+    assert set(by_code) == {"VEHICLE_BREAKDOWN", "CUSTOMER_VIP"}, by_code
 
-    # 延误因子：只补"表格里没有的信息" —— 人工录入事实（不再重复"规则快照"那一行）
-    delay_texts = [source["text"] for source in by_code["DELAY_BASE"]["sources"]]
-    assert any("人工录入延误 300 分钟" in text for text in delay_texts), delay_texts
-    assert not any("规则快照" in text for text in delay_texts), f"「说明」列已写延误分钟，不该再重复：{delay_texts}"
+    # 车辆故障因子：来源指向车辆现状
+    vehicle_source = next(
+        source for source in by_code["VEHICLE_BREAKDOWN"]["sources"] if source["kind"] == "VEHICLE_STATUS"
+    )
+    assert bootstrap["vehicle"].plate_no in vehicle_source["text"]
     # VIP 因子：指向客户等级
     assert by_code["CUSTOMER_VIP"]["sources"][0]["text"].startswith("客户")
     assert "VIP" in by_code["CUSTOMER_VIP"]["sources"][0]["text"]
-    # 违约因子：一条说清 承诺 / 预计 / 规则阈值 / 超出多少
-    breach_text = " ".join(source["text"] for source in by_code["SLA_BREACH"]["sources"])
-    assert "承诺到达" in breach_text and "允许延误" in breach_text and "超出" in breach_text, breach_text
 
     kinds = {signal["kind"] for signal in explanation["signals"]}
-    assert {"DETECTION", "MANUAL_DELAY", "TRACKING"} <= kinds, kinds
-    assert explanation["summary"]["signals_total"] >= 3
+    assert {"DETECTION", "TRACKING"} <= kinds, kinds
     tracking_signals = [s for s in explanation["signals"] if s["kind"] == "TRACKING"]
     assert any("德州" in signal["text"] for signal in tracking_signals)
 
@@ -105,18 +109,7 @@ def test_vehicle_factor_points_to_current_vehicle_status(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    created = client.post(
-        EXCEPTIONS,
-        headers=operator_headers,
-        json={
-            "order_id": order["id"],
-            "type": "VEHICLE_BREAKDOWN",
-            "occurred_at": bootstrap["base_time"].isoformat(),
-            "note": "车辆在济南爆胎，已联系修理厂",
-        },
-    )
-    assert created.status_code == 201, created.text
-    case = created.json()
+    case = _vehicle_case(client, operator_headers, bootstrap, order["id"])
 
     explanation = _explanation(client, operator_headers, case["id"])
     by_code = {factor["code"]: factor for factor in explanation["factors"]}
@@ -130,27 +123,49 @@ def test_vehicle_factor_points_to_current_vehicle_status(
     assert vehicle_source["ref"]["vehicle_id"] == bootstrap["vehicle"].id
 
 
-def test_non_breached_case_keeps_rule_threshold_on_delay_factor(
+def test_delivered_delay_case_sources_show_promised_actual_and_allowance(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
-    """未违约时没有「SLA 已违约」因子，阈值就放在「延误时长」因子下（避免两处重复同一组数字）。"""
-    order = _order_with_vehicle(
-        client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
+    """延误单由**送达超时**产生：因子只有 延误时长 + 客户等级，依据给出 承诺/实际送达/允许/超出。"""
+    order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
+    repos = Repos(db_session, workspace_id=bootstrap["workspace_id"])
+    # 发车（IN_TRANSIT）后按"承诺 + 400 分钟"送达 → 触发自动建单
+    OrderService(repos).append_tracking(
+        order["id"],
+        event_type="DEPART",
+        city="天津",
+        source="OPERATOR",
+        occurred_at=bootstrap["base_time"].isoformat(),
+        trigger_detection=False,
     )
-    case = _create_delay_case(client, operator_headers, bootstrap, order["id"], delay_minutes=25)
+    row = repos.orders.get(order["id"])
+    assert row.promised_delivery_at is not None
+    OrderService(repos).mark_delivered(
+        order["id"],
+        occurred_at=to_naive_utc(row.promised_delivery_at) + timedelta(minutes=400),
+        actor_id=None,
+    )
+    db_session.commit()
+
+    cases = client.get(f"{ORDERS}/{order['id']}/exceptions", headers=operator_headers).json()
+    assert len(cases) == 1, cases
+    case = cases[0]
+    assert case["type"] == "DELAY_RISK"
+    assert case["detection_rule"] == "DELIVERED_BREACH"
+    assert case["sla_breached"] is True
+    # 延误 400min → 档位 3 + VIP 1 = 4 → CRITICAL
+    assert int(case["risk_score"]) == 4 and case["level"] == "CRITICAL"
 
     explanation = _explanation(client, operator_headers, case["id"])
     by_code = {factor["code"]: factor for factor in explanation["factors"]}
-    assert "SLA_BREACH" not in by_code, "25 分钟 < 默认规则允许 30 分钟，不应有违约因子"
-
-    texts = [source["text"] for source in by_code["DELAY_BASE"]["sources"]]
-    assert any("允许延误" in text and "未超阈值" in text for text in texts), texts
-    assert not any("规则快照" in text for text in texts), texts
+    assert set(by_code) == {"DELAY_BASE", "CUSTOMER_VIP"}, by_code
+    text = " ".join(source["text"] for source in by_code["DELAY_BASE"]["sources"])
+    assert "承诺到达" in text and "实际送达" in text and "允许延误" in text and "超出" in text, text
 
 
 def test_list_does_not_carry_explanation(client, db_session, bootstrap, operator_headers, admin_headers):
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    _create_delay_case(client, operator_headers, bootstrap, order["id"], delay_minutes=45)
+    _vehicle_case(client, operator_headers, bootstrap, order["id"])
 
     items = client.get(EXCEPTIONS, headers=operator_headers).json()["items"]
     assert items, "列表应有刚建的异常"

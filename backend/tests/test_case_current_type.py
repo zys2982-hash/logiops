@@ -76,7 +76,6 @@ def test_current_type_follows_reality_not_origin(client, bootstrap, operator_hea
             "order_id": order["id"],
             "occurred_at": bootstrap["base_time"].isoformat(),
             "note": "爆胎处理中",
-            "delay_minutes": 300,
         },
     ).json()
     assert created["current_type"] == "VEHICLE_BREAKDOWN"
@@ -103,7 +102,9 @@ def test_current_type_follows_reality_not_origin(client, bootstrap, operator_hea
     # 已关闭 → 当前风险 0（列表「等级」列显示的就是它；历史等级仍在 level / risk_score 存档里）
     assert closed.json()["current_risk_score"] == 0
     assert closed.json()["current_level"] == "LOW"
-    assert closed.json()["level"] == "CRITICAL", "历史等级保留（详情页『历史判定』卡片要用）"
+    # 存档等级：解除车辆故障后只剩 VIP 1 分 → MEDIUM（详情页『历史判定』卡片用的就是它）
+    assert closed.json()["level"] == "MEDIUM", "历史等级保留（详情页『历史判定』卡片要用）"
+    assert closed.json()["risk_score"] == 1
 
     listed = client.get(EXCEPTIONS, headers=operator_headers, params={"page_size": 50}).json()["items"]
     row = next(item for item in listed if item["id"] == created["id"])

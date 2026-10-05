@@ -48,12 +48,16 @@ def decide(
     order_status: str,
     last_move_at: datetime | None,
     stall_threshold_minutes: int,
-    expected_eta_at: datetime | None = None,
-    promised_delivery_at: datetime | None = None,
-    max_delay_minutes: int = 0,
     has_open_exception: bool = False,
 ) -> DetectionDecision:
-    """检测优先级：停滞 > ETA 违约 > 不建单。"""
+    """检测规则（用户口径 2026-10-05 后只剩一条）。
+
+    只保留 **停滞 ≥ 阈值 → 疑似车辆故障** 这一条：
+    · 延误异常**不在在途阶段产生**（旧的 `ETA_BREACH_SLA` 按预测 ETA 建单已移除）——
+      延误只在订单送达时用 `实际送达 − 承诺送达` 与 SLA 规则比对，超了才自动建单
+      （见 `OrderService.mark_delivered`）；
+    · 因此这里也不再需要 ETA / 承诺 / 允许延迟这些入参。
+    """
     stall = stall_minutes_of(now=now, last_move_at=last_move_at)
 
     if str(order_status) != str(OrderStatus.IN_TRANSIT):
@@ -75,25 +79,11 @@ def decide(
             merge_only=has_open_exception,
         )
 
-    expected = _naive(expected_eta_at)
-    promised = _naive(promised_delivery_at)
-    if expected is not None and promised is not None:
-        delay_minutes = int(round((expected - promised).total_seconds() / 60))
-        if delay_minutes > max_delay_minutes:
-            return DetectionDecision(
-                rule=str(DetectionRule.ETA_BREACH_SLA),
-                exception_type=str(ExceptionType.DELAY_RISK),
-                stall_minutes=stall,
-                reason=f"重算 ETA 将违约：预计延误 {delay_minutes} 分钟 > 允许 {max_delay_minutes} 分钟",
-                should_create=not has_open_exception,
-                merge_only=has_open_exception,
-            )
-
     return DetectionDecision(
         rule=None,
         exception_type=None,
         stall_minutes=stall,
-        reason="未命中任何检测规则",
+        reason="未命中检测规则（在途只检测停滞；延误在送达时按实际时间判定）",
         should_create=False,
     )
 

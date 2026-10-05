@@ -93,11 +93,15 @@ def test_auto_detection_creates_case_with_rule_level(client, bootstrap, operator
     assert case["detected_by"] == "SYSTEM"
     assert case["detection_rule"] == "STALL_OVER_THRESHOLD"
     assert case["type"] == "VEHICLE_BREAKDOWN"
-    assert case["level"] in {"MEDIUM", "HIGH", "CRITICAL"}
-    assert case["risk_score"] is not None
-    assert case["risk_factors"]
+    # 车辆故障单不做 SLA 判定（2026-10-05）：没有延误/违约数字（"人工录入延误"入口已下线，
+    # 延误单只在送达时产生）；风险分 = 车辆故障因子(仅"车辆维修中"才计) + 客户等级。
+    # 本用例的车辆状态没被置成「维修中」，所以只剩 VIP 1 分 → MEDIUM
+    assert case["level"] == "MEDIUM"
+    assert case["risk_score"] == 1
+    assert {factor["code"] for factor in case["risk_factors"]} == {"CUSTOMER_VIP"}
     assert case["order_no"]
-    assert case["sla_delay_minutes"] is not None
+    assert case["sla_delay_minutes"] is None
+    assert case["sla_breached"] is False
 
 
 def test_confirm_analyze_and_messages_flow(client, bootstrap, operator_headers, admin_headers):

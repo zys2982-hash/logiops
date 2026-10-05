@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -56,6 +58,17 @@ class SlaSnapshot(BaseModel):
     expected_eta_at: str | None = None
     delay_minutes: int | None = None
     breached: bool | None = None
+
+
+class OrderDeliveredAtCorrect(BaseModel):
+    """PATCH /orders/{id}/delivered-at —— 修正**实际送达时间**（送达录错时用）。
+
+    延误单本质是"实际送达 vs 承诺送达"的比较结果，所以纠错入口是这里；
+    修正后后端立刻重算该订单的延误单（仍违约→重算；不再违约→自动解决）。
+    """
+
+    delivered_at: datetime
+    note: str | None = Field(default=None, max_length=500)
 
 
 class OrderOut(BaseModel):

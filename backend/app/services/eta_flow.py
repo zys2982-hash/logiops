@@ -150,6 +150,11 @@ def refresh_case_impact(
 ) -> dict[str, Any]:
     """按规则刷新异常单的 SLA 快照与风险等级（永远覆盖 LLM 的 level）。
 
+    两条口径（用户口径 2026-10-05）：
+    · **车辆故障单不做 SLA 判定**（"普通的车辆异常订单不应该有 sla 影响"）：只记订单的承诺/预计快照，
+      `sla_delay_minutes=None`、`sla_breached=False`，风险分 = 车辆故障 + 客户等级；
+    · **延误单才走 SLA**：延误 = 实际送达 − 承诺送达（送达后才有延误单），风险分 = 延误档位 + 客户等级。
+
     allow_downgrade=False：等级/风险分只升不降（用于 tick 的合并刷新）。
     机器提议阶段（DETECTED/CONFIRMING）不允许"高危单静默降档"，风险真的解除时
     由 PROCESSING → RESOLVED 或"送达即闭环"收口（Lead 验收口径）。
@@ -161,26 +166,41 @@ def refresh_case_impact(
     if expected is None:
         expected = to_naive_utc(case.expected_eta_at)
 
-    impact = sla_rules.evaluate(match, promised_delivery_at=promised, expected_eta_at=expected)
-    risk = risk_rules.evaluate_risk(
-        vehicle_repairing=vehicle_is_repairing(repos, order.vehicle_id),
-        delay_minutes=impact.delay_minutes,
-        customer_level=customer.level if customer else None,
-        exception_type=case.type,
-        sla_breached=impact.breached,
-        vip_upgrade=settings.risk_vip_upgrade,
-    )
+    vehicle_case = str(case.type) == str(ExceptionType.VEHICLE_BREAKDOWN)
+    impact = None
+    if vehicle_case:
+        risk = risk_rules.evaluate_risk(
+            vehicle_repairing=vehicle_is_repairing(repos, order.vehicle_id),
+            delay_minutes=None,
+            customer_level=customer.level if customer else None,
+            exception_type=case.type,
+            vip_upgrade=settings.risk_vip_upgrade,
+        )
+    else:
+        impact = sla_rules.evaluate(match, promised_delivery_at=promised, expected_eta_at=expected)
+        risk = risk_rules.evaluate_risk(
+            vehicle_repairing=vehicle_is_repairing(repos, order.vehicle_id),
+            delay_minutes=impact.delay_minutes,
+            customer_level=customer.level if customer else None,
+            exception_type=case.type,
+            vip_upgrade=settings.risk_vip_upgrade,
+        )
 
     case.promised_delivery_at = promised
     case.expected_eta_at = expected
-    case.sla_delay_minutes = impact.delay_minutes
-    case.sla_breached = impact.breached
+    if impact is None:
+        # 车辆故障单：不写 SLA 判定（避免列表/看板把它当成"SLA 违约"）
+        case.sla_delay_minutes = None
+        case.sla_breached = False
+    else:
+        case.sla_delay_minutes = impact.delay_minutes
+        case.sla_breached = impact.breached
     current_score = int(case.risk_score or 0)
     if allow_downgrade or risk.score >= current_score:
         case.level = str(risk.level)
         case.risk_score = risk.score
         case.risk_factors_json = risk.factor_dicts
-    if not (case.impact_summary or "").strip():
+    if impact is not None and not (case.impact_summary or "").strip():
         case.impact_summary = summary_text(match, impact, risk)
     bump_version(case)
     repos.exceptions.save(case)

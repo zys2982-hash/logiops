@@ -36,6 +36,17 @@ export function updateOrder(id: number, payload: OrderUpdatePayload): Promise<Or
   return patch<Order>(`/orders/${id}`, payload)
 }
 
+/**
+ * PATCH /orders/{id}/delivered-at —— 修正**实际送达时间**（送达时间录错时用，需要 order.manage）。
+ * 延误单只在送达后按"实际送达 − 承诺送达"判定，所以纠错入口是这里；改完后端立刻重算延误单。
+ */
+export function correctDeliveredAt(
+  id: number,
+  payload: { delivered_at: string; note?: string },
+): Promise<Order> {
+  return patch<Order>(`/orders/${id}/delivered-at`, payload)
+}
+
 /** GET /orders/{id}/tracking-events → 实测返回 {items,total,page,page_size}（兼容平数组） */
 export async function listTrackingEvents(orderId: number): Promise<TrackingEvent[]> {
   const raw = await get<PageType<TrackingEvent> | TrackingEvent[]>(

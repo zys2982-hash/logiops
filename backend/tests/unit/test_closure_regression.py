@@ -60,10 +60,13 @@ def test_order_delivered_resolves_open_exception(client, db_session, bootstrap, 
     exception = client.get(f"{EXCEPTIONS}/{case.id}", headers=operator_headers).json()
     assert exception["status"] == str(ExceptionStatus.RESOLVED), exception
     assert exception["resolved_at"] is not None
-    # 规则定级不被"到站即送达"抹掉：送达时刻已晚于承诺 → 仍为违约
-    assert exception["sla_breached"] is True
-    assert exception["level"] == "CRITICAL"
-    assert exception["risk_score"] == 4
+    # 车辆故障单不做 SLA 判定（2026-10-05）：送达时刻的"承诺/预计"只是订单事实，不进异常风险
+    assert exception["sla_breached"] is False
+    assert exception["sla_delay_minutes"] is None
+    # 留档的是"结束那一刻"的规则等级：送达即闭环时车辆已释放（车跑完了）→ 只剩 VIP 1 分 → MEDIUM
+    assert exception["level"] == "MEDIUM"
+    assert exception["risk_score"] == 1
+    assert [f["code"] for f in exception["risk_factors"]] == ["CUSTOMER_VIP"]
 
 
 def test_big_tick_never_strands_case_a(client, db_session, bootstrap, operator_headers):
@@ -84,17 +87,18 @@ def test_tick_keeps_repair_wait_and_does_not_downgrade(client, db_session, boots
     """维修等待中的订单：小步长 tick 不得把 ETA 算成"立刻起程"从而错误降档。"""
     _seed(db_session, bootstrap)
     _, case_item = _case_a(client, operator_headers)
-    assert case_item["level"] == "CRITICAL"
-    assert case_item["risk_score"] == 4
+    # 新模型：车辆故障单 = 车辆故障 1 + VIP 1 = 2 → MEDIUM（无延误/违约加分）
+    assert case_item["level"] == "MEDIUM"
+    assert case_item["risk_score"] == 2
 
     tick = client.post("/api/v1/demo/actions/tick", headers=operator_headers, json={"minutes": 60})
     assert tick.status_code == 200, tick.text
 
     exception = client.get(f"{EXCEPTIONS}/{case_item['id']}", headers=operator_headers).json()
     assert exception["status"] == str(ExceptionStatus.DETECTED)  # 机器提议、人确认，不自动推进也不降档
-    # 机器提议阶段不允许"高危单静默降档"：等级/风险分保持，SLA 数字仍按事实刷新
-    assert exception["level"] == "CRITICAL", exception
-    assert exception["risk_score"] == 4
+    # 机器提议阶段不允许"高危单静默降档"：等级/风险分保持
+    assert exception["level"] == "MEDIUM", exception
+    assert exception["risk_score"] == 2
     assert exception["expected_eta_at"] is not None
 
 

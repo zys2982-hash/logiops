@@ -10,11 +10,25 @@ import importlib.util
 
 import pytest
 
+from app.core.clock import parse_dt
+
 for module_name in ("app.seed", "app.ai.runner", "app.services.tick"):
     if importlib.util.find_spec(module_name) is None:  # pragma: no cover - 开发期
         pytest.skip(f"依赖未就绪：{module_name}", allow_module_level=True)
 
 CASE_A_ORDER_NO = "SO20260930021"
+
+
+def _order_delay_minutes(exception: dict) -> int:
+    """订单层面的延误（预计到达 − 承诺到达）。
+
+    2026-10-05 新模型：车辆故障单不做 SLA 判定（`sla_delay_minutes=None`），
+    但订单的"承诺/预计"时刻仍然留档，AI 的 impact.delay_minutes 复述的是这个事实。
+    """
+    expected = parse_dt(exception["expected_eta_at"])
+    promised = parse_dt(exception["promised_delivery_at"])
+    assert expected is not None and promised is not None
+    return int(round((expected - promised).total_seconds() / 60))
 
 
 def _seed(db_session, workspace_id: int) -> dict:
@@ -47,12 +61,14 @@ def test_case_a_full_closed_loop(client, db_session, bootstrap, operator_headers
     found = _find_case_a(client, operator_headers)
     exception_id = found["exception"]["id"]
 
-    # 1) 检测结果：高风险 + 违约（等级由规则算，不由 LLM 决定）
-    assert found["exception"]["level"] == "CRITICAL", found["exception"]
-    assert found["exception"]["sla_breached"] is True
-    assert found["exception"]["risk_score"] == 4
-    assert found["exception"]["sla_delay_minutes"] is not None
-    assert 240 <= found["exception"]["sla_delay_minutes"] <= 300
+    # 1) 检测结果（2026-10-05 新模型）：CASE-A 是**车辆故障单** → 车辆故障 1 + VIP 1 = 2 → MEDIUM；
+    #    车辆单不做 SLA 判定，所以没有延误/违约数字（订单的承诺/预计时刻仍留档）
+    assert found["exception"]["level"] == "MEDIUM", found["exception"]
+    assert found["exception"]["risk_score"] == 2
+    assert found["exception"]["sla_breached"] is False
+    assert found["exception"]["sla_delay_minutes"] is None
+    order_delay = _order_delay_minutes(found["exception"])
+    assert 240 <= order_delay <= 300, found["exception"]
 
     # 2) 确认 → 触发 AI 分析
     if found["exception"]["status"] == "DETECTED":
@@ -70,9 +86,11 @@ def test_case_a_full_closed_loop(client, db_session, bootstrap, operator_headers
     assert body["status"] == "READY", body
     assert len(body.get("steps", [])) >= 3, body
     output = body["output"]
-    assert body["risk_level_calculated"] == "CRITICAL"
-    assert abs(output["impact"]["delay_minutes"] - found["exception"]["sla_delay_minutes"]) <= 5
-    assert output["impact"]["sla_breached"] is True
+    # 等级只由规则定：车辆单 = 车辆故障 1 + VIP 1 = 2 → MEDIUM（LLM 无权改）
+    assert body["risk_level_calculated"] == "MEDIUM"
+    assert abs(output["impact"]["delay_minutes"] - order_delay) <= 5
+    # 车辆单不做 SLA 判定 → 事实基线里 sla_breached=False，LLM 必须复述
+    assert output["impact"]["sla_breached"] is False
     assert body["is_replay"] is True
     assert output["evidence_refs"], "证据引用不能为空"
 

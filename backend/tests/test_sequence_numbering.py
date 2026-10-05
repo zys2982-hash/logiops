@@ -111,7 +111,9 @@ def test_case_no_format_matches_seed_after_manual_create(db_session, bootstrap):
     reset_demo_data(db_session, workspace_id=bootstrap["workspace_id"], with_knowledge=False)
     db_session.commit()
     number = next_case_no(Repos(db_session, bootstrap["workspace_id"]), moment=DAY)
-    assert number == "EX20260930004", f"应与 seed 同格式（13 位），实际 {number!r}"
+    # compact 现在只有 2 张异常，且其中一张是前一天的 EX20260929001；
+    # 当日最大序号是 1 → 下一个是 002
+    assert number == "EX20260930002", f"应与 seed 同格式（13 位），实际 {number!r}"
     assert len(number) == len("EX20260930001")
 
 

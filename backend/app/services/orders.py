@@ -15,13 +15,16 @@ from app.core.errors import AppError, ErrorCode, validation_error
 from app.models.enums import (
     ActorType,
     AuditSource,
+    DetectionRule,
     DriverStatus,
     ExceptionStatus,
+    ExceptionType,
     OrderStatus,
     TrackingEventType,
     TrackingSource,
     VehicleStatus,
 )
+from app.models.exception import ExceptionCase
 from app.models.master import Vehicle
 from app.models.transport import Order, TrackingEvent
 from app.repositories import Repos
@@ -29,6 +32,7 @@ from app.rules import sla as sla_rules
 from app.rules import state_machine
 from app.services import detection_flow, eta_flow, read_models
 from app.services.common import (
+    add_event,
     apply_transition,
     bump_version,
     check_version,
@@ -62,6 +66,7 @@ class OrderService:
             "vehicle_id": order.vehicle_id,
             "driver_id": order.driver_id,
             "dispatched_at": order.dispatched_at,
+            "delivered_at": order.delivered_at,
             "promised_delivery_at": order.promised_delivery_at,
             "current_eta_at": order.current_eta_at,
         }
@@ -595,7 +600,214 @@ class OrderService:
                     forced=True,
                     system=True,
                 )
+
+        self._settle_delivered_delay(order, actor_id=actor_id)
         return order
+
+    def _settle_delivered_delay(self, order: Order, *, actor_id: int | None) -> ExceptionCase | None:
+        """送达口径结算（用户口径 2026-10-05）——**只在送达后**用实际时间比承诺时间。
+
+        · 实际送达 − 承诺送达 > 规则允许延迟 → 自动建「延误异常单」（DETECTED 待确认）；
+        · 未超 → 不建单；
+        · 已存在未结束的延误单（送达时间被修正的场合）→ 重算延误与分数；修正后不再违约则自动解决。
+        在途不再按预测 ETA 建延误异常（旧 `ETA_BREACH_SLA` 规则已下线）。
+        """
+        if order.delivered_at is None:
+            return None
+        match, promised = eta_flow.resolve_promised_at(self.repos, order)
+        if promised is None:
+            return None
+        actual_delay = int(round((order.delivered_at - promised).total_seconds() / 60))
+        breached = actual_delay > int(match.max_delay_minutes)
+        existing = self.repos.exceptions.find_open_by_order(order.id)
+        # 只有"未结束的**延误**单"才算已有延误单；送达那刻刚被收口的车辆单（RESOLVED 仍算未关闭）
+        # 不阻挡延误单的产生 —— 同一订单允许"已解决的车辆单 + 新的延误单"并存（各管一个问题）
+        delay_case = (
+            existing
+            if existing is not None and str(existing.type) == str(ExceptionType.DELAY_RISK)
+            else None
+        )
+
+        if delay_case is not None:
+            # 送达时间被修正 → 重算（允许升也允许降：修正就是要把算错的改回来）
+            eta_flow.refresh_case_impact(
+                self.repos, existing, order, eta_at=order.delivered_at, allow_downgrade=True
+            )
+            if not breached:
+                from app.services.exceptions import ExceptionService  # 局部导入避免循环
+
+                service = ExceptionService(self.repos)
+                reason = (
+                    "修正实际送达时间后未超允许延迟"
+                    f"（实际延误 {actual_delay} 分钟 ≤ 允许 {match.max_delay_minutes} 分钟）"
+                )
+                # 状态机只允许 PROCESSING → RESOLVED；待确认（DETECTED）的单只能归档为已关闭
+                if state_machine.can_transition(
+                    state_machine.EntityKind.EXCEPTION, existing.status, ExceptionStatus.RESOLVED
+                ):
+                    service.resolve(
+                        existing.id,
+                        note=reason,
+                        actor_id=actor_id,
+                        expected_version=None,
+                        system=actor_id is None,
+                    )
+                elif state_machine.can_transition(
+                    state_machine.EntityKind.EXCEPTION, existing.status, ExceptionStatus.CLOSED
+                ):
+                    service.close(
+                        existing.id,
+                        reason_code="INVALID",
+                        note=f"{reason}（原判为误报，自动归档）",
+                        expected_version=None,
+                        actor_id=actor_id,
+                        forced=True,
+                        system=actor_id is None,
+                    )
+            else:
+                add_event(
+                    self.repos.session,
+                    self.repos,
+                    exception_id=existing.id,
+                    event_type="ETA_UPDATED",
+                    from_status=existing.status,
+                    to_status=existing.status,
+                    actor_type=ActorType.SYSTEM,
+                    actor_id=actor_id,
+                    note=f"按修正后的实际送达时间重算：延误 {actual_delay} 分钟（允许 {match.max_delay_minutes} 分钟）",
+                    detail={"delivered_at": str(order.delivered_at), "actual_delay_minutes": actual_delay},
+                )
+            return existing
+
+        if breached and delay_case is None:
+            return self._open_delivered_breach_case(
+                order,
+                match=match,
+                promised=promised,
+                actual_delay=actual_delay,
+                actor_id=actor_id,
+            )
+        return None
+
+    def update_delivered_at(
+        self,
+        order_id: int,
+        *,
+        delivered_at: datetime | str,
+        note: str | None = None,
+        actor_id: int | None = None,
+    ) -> Order:
+        """修正**实际送达时间**（送达时间录错时用；用户口径 2026-10-05）。
+
+        只允许在订单已送达（DELIVERED）后修正 —— 延误单本质上就是"实际 vs 承诺"的比较结果，
+        没有实际送达时间就没有延误可言。修正后立即按新时间重算该订单的延误单（见 `_settle_delivered_delay`）：
+        仍违约 → 重算分数；不再违约 → 自动解决那张延误单。
+        """
+        order = self.get(order_id)
+        if str(order.status) != str(OrderStatus.DELIVERED):
+            raise AppError(
+                ErrorCode.STATE_TRANSITION_INVALID,
+                "订单尚未送达，实际送达时间还不存在（延误单只在送达后按实际时间判定）",
+                {"status": str(order.status)},
+            )
+        moment = parse_iso_naive(delivered_at)
+        if moment is None:
+            raise validation_error("delivered_at 必填且格式合法")
+        if order.dispatched_at and moment < order.dispatched_at:
+            raise validation_error("实际送达时间不能早于派车时间")
+        note_text = str(note).strip()[:500] if note else None
+
+        before = self._snapshot(order)
+        order.delivered_at = moment
+        order.current_eta_at = moment
+        bump_version(order)
+        self.repos.orders.save(order)
+        write_audit(
+            self.session,
+            self.repos,
+            "order.delivered_at_corrected",
+            resource_type="order",
+            resource_id=order.id,
+            actor_id=actor_id,
+            before=before,
+            after={**self._snapshot(order), "note": note_text},
+        )
+        self._settle_delivered_delay(order, actor_id=actor_id)
+        return order
+
+    def _open_delivered_breach_case(
+        self,
+        order: Order,
+        *,
+        match: Any,
+        promised: datetime,
+        actual_delay: int,
+        actor_id: int | None,
+    ) -> ExceptionCase | None:
+        """送达超时 → 自动建「延误异常单」（DETECTED 待确认，detection_rule=DELIVERED_BREACH）。"""
+        from app.services import detection_flow  # 局部导入避免循环
+
+        # 已有未结束的**延误**单就不再叠加（同一个问题只一张单）；
+        # 送达那刻刚被收口的其它类型单（如已解决的车辆单）不算阻拦
+        open_case = self.repos.exceptions.find_open_by_order(order.id)
+        if open_case is not None and str(open_case.type) == str(ExceptionType.DELAY_RISK):
+            return None
+
+        case = detection_flow.create_case_record(
+            self.repos,
+            order,
+            exception_type=str(ExceptionType.DELAY_RISK),
+            occurred_at=order.delivered_at,
+            detection_rule=str(DetectionRule.DELIVERED_BREACH),
+            detected_by="SYSTEM",
+            moment=order.delivered_at,
+            actor_id=actor_id,
+        )
+        case.impact_summary = (
+            f"送达超时：实际送达 {order.delivered_at}，承诺 {promised}，延误 {actual_delay} 分钟"
+            f"（{match.rule_name} 允许 {match.max_delay_minutes} 分钟）"
+        )
+        add_event(
+            self.repos.session,
+            self.repos,
+            exception_id=case.id,
+            event_type="DETECTED",
+            from_status=None,
+            to_status=case.status,
+            actor_type=ActorType.SYSTEM,
+            actor_id=actor_id,
+            note=(
+                f"订单送达后判定违约：实际送达 − 承诺送达 = {actual_delay} 分钟 > "
+                f"允许 {match.max_delay_minutes} 分钟（{match.rule_name}）"
+            ),
+            detail={
+                "rule": str(DetectionRule.DELIVERED_BREACH),
+                "delivered_at": str(order.delivered_at),
+                "promised_delivery_at": str(promised),
+                "actual_delay_minutes": actual_delay,
+                "max_delay_minutes": match.max_delay_minutes,
+            },
+        )
+        write_audit(
+            self.session,
+            self.repos,
+            "exception.detected",
+            resource_type="exception",
+            resource_id=case.id,
+            actor_type=ActorType.SYSTEM,
+            actor_id=actor_id,
+            after={
+                "case_no": case.case_no,
+                "order_id": order.id,
+                "type": str(case.type),
+                "rule": str(DetectionRule.DELIVERED_BREACH),
+                "actual_delay_minutes": actual_delay,
+                "level": str(case.level),
+                "risk_score": case.risk_score,
+            },
+        )
+        self.repos.exceptions.save(case)
+        return case
 
     def force_status(
         self,

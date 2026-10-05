@@ -185,7 +185,6 @@ def exception_facts(repos: Repos, exception_id: int) -> dict[str, Any]:
         delay_minutes=case.sla_delay_minutes if case.sla_delay_minutes is not None else sla["delay_minutes"],
         customer_level=customer.get("level"),
         exception_type=case.type,
-        sla_breached=bool(case.sla_breached),
     )
     latest_message = repos.messages.latest_for_case(exception_id)
     return {

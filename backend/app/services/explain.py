@@ -75,22 +75,27 @@ def _factor_sources(
     )
 
     if code == FACTOR_DELAY:
-        # 「说明」列已经写了"预计延误 X 分钟"，这里只补**表格里没有的信息**：
-        # 1) 人工录入的事实（与规则快照可能不同）；2) 未违约时的规则阈值（违约时由 SLA 已违约 因子承担，避免重复）
+        # 延误单的"依据"= 承诺到达 / 实际送达 / 规则允许 / 超出多少（2026-10-05：延误 = 实际送达 − 承诺送达，
+        # 只看这两个时间；旧的 SLA_BREACH 因子已取消，所以这些数字就挂在延误因子上）
         if case.delay_minutes is not None:
             sources.append(
                 {
                     "kind": "MANUAL_DELAY",
-                    "text": f"人工录入延误 {_minutes(case.delay_minutes)}（人工事实，非模型推测）",
+                    "text": f"人工录入延误 {_minutes(case.delay_minutes)}（历史数据；新口径由送达时间决定）",
                 }
             )
-        if not case.sla_breached and rule_text:
-            sources.append(
-                {
-                    "kind": "SLA_RULE",
-                    "text": f"{rule_text}；本次{_delay_text(case.sla_delay_minutes)}未超阈值",
-                }
-            )
+        parts: list[str] = []
+        if case.promised_delivery_at is not None:
+            parts.append(f"承诺到达 {read_models.iso(case.promised_delivery_at)}")
+        delivered = getattr(order, "delivered_at", None) if order is not None else None
+        if delivered is not None:
+            parts.append(f"实际送达 {read_models.iso(delivered)}")
+        if rule_text:
+            parts.append(rule_text)
+        if case.sla_delay_minutes is not None and sla.get("max_delay_minutes") is not None:
+            parts.append(f"超出 {_minutes(int(case.sla_delay_minutes) - int(sla['max_delay_minutes']))}")
+        if parts:
+            sources.append({"kind": "SLA_EVAL", "text": "；".join(parts)})
 
     elif code in FACTOR_VIP and customer is not None:
         sources.append(
@@ -121,7 +126,7 @@ def _factor_sources(
             sources.append({"kind": "ROOT_CAUSE", "text": f"原因记录：{case.root_cause_note}"})
 
     elif code == FACTOR_BREACH:
-        # 违约依据合并成**一条**：承诺 / 预计 / 规则阈值 / 超出多少（避免与"延误时长"因子重复报同一组数字）
+        # 历史数据兜底：旧模型里的「SLA 已违约」因子（新模型已不再产生，只在读老单时可能出现）
         promised = case.promised_delivery_at
         expected = case.expected_eta_at
         parts = []

@@ -243,6 +243,9 @@ class NotificationStatus(StrEnum):
 
 class DetectionRule(StrEnum):
     STALL_OVER_THRESHOLD = "STALL_OVER_THRESHOLD"
+    # 2026-10-05 起：延误不再在途预测建单，只在送达时按"实际送达 − 承诺送达"判定
+    DELIVERED_BREACH = "DELIVERED_BREACH"
+    # 历史值：旧的"在途 ETA 预测违约"规则（已不再产生，保留供历史数据读取）
     ETA_BREACH_SLA = "ETA_BREACH_SLA"
     MANUAL = "MANUAL"
 

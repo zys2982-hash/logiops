@@ -15,7 +15,6 @@ from app.core.errors import validation_error
 from app.models.enums import (
     ActorType,
     AuditSource,
-    DetectionRule,
     ExceptionLevel,
     ExceptionStatus,
     ExceptionType,
@@ -89,9 +88,6 @@ def _merge(
         last_detected_at=_last_detected_at(repos, case),
         debounce_minutes=settings.detect_debounce_minutes,
     )
-    if decision.rule == str(DetectionRule.ETA_BREACH_SLA):
-        # §8.4：已有未关闭异常时命中 ETA 违约 → 合并升级为 VEHICLE_BREAKDOWN
-        case.type = str(ExceptionType.VEHICLE_BREAKDOWN)
     # 机器提议阶段（DETECTED/CONFIRMING）不允许静默降档；PROCESSING 允许降级后立即 RESOLVED 收口
     eta_flow.refresh_case_impact(
         repos,
@@ -154,23 +150,22 @@ def detect_for_order(
     moment: datetime | None = None,
     actor_id: int | None = None,
 ) -> ExceptionCase | None:
-    """按 §8.4 判定是否需要建单/合并；返回受影响的异常单或 None。"""
+    """按检测规则判定是否需要建单/合并；返回受影响的异常单或 None。
+
+    2026-10-05 起只剩"停滞 → 疑似车辆故障"一条（在途不再按预测 ETA 建延误单）。
+    """
     if order is None:
         return None
     settings = get_settings()
     now = to_naive_utc(moment) or now_naive()
     existing = repos.exceptions.find_open_by_order(order.id)
     last_move = read_models.last_move_at(repos, order.id)
-    match, promised = eta_flow.resolve_promised_at(repos, order)
 
     decision = detection_rules.decide(
         now=now,
         order_status=order.status,
         last_move_at=last_move,
         stall_threshold_minutes=settings.detect_stall_minutes,
-        expected_eta_at=order.current_eta_at,
-        promised_delivery_at=promised,
-        max_delay_minutes=match.max_delay_minutes,
         has_open_exception=existing is not None,
     )
     if not decision.rule:
@@ -231,19 +226,18 @@ def evaluate_detection(
     *,
     moment: datetime | None = None,
 ) -> detection_rules.DetectionDecision:
-    """只做判定不落库（供单测/演示展示"规则真的在算"）。"""
+    """只做判定不落库（供单测/演示展示"规则真的在算"）。
+
+    2026-10-05 起在途只判定停滞（延误在送达时按实际时间判定，不看预测 ETA）。
+    """
     settings = get_settings()
     now = to_naive_utc(moment) or now_naive()
     existing = repos.exceptions.find_open_by_order(order.id)
-    match, promised = eta_flow.resolve_promised_at(repos, order)
     return detection_rules.decide(
         now=now,
         order_status=order.status,
         last_move_at=read_models.last_move_at(repos, order.id),
         stall_threshold_minutes=settings.detect_stall_minutes,
-        expected_eta_at=order.current_eta_at,
-        promised_delivery_at=promised,
-        max_delay_minutes=match.max_delay_minutes,
         has_open_exception=existing is not None,
     )
 

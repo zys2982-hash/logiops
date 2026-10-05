@@ -43,15 +43,14 @@ def _order_with_vehicle(client, headers, bootstrap, *, admin_headers=None, custo
     return created
 
 
-def _breakdown_case(client, headers, bootstrap, order_id: int, *, delay_minutes: int | None) -> dict:
+def _breakdown_case(client, headers, bootstrap, order_id: int) -> dict:
+    """手工建车辆故障单（2026-10-05 起手工建单不再带 delay_minutes：延误不计入风险）。"""
     payload: dict = {
         "order_id": order_id,
         "type": "VEHICLE_BREAKDOWN",
         "occurred_at": bootstrap["base_time"].isoformat(),
         "note": "车辆在济南爆胎，已联系修理厂",
     }
-    if delay_minutes is not None:
-        payload["delay_minutes"] = delay_minutes
     response = client.post(EXCEPTIONS, headers=headers, json=payload)
     assert response.status_code == 201, response.text
     return response.json()
@@ -70,14 +69,14 @@ def _fresh(db_session, model, obj_id: int):
 def test_clear_vehicle_issue_drops_one_point_and_keeps_case_open(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
-    """NORMAL 客户 + 延误 25min：分数 = 延误(1) + 车辆故障(1) = 2 → 解除后 = 1（看得见的 -1）。"""
+    """NORMAL 客户：分数 = 车辆故障(1) = 1 → 解除后 = 0（看得见的 -1；延误/违约都不参与）。"""
     order = _order_with_vehicle(
         client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
     )
-    case = _breakdown_case(client, operator_headers, bootstrap, order["id"], delay_minutes=25)
+    case = _breakdown_case(client, operator_headers, bootstrap, order["id"])
     assert "VEHICLE_BREAKDOWN" in _codes(case), case["risk_factors"]
     score_before = int(case["risk_score"])
-    assert score_before == 2, case["risk_factors"]
+    assert score_before == 1, case["risk_factors"]
     assert _fresh(db_session, Vehicle, bootstrap["vehicle"].id).status == "REPAIRING"
 
     # 推进一步到「处理中」，更接近用户实际操作时的状态
@@ -143,7 +142,7 @@ def test_repair_end_tracking_removes_factor_automatically(
     order = _order_with_vehicle(
         client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
     )
-    case = _breakdown_case(client, operator_headers, bootstrap, order["id"], delay_minutes=25)
+    case = _breakdown_case(client, operator_headers, bootstrap, order["id"])
     assert "VEHICLE_BREAKDOWN" in _codes(case)
 
     tracked = client.post(
@@ -168,17 +167,13 @@ def test_repair_end_tracking_removes_factor_automatically(
     assert "VEHICLE_BREAKDOWN" not in [f.get("code") for f in (stored.risk_factors_json or [])], "自愈要落库"
 
 
-def test_capped_score_may_not_drop_but_factor_disappears(
+def test_vip_vehicle_case_after_clear_keeps_customer_points(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
-    """封顶口径：VIP + 延误 300min 时原始分 = 延误2 + VIP1 + 车辆1 + 违约1 = 5 → 封顶 4。
-
-    解除车辆故障后原始分 4：因子确实消失了，但**显示分数仍是 4**（min(4, 4)）——
-    这是 rules/risk.py 的封顶规则，不是解除动作没生效；等级也仍是 CRITICAL。
-    """
+    """VIP 车辆故障单 = 车辆故障 1 + VIP 1 = 2；解除车辆故障后只剩 VIP 1 分（延误/违约都不参与）。"""
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    case = _breakdown_case(client, operator_headers, bootstrap, order["id"], delay_minutes=300)
-    assert int(case["risk_score"]) == 4 and case["level"] == "CRITICAL"
+    case = _breakdown_case(client, operator_headers, bootstrap, order["id"])
+    assert int(case["risk_score"]) == 2 and case["level"] == "MEDIUM", case["risk_factors"]
 
     cleared = client.post(
         f"{EXCEPTIONS}/{case['id']}/clear-vehicle-issue",
@@ -188,8 +183,9 @@ def test_capped_score_may_not_drop_but_factor_disappears(
     assert cleared.status_code == 200, cleared.text
     body = cleared.json()
     assert "VEHICLE_BREAKDOWN" not in _codes(body), body["risk_factors"]
-    assert int(body["risk_score"]) == 4, "原始分仍 ≥4，封顶后显示 4（封顶规则所致）"
-    assert body["level"] == "CRITICAL"
+    assert _codes(body) == ["CUSTOMER_VIP"]
+    assert int(body["risk_score"]) == 1
+    assert body["level"] == "MEDIUM"
     assert body["status"] == "DETECTED", "异常单仍需人工推进（待确认）"
 
 
@@ -197,7 +193,7 @@ def test_clear_vehicle_issue_rejects_terminal_and_other_types(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    breakdown = _breakdown_case(client, operator_headers, bootstrap, order["id"], delay_minutes=300)
+    breakdown = _breakdown_case(client, operator_headers, bootstrap, order["id"])
 
     # 非车辆故障类型 → 409
     other_order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)

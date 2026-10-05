@@ -55,7 +55,8 @@ def test_execute_analysis_replays_hash_matched_fixture(db_session, repos, case_a
     )
 
     assert result["status"] == "READY"
-    assert result["risk_level"] == "CRITICAL"
+    # 新模型：延误 270min（档位 2）+ VIP 1 = 3 → HIGH（车辆单才会是 1+客户等级，且没有 SLA）
+    assert result["risk_level"] == "HIGH"
     assert result["output"]["impact"]["delay_minutes"] == case_a["delay_minutes"]
     assert result["output"]["impact"]["sla_breached"] is True
     assert result["output"]["root_cause"]["code"] == "VEHICLE_BREAKDOWN"
@@ -66,7 +67,7 @@ def test_execute_analysis_replays_hash_matched_fixture(db_session, repos, case_a
     assert analysis.is_replay is True
     assert analysis.prompt_version == "v1"
     assert analysis.input_hash == input_hash
-    assert analysis.risk_level_calculated == "CRITICAL"
+    assert analysis.risk_level_calculated == "HIGH"
     assert analysis.tokens_in == 1730 and analysis.tokens_out == 420
     assert analysis.latency_ms is not None and analysis.latency_ms >= 0
     assert analysis.started_at is not None and analysis.finished_at is not None
@@ -93,7 +94,7 @@ def test_execute_analysis_template_fallback_without_fixture(db_session, repos, c
     )
 
     assert result["status"] == "READY"
-    assert result["risk_level"] == "CRITICAL"
+    assert result["risk_level"] == "HIGH"
     analysis = repos.analyses.get(case_a["analysis_id"])
     assert analysis.model == "template"
     assert analysis.is_replay is True
@@ -119,7 +120,8 @@ def test_risk_level_comes_from_rules_not_from_llm(db_session, repos, case_a, tmp
     output["impact"]["affected_customer_level"] = "NORMAL"  # 模型试图淡化客户等级
     provider = ScriptedProvider([final_result(output)])
     result = execute_analysis(db_session, repos, case_a["analysis_id"], provider=provider)
-    assert result["risk_level"] == "CRITICAL"
+    # LLM 把客户等级淡化成 NORMAL 也改不动规则定级：延误 270min 档位 2 + 事实上的 VIP 1 = 3 → HIGH
+    assert result["risk_level"] == "HIGH"
     assert result["output"]["impact"]["affected_customer_level"] == "NORMAL"
     assert "level" not in result["output"]  # 等级字段不由 LLM 提供
 
@@ -367,4 +369,4 @@ def test_input_hash_is_deterministic(repos, case_a):
     assert len(compute_t2_input_hash(facts)) == 64
     assert compute_t1_input_hash("a", "PENDING") != compute_t1_input_hash("a", "PARSED")
     assert compute_t3_input_hash(None, facts) == compute_t3_input_hash(None, facts)
-    assert F.backend_risk_level(facts) == "CRITICAL"
+    assert F.backend_risk_level(facts) == "HIGH"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
@@ -96,6 +96,42 @@ const clearIssueForm = reactive({
   exception_id: null as number | null,
   note: '',
 })
+
+/** 修正实际送达时间（订单已送达后；延误单只在送达后按实际时间判定） */
+const deliverFixForm = reactive({
+  delivered_at: '',
+  note: '',
+})
+watch(
+  () => order.value?.delivered_at,
+  (value: string | null | undefined) => {
+    deliverFixForm.delivered_at = value ? formatDateTime(value, 'YYYY-MM-DD HH:mm') : ''
+  },
+  { immediate: true },
+)
+
+async function correctDeliveredAt(): Promise<void> {
+  if (!order.value) return
+  const deliveredAt = displayIsoToUtc(deliverFixForm.delivered_at)
+  if (!deliveredAt) {
+    ElMessage.warning('请选择实际送达时间')
+    return
+  }
+  saving.value = true
+  try {
+    await orderApi.correctDeliveredAt(order.value.id, {
+      delivered_at: deliveredAt,
+      note: deliverFixForm.note.trim() || '修正实际送达时间（订单页）',
+    })
+    ElMessage.success('实际送达时间已修正；若该订单有延误异常，延误与风险分已按新时间重算')
+    deliverFixForm.note = ''
+    await load()
+  } catch {
+    // 409（未送达）/403/422 已由响应拦截器提示
+  } finally {
+    saving.value = false
+  }
+}
 const exceptionSaving = ref(false)
 
 /** 时间线条目：把每个异常折算成"开始（+ 结束）"，交给时间线按时间混排 */
@@ -450,6 +486,39 @@ onMounted(async () => {
         </el-col>
 
         <el-col :md="10">
+          <PanelCard
+            v-if="canManage && order.status === 'DELIVERED'"
+            title="修正实际送达时间"
+            subtitle="送达时间录错时用这里改正；延误异常只在送达后按实际时间判定，改完立即重算"
+            icon="Timer"
+            class="u-mb-12"
+          >
+            <el-form label-width="90px" size="small">
+              <el-form-item label="实际送达">
+                <el-date-picker
+                  v-model="deliverFixForm.delivered_at"
+                  type="datetime"
+                  value-format="YYYY-MM-DD HH:mm"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              <el-form-item label="修正说明">
+                <el-input
+                  v-model="deliverFixForm.note"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 4 }"
+                  placeholder="例如：实际为 18:20 送达，之前按 20:05 录入"
+                />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" size="small" :loading="saving" @click="correctDeliveredAt">
+                  保存并重算
+                </el-button>
+                <span class="u-text-muted">仍违约 → 重算延误与分数；不再违约 → 自动解决该延误异常</span>
+              </el-form-item>
+            </el-form>
+          </PanelCard>
+
           <PanelCard
             v-if="canManage"
             title="派车操作"

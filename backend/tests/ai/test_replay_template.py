@@ -99,7 +99,9 @@ def test_default_plan_matches_documented_tool_order(repos, case_a):
         "get_exception_history",
         "search_knowledge",
     ]
-    assert knowledge_query(facts) == "车辆故障"
+    # 检索词跟着**建单原因**走：CASE-A 在 AI 层夹具里是延误单（车辆单不做 SLA 判定，
+    # 需要"已违约"的夹具只能按延误口径造）→ 默认计划检索"延误"
+    assert knowledge_query(facts) == "延误"
 
 
 def test_template_t2_is_guard_valid_without_fixture(repos, case_a):

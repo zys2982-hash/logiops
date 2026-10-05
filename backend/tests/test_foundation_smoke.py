@@ -68,22 +68,22 @@ def test_sla_breach_boundary(bootstrap):
     assert bad.breached is True and bad.delay_minutes == 31
 
 
-def test_risk_case_a_is_critical():
+def test_risk_vehicle_case_is_medium_not_critical():
+    """2026-10-05 口径：车辆故障单只受"车辆故障 + 客户等级"影响（CASE-A = 1 + VIP 1 = 2 → MEDIUM）。"""
     result = risk.evaluate_risk(
-        delay_minutes=270, customer_level="VIP", exception_type="VEHICLE_BREAKDOWN", sla_breached=True
+        delay_minutes=270, customer_level="VIP", exception_type="VEHICLE_BREAKDOWN"
     )
-    assert result.score == 4
-    assert result.level == ExceptionLevel.CRITICAL
+    assert result.score == 2
+    assert result.level == ExceptionLevel.MEDIUM
     codes = {factor["code"] for factor in result.factor_dicts}
-    assert {"DELAY_BASE", "CUSTOMER_VIP", "VEHICLE_BREAKDOWN", "SLA_BREACH"} <= codes
+    assert codes == {"VEHICLE_BREAKDOWN", "CUSTOMER_VIP"}
 
 
-def test_risk_case_d_is_medium_without_breach():
-    result = risk.evaluate_risk(
-        delay_minutes=25, customer_level="NORMAL", exception_type="DELAY_RISK", sla_breached=False
-    )
+def test_risk_delay_case_is_medium_without_breach_factor():
+    result = risk.evaluate_risk(delay_minutes=25, customer_level="NORMAL", exception_type="DELAY_RISK")
     assert result.score == 1
     assert result.level == ExceptionLevel.MEDIUM
+    assert {factor["code"] for factor in result.factor_dicts} == {"DELAY_BASE"}
 
 
 def test_detection_stall_rule():
@@ -99,19 +99,17 @@ def test_detection_stall_rule():
     assert decision.exception_type == "VEHICLE_BREAKDOWN"
 
 
-def test_detection_eta_breach_rule():
+def test_detection_in_transit_eta_breach_is_not_a_rule_anymore():
+    """2026-10-05：在途不再按预测 ETA 建延误单（旧 ETA_BREACH_SLA 下线），只检测停滞。"""
     now = datetime(2026, 9, 30, 11, 0)
     decision = detection.decide(
         now=now,
         order_status=OrderStatus.IN_TRANSIT,
-        last_move_at=now - timedelta(minutes=10),
+        last_move_at=now - timedelta(minutes=10),  # 未停滞
         stall_threshold_minutes=120,
-        expected_eta_at=now + timedelta(hours=5),
-        promised_delivery_at=now + timedelta(hours=1),
-        max_delay_minutes=30,
     )
-    assert decision.rule == "ETA_BREACH_SLA"
-    assert decision.exception_type == "DELAY_RISK"
+    assert decision.rule is None
+    assert decision.should_create is False
 
 
 def test_eta_repair_wait_method():

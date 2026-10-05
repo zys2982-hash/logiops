@@ -46,8 +46,12 @@ def test_seed_scale_and_idempotency(client, db_session, bootstrap):
     assert counts["orders"] == 1000
     assert counts["tracking_events"] >= 5000
     assert counts["exceptions"] == 50
-    assert first["orders_by_status"] == {"CREATED": 300, "DELIVERED": 300, "DISPATCHED": 100, "IN_TRANSIT": 300}
-    assert set(first["exceptions_by_level"]) == {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+    # 新模型：CASE-D1/D2 两单的"事实"是**已送达**（25min 未违约 / 31min 违约），
+    # 所以 DELIVERED 比基线多 2、IN_TRANSIT 少 2（总数仍是 1000）
+    assert first["orders_by_status"] == {"CREATED": 300, "DELIVERED": 302, "DISPATCHED": 100, "IN_TRANSIT": 298}
+    # 新模型下未结束的异常最低 MEDIUM（车辆单 1 分起、延误单建单前提就是违约）；
+    # LOW 只会出现在"已结束"的 current_level 里，不再是异常单的 level
+    assert set(first["exceptions_by_level"]) == {"MEDIUM", "HIGH", "CRITICAL"}
     # 4 状态模型：演示数据只铺 待确认/处理中/已解决/已关闭
     # （旧的 CONFIRMING / ANALYZING 已并入 PROCESSING，不再由任何流程产生）
     assert set(first["exceptions_by_status"]) >= {"DETECTED", "PROCESSING", "RESOLVED", "CLOSED"}
@@ -67,10 +71,14 @@ def test_case_a_is_computed_by_rules(client, db_session, bootstrap):
     assert case_a["case_no"] == "EX20260930001"
     assert case_a["order_no"] == CASE_A_ORDER_NO
     assert case_a["detection_rule"] == "STALL_OVER_THRESHOLD"
-    assert 240 <= case_a["sla_delay_minutes"] <= 300
-    assert case_a["sla_breached"] is True
-    assert case_a["level"] == "CRITICAL"
-    assert case_a["risk_score"] == 4
+    # 车辆故障单**不做 SLA 判定**（2026-10-05 新模型）：没有延误/违约数字，
+    # 订单的承诺/预计时刻仍留档（下一段的 +270min 断言即是订单事实）
+    assert case_a["sla_delay_minutes"] is None
+    assert case_a["sla_breached"] is False
+    # 风险分 = 车辆故障(1) + VIP 客户(1) = 2 → MEDIUM（不计延误、不计违约）
+    assert case_a["level"] == "MEDIUM"
+    assert case_a["risk_score"] == 2
+    assert {item["code"] for item in case_a["risk_factors"]} == {"VEHICLE_BREAKDOWN", "CUSTOMER_VIP"}
     assert case_a["eta_method"] in {"REPAIR_WAIT", "MOVING_AVG_SPEED", "FALLBACK"}
     assert "VIP-01" in case_a["sla_rule"]
 
@@ -79,12 +87,11 @@ def test_case_a_is_computed_by_rules(client, db_session, bootstrap):
     assert case.detection_rule == "STALL_OVER_THRESHOLD"
     assert case.type == "VEHICLE_BREAKDOWN"
     assert case.status in {"DETECTED", "PROCESSING"}
+    assert case.sla_delay_minutes is None and case.sla_breached is False
     assert case.promised_delivery_at + timedelta(minutes=270) == case.expected_eta_at
-    assert case.risk_factors_json and {item["code"] for item in case.risk_factors_json} >= {
-        "DELAY_BASE",
+    assert case.risk_factors_json and {item["code"] for item in case.risk_factors_json} == {
         "CUSTOMER_VIP",
         "VEHICLE_BREAKDOWN",
-        "SLA_BREACH",
     }
 
     # 车辆状态 REPAIRING / 位置 济南
@@ -123,17 +130,25 @@ def test_case_a_is_computed_by_rules(client, db_session, bootstrap):
 
 
 def test_case_d_boundary_is_not_breached(client, db_session, bootstrap):
+    """送达边界（2026-10-05 新模型）：25min ≤ 允许 30min → **不建单**；31min > 30min → 建延误单。
+
+    延误只在送达时按"实际送达 − 承诺送达"判定，所以 D1 是负样本（订单已送达、异常 0 张），
+    D2 才有单（detection_rule=DELIVERED_BREACH）。
+    """
     seed_workspace(db_session, bootstrap)
-    order = db_session.scalars(select(Order).where(Order.order_no == "SO20260930024")).one()
-    case_d = db_session.scalars(select(ExceptionCase).where(ExceptionCase.order_id == order.id)).one()
-    assert case_d.sla_delay_minutes == 25
-    assert case_d.sla_breached is False
-    assert case_d.level == "MEDIUM"
-    assert case_d.detection_rule == "MANUAL"
+    d1_order = db_session.scalars(select(Order).where(Order.order_no == "SO20260930024")).one()
+    assert d1_order.status == "DELIVERED"
+    assert d1_order.delivered_at - d1_order.promised_delivery_at == timedelta(minutes=25)
+    d1_cases = list(db_session.scalars(select(ExceptionCase).where(ExceptionCase.order_id == d1_order.id)))
+    assert d1_cases == [], "送达延误 25min ≤ 允许 30min：不得产生任何异常单"
 
     cases = list(db_session.scalars(select(ExceptionCase).order_by(ExceptionCase.id)))
     breached = [case for case in cases if case.sla_delay_minutes == 31]
     assert breached and all(case.sla_breached is True for case in breached)
+    # 延误单只在送达结算时产生 → 建单规则是 DELIVERED_BREACH，类型是延误风险
+    assert all(case.type == "DELAY_RISK" for case in breached)
+    assert all(case.detection_rule == "DELIVERED_BREACH" for case in breached)
+    assert all(case.occurred_at == case.order.delivered_at for case in breached)
 
     invalid = [case for case in cases if case.close_reason == "INVALID"]
     assert invalid and invalid[0].status == "CLOSED"
@@ -246,7 +261,8 @@ def test_dashboard_summary(client, db_session, bootstrap):
     body = response.json()
 
     assert body["today_orders"] > 0
-    assert body["in_transit"] == 400
+    # 在途 = DISPATCHED(100) + IN_TRANSIT(298)：CASE-D1/D2 两单在 seed 里就是"已送达"
+    assert body["in_transit"] == 398
     assert body["exceptions_total"] == 50
     assert body["open_exceptions"] + body["closed"] == 50
     assert body["high_risk"] > 0

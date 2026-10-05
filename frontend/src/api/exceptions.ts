@@ -82,14 +82,6 @@ export function resolveException(id: number, payload: ReasonPayload): Promise<Ex
   return post<ExceptionDetail>(`/exceptions/${id}/resolve`, payload)
 }
 
-/** POST /exceptions/{id}/delay  录入/修改人工延误（人报事实；是否违约仍由规则判） */
-export function recordDelay(
-  id: number,
-  payload: { expected_version: number; delay_minutes: number; note?: string },
-): Promise<ExceptionDetail> {
-  return post<ExceptionDetail>(`/exceptions/${id}/delay`, payload)
-}
-
 /** POST /exceptions/{id}/clear-vehicle-issue  车辆已修复：只解除「车辆故障」问题，异常单继续（不是结束整单） */
 export function clearVehicleIssue(
   id: number,

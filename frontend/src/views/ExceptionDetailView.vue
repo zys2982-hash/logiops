@@ -108,6 +108,11 @@ const timelineIncidents = computed<TimelineIncident[]>(() => {
   ]
 })
 
+/** 只有**延误单**才有 SLA 影响（车辆故障单不做 SLA 判定，见 2026-10-05 口径） */
+const isDelayCase = computed(
+  () => String(exception.value?.current_type ?? exception.value?.type ?? '') === 'DELAY_RISK',
+)
+
 /** 右侧流程标签页当前页（默认 AI 分析） */
 const activeTab = ref('ai')
 /** 未完成的跟进任务数（用于标签角标） */
@@ -582,8 +587,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="u-text-muted u-mt-8">
-          业务时间 {{ demo.businessTimeText }} · 承诺到达 {{ formatDateTime(exception.promised_delivery_at) }} ·
-          预计送达 {{ formatDateTime(exception.expected_eta_at) }}
+          业务时间 {{ demo.businessTimeText }} · 承诺到达 {{ formatDateTime(exception.promised_delivery_at) }}
+          <template v-if="isDelayCase"> · 实际送达 {{ formatDateTime(exception.delivered_at) }}</template>
         </div>
       </el-card>
 
@@ -619,7 +624,7 @@ onMounted(async () => {
             :loading="loading"
           />
 
-          <SlaImpactCard :exception="exception" @updated="refreshAfterWrite" />
+          <SlaImpactCard v-if="isDelayCase" :exception="exception" @updated="refreshAfterWrite" />
 
           <PanelCard
             :title="isEnded ? '风险等级（历史判定）' : '风险等级（当前）'"

@@ -28,6 +28,11 @@ function subText(row: ExceptionListItem): string {
 function isEnded(status?: string | null): boolean {
   return status === 'RESOLVED' || status === 'CLOSED'
 }
+
+/** 只有延误单有 SLA 影响（车辆故障单不做 SLA 判定） */
+function isDelayCase(row: ExceptionListItem): boolean {
+  return String(row.current_type ?? row.type ?? '') === 'DELAY_RISK'
+}
 </script>
 
 <template>
@@ -68,9 +73,13 @@ function isEnded(status?: string | null): boolean {
     </el-table-column>
     <el-table-column label="SLA 影响" min-width="150">
       <template #default="{ row }">
-        <el-tag v-if="row.sla_breached" size="small" type="danger" effect="dark">已违约</el-tag>
-        <el-tag v-else size="small" type="info" effect="plain">未违约</el-tag>
-        <div class="u-text-muted">{{ formatDelay(row.sla_delay_minutes) }}</div>
+        <!-- 只有延误单有 SLA 影响：车辆故障单不做 SLA 判定（2026-10-05 口径） -->
+        <template v-if="isDelayCase(row)">
+          <el-tag v-if="row.sla_breached" size="small" type="danger" effect="dark">已违约</el-tag>
+          <el-tag v-else size="small" type="info" effect="plain">未违约</el-tag>
+          <div class="u-text-muted">{{ formatDelay(row.sla_delay_minutes) }}</div>
+        </template>
+        <span v-else class="u-text-muted">—</span>
       </template>
     </el-table-column>
     <el-table-column label="状态" width="110" align="center">

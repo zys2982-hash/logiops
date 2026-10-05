@@ -176,7 +176,7 @@ def test_batch_approve_reports_per_item_status(db_session, bootstrap):
 
 
 def test_apply_analysis_result_uses_rules_for_level(db_session, bootstrap):
-    """LLM 无权改 level：即使 output 里写 LOW，也按规则算成 CRITICAL。"""
+    """LLM 无权改 level：即使 output 里写 LOW，也按规则算（车辆故障 1 + VIP 1 = 2 → MEDIUM）。"""
     repos = _support.repos_for(db_session, bootstrap)
     case = _support.detected_exception(repos, bootstrap)
     ExceptionService(repos).confirm(case.id, expected_version=case.version, actor_id=None)
@@ -187,8 +187,8 @@ def test_apply_analysis_result_uses_rules_for_level(db_session, bootstrap):
     analysis = _support.make_analysis(repos, case, output=output)
     result = ExceptionService(repos).apply_analysis_result(analysis.id)
 
-    assert result["level"] == "CRITICAL"
-    assert result["risk_score"] == 4
-    assert analysis.risk_level_calculated == "CRITICAL"
+    assert result["level"] == "MEDIUM"
+    assert result["risk_score"] == 2
+    assert analysis.risk_level_calculated == "MEDIUM"
     assert case.status == str(ExceptionStatus.PROCESSING)
     assert len(result["approval_ids"]) == 3
