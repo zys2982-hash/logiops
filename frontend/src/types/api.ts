@@ -436,6 +436,9 @@ export interface ExceptionListItem {
   type: ExceptionType
   /** 当前问题（按风险因子实时推导；与 type＝建单原因 不同，界面显示用这个） */
   current_type?: ExceptionType | null
+  /** 当前风险（已解决/已关闭 → LOW / 0 分；历史等级见 level / risk_score） */
+  current_level?: ExceptionLevel | null
+  current_risk_score?: number | null
   level: ExceptionLevel
   status: ExceptionStatus
   detected_by?: ActorType | string | null

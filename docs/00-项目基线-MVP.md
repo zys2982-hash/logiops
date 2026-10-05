@@ -678,6 +678,11 @@ Seed 内置规则：`DEFAULT` = 发车后 30h / 允许延迟 30min；`CUSTOMER_L
   直接沿用建单原因（历史判定口径，与因子存档一致）。
   界面上（异常列表、异常详情、订单时间线、选单下拉）一律显示 `current_type`，所以"车修好了、只剩延误"
   时标签会自己变过来 —— 这正是"不要用类型固定它"的落地。
+- **「风险等级」也分当前与历史（`level`/`risk_score` vs `current_level`/`current_risk_score`）**：
+  `current_level` / `current_risk_score` 是**当前风险** —— 已结束（`RESOLVED`/`CLOSED`）的单没有当前风险，
+  一律 `LOW` / **0 分**（异常列表的「等级」列显示的就是它，界面上呈现为灰色的"无风险 · 0 分"）；
+  历史等级仍由 `level` / `risk_score` 存档，供详情页的"风险等级（历史判定）"卡片与审计使用。
+- 异常列表**不展示异常类型列**（类型已改成"当前问题"的实时推导，放列表里只会误导；需要看类型/依据就点进详情）。
 - 触发时机：`POST /orders/{id}/tracking-events` 写入后**同步**执行"ETA 重算 → 检测"；`POST /demo/actions/tick` 用于演示推进。
 
 ### 8.5 ETA 重算规则（可解释，不用 ML）

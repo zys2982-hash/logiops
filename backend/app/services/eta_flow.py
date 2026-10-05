@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from app.core.config import get_settings
-from app.models.enums import ExceptionStatus, ExceptionType, OrderStatus, VehicleStatus
+from app.models.enums import ExceptionLevel, ExceptionStatus, ExceptionType, OrderStatus, VehicleStatus
 from app.models.exception import ExceptionCase
 from app.models.transport import Order
 from app.repositories import Repos
@@ -236,6 +236,18 @@ def current_case_type(case: ExceptionCase) -> str:
     if VEHICLE_BREAKDOWN_FACTOR in codes:
         return str(ExceptionType.VEHICLE_BREAKDOWN)
     return str(ExceptionType.DELAY_RISK)
+
+
+def current_case_risk(case: ExceptionCase) -> tuple[str, int]:
+    """异常单的**当前风险**（实时口径）：已结束（RESOLVED / CLOSED）没有当前风险 → `LOW` / 0 分。
+
+    用户口径（2026-10-04）：「当异常关闭以后，风险等级应该显示为0」——
+    列表的「等级」列展示的是**当前风险**，已关掉/已解决的单不该继续报着历史分数；
+    历史等级仍在详情页的"风险等级（历史判定）"卡片里（那用的是 `case.level` / `case.risk_score` 存档）。
+    """
+    if str(case.status) in ENDED_EXCEPTION_STATUSES:
+        return str(ExceptionLevel.LOW), 0
+    return str(case.level), int(case.risk_score or 0)
 
 
 def sync_case_vehicle_factor(repos: Repos, case: ExceptionCase, order: Order | None = None) -> bool:

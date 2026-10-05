@@ -761,6 +761,8 @@ class OrderService:
                 "case_no": case.case_no,
                 "type": case.type,
                 "current_type": eta_flow.current_case_type(case),
+                "current_level": eta_flow.current_case_risk(case)[0],
+                "current_risk_score": eta_flow.current_case_risk(case)[1],
                 "level": case.level,
                 "status": case.status,
                 "risk_score": case.risk_score,

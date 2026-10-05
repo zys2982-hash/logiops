@@ -1621,6 +1621,9 @@ class ExceptionService:
             "type": case.type,
             # 当前问题（按风险因子实时推导）：界面显示用这个，type 只是建单原因
             "current_type": eta_flow.current_case_type(case),
+            # 当前风险：已结束的单 → LOW / 0 分（历史等级仍由 level / risk_score 存档给"历史判定"卡片）
+            "current_level": eta_flow.current_case_risk(case)[0],
+            "current_risk_score": eta_flow.current_case_risk(case)[1],
             "level": case.level,
             "status": case.status,
             "detected_by": case.detected_by,

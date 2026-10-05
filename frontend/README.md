@@ -69,7 +69,7 @@ corepack pnpm preview
 | `/dashboard` | 总览 | 6 张统计卡 + 近 7 天异常/违约趋势 + 高风险异常 Top5（`risk_score desc`） |
 | `/orders` | 订单列表 | 订单号/状态/客户筛选 + 分页 |
 | `/orders/:id` | 订单详情 | 订单与 SLA 快照、轨迹时间线、派车（`order.manage`）、录入轨迹（`tracking.write`，写入后触发 ETA 重算与异常检测）、关联异常 |
-| `/exceptions` | 异常中心 | 列：订单号/客户/异常/等级/SLA 影响/状态/更新时间；搜索、状态/等级/SLA 筛选、排序（默认风险分倒序）、分页、手工建单（`exception.create`） |
+| `/exceptions` | 异常中心 | 列：订单号/客户/等级/SLA 影响/状态/更新时间（不展示异常类型列；「等级」= **当前风险**，已解决/已关闭显示 0）；搜索、状态/等级/SLA 筛选、排序（默认风险分倒序）、分页、手工建单（`exception.create`，**不选类型**） |
 | `/exceptions/:id` | **异常详情（门面）** | 三列布局，见 §3 |
 | `/customers` `/carriers` `/vehicles` `/drivers` `/sla-rules` | 主数据 CRUD | 只有对应 `*.manage` 权限才渲染新增/编辑按钮，否则整列显示只读 |
 | `/knowledge` | 知识库 | 文档与分片浏览、分片内搜索、重建索引（`knowledge.manage`） |

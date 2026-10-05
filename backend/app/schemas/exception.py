@@ -150,6 +150,8 @@ class ExceptionOut(BaseModel):
     carrier_id: int | None = None
     type: str | None = None
     current_type: str | None = None
+    current_level: str | None = None
+    current_risk_score: int | None = None
     level: str | None = None
     status: str | None = None
     detected_by: str | None = None

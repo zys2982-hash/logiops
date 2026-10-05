@@ -100,6 +100,14 @@ def test_current_type_follows_reality_not_origin(client, bootstrap, operator_hea
     )
     assert closed.status_code == 200, closed.text
     assert closed.json()["current_type"] == "VEHICLE_BREAKDOWN", "已结束的单不再实时推导"
+    # 已关闭 → 当前风险 0（列表「等级」列显示的就是它；历史等级仍在 level / risk_score 存档里）
+    assert closed.json()["current_risk_score"] == 0
+    assert closed.json()["current_level"] == "LOW"
+    assert closed.json()["level"] == "CRITICAL", "历史等级保留（详情页『历史判定』卡片要用）"
+
+    listed = client.get(EXCEPTIONS, headers=operator_headers, params={"page_size": 50}).json()["items"]
+    row = next(item for item in listed if item["id"] == created["id"])
+    assert row["current_risk_score"] == 0 and row["current_level"] == "LOW"
 
 
 def test_manual_create_without_vehicle_infers_delay_origin(

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import RiskTag from './RiskTag.vue'
 import { formatDateTime, formatDelay } from '@/utils/datetime'
-import { customerLevelLabel, exceptionStatusLabel, exceptionStatusType, exceptionTypeLabel, formatNumber } from '@/utils/format'
+import { customerLevelLabel, exceptionStatusLabel, exceptionStatusType, formatNumber } from '@/utils/format'
 import type { ExceptionListItem } from '@/types'
 
 defineProps<{
@@ -22,6 +22,11 @@ function levelText(row: ExceptionListItem): string {
 /** 二级说明：客户等级 + 车牌（两者都没有时显示占位） */
 function subText(row: ExceptionListItem): string {
   return [levelText(row), row.vehicle_plate].filter((v) => v).join(' · ') || '—'
+}
+
+/** 已结束（已解决 / 已关闭）：没有"当前风险"，等级列显示 0 */
+function isEnded(status?: string | null): boolean {
+  return status === 'RESOLVED' || status === 'CLOSED'
 }
 </script>
 
@@ -50,15 +55,15 @@ function subText(row: ExceptionListItem): string {
         <div class="u-text-muted">{{ subText(row) }}</div>
       </template>
     </el-table-column>
-    <el-table-column label="异常" min-width="140">
-      <template #default="{ row }">
-        <el-tag size="small" effect="plain">{{ exceptionTypeLabel(row.current_type ?? row.type) }}</el-tag>
-        <div class="u-text-muted">{{ row.detection_rule ?? '—' }}</div>
-      </template>
-    </el-table-column>
     <el-table-column label="等级" width="110" align="center">
       <template #default="{ row }">
-        <RiskTag :level="row.level" :score="row.risk_score" show-score />
+        <!-- 「等级」列显示**当前风险**：已解决/已关闭的单没有当前风险 → 无风险 · 0 分 -->
+        <RiskTag
+          :level="row.current_level ?? row.level"
+          :score="row.current_risk_score ?? row.risk_score"
+          :ended="isEnded(row.status)"
+          show-score
+        />
       </template>
     </el-table-column>
     <el-table-column label="SLA 影响" min-width="150">
