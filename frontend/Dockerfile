@@ -27,7 +27,9 @@ RUN corepack enable 2>/dev/null || npm install -g corepack
 WORKDIR /app
 
 # 仅先拷贝清单文件，让依赖层可缓存
-COPY package.json pnpm-lock.yaml* .npmrc* ./
+# ⚠️ 必须带上 pnpm-workspace.yaml：pnpm 12 的构建脚本白名单（allowBuilds: esbuild / vue-demi）
+#    在这里读，缺了它 pnpm 会以 ERR_PNPM_IGNORED_BUILDS 直接失败
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml .npmrc* ./
 
 # --frozen-lockfile 优先（可复现）；无 lock 文件时回退，避免首次构建直接失败
 # 注：镜像站是原样透传，lockfile 里的 integrity 校验依然通过
