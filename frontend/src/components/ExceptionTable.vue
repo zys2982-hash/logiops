@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import RiskTag from './RiskTag.vue'
-import { formatDateTime, formatDelay } from '@/utils/datetime'
-import { customerLevelLabel, exceptionStatusLabel, exceptionStatusType, formatNumber } from '@/utils/format'
+import { formatDateTime } from '@/utils/datetime'
+import {
+  customerLevelLabel,
+  exceptionStatusLabel,
+  exceptionStatusType,
+  exceptionTypeLabel,
+  formatNumber,
+} from '@/utils/format'
 import type { ExceptionListItem } from '@/types'
 
 defineProps<{
@@ -27,11 +33,6 @@ function subText(row: ExceptionListItem): string {
 /** 已结束（已解决 / 已关闭）：没有"当前风险"，等级列显示 0 */
 function isEnded(status?: string | null): boolean {
   return status === 'RESOLVED' || status === 'CLOSED'
-}
-
-/** 只有延误单有 SLA 影响（车辆故障单不做 SLA 判定） */
-function isDelayCase(row: ExceptionListItem): boolean {
-  return String(row.current_type ?? row.type ?? '') === 'DELAY_RISK'
 }
 </script>
 
@@ -71,15 +72,12 @@ function isDelayCase(row: ExceptionListItem): boolean {
         />
       </template>
     </el-table-column>
-    <el-table-column label="SLA 影响" min-width="150">
+    <el-table-column label="异常类别" width="120" align="center">
       <template #default="{ row }">
-        <!-- 只有延误单有 SLA 影响：车辆故障单不做 SLA 判定（2026-10-05 口径） -->
-        <template v-if="isDelayCase(row)">
-          <el-tag v-if="row.sla_breached" size="small" type="danger" effect="dark">已违约</el-tag>
-          <el-tag v-else size="small" type="info" effect="plain">未违约</el-tag>
-          <div class="u-text-muted">{{ formatDelay(row.sla_delay_minutes) }}</div>
-        </template>
-        <span v-else class="u-text-muted">—</span>
+        <!-- 2026-10-06：列表把「SLA 影响」换成「异常类别」。与全局口径一致，显示**当前问题**：
+             未结束的单按风险因子实时推导（车修好了就会变成延误风险）；已结束的沿用建单原因。
+             SLA 影响（承诺/实际/延误）在异常详情的 SLA 卡里看。 -->
+        <el-tag size="small" effect="plain">{{ exceptionTypeLabel(row.current_type ?? row.type) }}</el-tag>
       </template>
     </el-table-column>
     <el-table-column label="状态" width="110" align="center">
