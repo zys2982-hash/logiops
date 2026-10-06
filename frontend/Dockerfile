@@ -4,7 +4,7 @@
 # 构建（构建上下文必须是 frontend/）：
 #     docker build -t logiops-frontend:local frontend
 #     # 或从仓库根目录：docker compose build frontend
-# 运行：容器 80 端口对外映射为 5173，/api 反向代理到 compose 服务名 backend:8000
+# 运行：容器 80 端口由 compose 映射到宿主机（默认 WEB_PORT=80），/api 反向代理到 compose 服务名 backend:8000
 #
 # ⚠️ 本机未安装 Docker（基线附录 D），本文件**未实际构建验证**。
 # 前置：仓库里需要有 pnpm-lock.yaml（在 frontend/ 下执行一次 `corepack pnpm install` 会生成）；
@@ -16,23 +16,23 @@
 # ---------------------------------------------------------------------------
 FROM node:24-alpine AS builder
 
-# corepack 由 Node 自带，用来固定 packageManager 声明的 pnpm 版本
-RUN corepack enable
+# 国内网络：npm / pnpm 都走 npmmirror
+# （要官方源：docker compose build --build-arg NPM_REGISTRY=https://registry.npmjs.org）
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ENV NPM_CONFIG_REGISTRY=${NPM_REGISTRY}
+
+# corepack 由 Node 24 自带（Node 25+ 已移除）——万一没有就现装一个，用它固定 pnpm 版本
+RUN corepack enable 2>/dev/null || npm install -g corepack
 
 WORKDIR /app
 
 # 仅先拷贝清单文件，让依赖层可缓存
 COPY package.json pnpm-lock.yaml* .npmrc* ./
 
-# 国内网络：默认走 npmmirror（实测 registry.npmjs.org 直连很慢/易超时）。
-# 想用官方源：docker compose build --build-arg NPM_REGISTRY=https://registry.npmjs.org
-ARG NPM_REGISTRY=https://registry.npmmirror.com
-
 # --frozen-lockfile 优先（可复现）；无 lock 文件时回退，避免首次构建直接失败
 # 注：镜像站是原样透传，lockfile 里的 integrity 校验依然通过
-RUN corepack pnpm config set registry "$NPM_REGISTRY" \
- && (corepack pnpm install --frozen-lockfile \
-     || corepack pnpm install --no-frozen-lockfile)
+RUN corepack pnpm install --frozen-lockfile --registry="$NPM_REGISTRY" \
+    || corepack pnpm install --no-frozen-lockfile --registry="$NPM_REGISTRY"
 
 # 拷贝源码后构建（Vite 6 产物默认在 dist/）
 COPY . .
