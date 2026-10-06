@@ -7,7 +7,14 @@ import ExceptionTable from '@/components/ExceptionTable.vue'
 import PanelCard from '@/components/PanelCard.vue'
 import { exceptionApi, orderApi } from '@/api'
 import { Perm } from '@/types'
-import type { ExceptionLevel, ExceptionListItem, ExceptionStatus, OrderBrief, Page } from '@/types'
+import type {
+  ExceptionLevel,
+  ExceptionListItem,
+  ExceptionStatus,
+  ExceptionType,
+  OrderBrief,
+  Page,
+} from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useDemoStore } from '@/stores/demo'
 import { businessNowText, displayIsoToUtc } from '@/utils/datetime'
@@ -50,10 +57,23 @@ const creating = ref(false)
 const orderOptions = ref<OrderBrief[]>([])
 const createForm = reactive({
   order_id: null as number | null,
-  level: 'MEDIUM' as ExceptionLevel,
+  type: 'VEHICLE_BREAKDOWN' as ExceptionType,
   occurred_at: '',
   note: '',
 })
+
+/** 手工建单可选的两个异常类型（2026-10-06 用户口径：手工建单可以选类型） */
+const EXCEPTION_TYPE_OPTIONS: { value: ExceptionType; label: string }[] = [
+  { value: 'VEHICLE_BREAKDOWN', label: '车辆故障' },
+  { value: 'DELAY_RISK', label: '延误风险' },
+]
+
+/** 选订单时给个合理默认：有车 → 车辆故障；没车 → 延误风险（车辆故障要挂在车上，后端也会按现场推） */
+function onOrderChange(): void {
+  const target = orderOptions.value.find((order) => order.id === createForm.order_id)
+  if (!target) return
+  createForm.type = target.vehicle_id ? 'VEHICLE_BREAKDOWN' : 'DELAY_RISK'
+}
 
 async function load(): Promise<void> {
   loading.value = true
@@ -132,10 +152,9 @@ async function submitCreate(): Promise<void> {
     }
     const created = await exceptionApi.createException({
       order_id: createForm.order_id,
-      // 不传 type：异常单的问题会实时变化，类型不作为录入项；
-      // 后端按订单现场推"建单原因"，界面显示的「当前问题」按风险因子实时推导
-      // 指定等级仅 ADMIN 可用（后端强制）；非 ADMIN 不传，由规则算等级
-      level: canForceClose.value ? createForm.level : undefined,
+      // 用户口径 2026-10-06：手工建单**可以选异常类型**（车辆故障 / 延误风险）；
+      // 等级不再作为录入项 —— 一律按规则算，与异常中心「等级」列显示的当前风险同源。
+      type: createForm.type,
       occurred_at: occurredAt,
       note: createForm.note.trim(),
     })
@@ -242,18 +261,24 @@ onMounted(load)
       </div>
     </PanelCard>
 
-    <el-dialog v-model="createVisible" title="手工建单（MANUAL，ADMIN+）" width="520px">
+    <el-dialog v-model="createVisible" title="手工建单（MANUAL）" width="520px">
       <el-alert
         type="info"
         :closable="false"
         show-icon
         class="u-mb-8"
-        title="不需要选异常类型"
-        description="一张异常单的问题是实时变化的（车辆修好、只剩延误/违约都会被自动重算），所以类型不作为录入项：系统按风险因子实时推导「当前问题」。"
+        title="选择异常类型；等级不用选"
+        description="车辆故障＝路上坏了（会挂到该订单的车辆上）；延误风险一般是订单送达时按「实际送达 − 承诺送达」自动判定生成的，手工建只用于补录/纠错。等级一律按规则算，与列表「等级」列显示的当前风险同源。"
       />
       <el-form label-width="90px">
         <el-form-item label="订单">
-          <el-select v-model="createForm.order_id" filterable placeholder="选择订单" style="width: 100%">
+          <el-select
+            v-model="createForm.order_id"
+            filterable
+            placeholder="选择订单"
+            style="width: 100%"
+            @change="onOrderChange"
+          >
             <el-option
               v-for="order in orderOptions"
               :key="order.id"
@@ -262,9 +287,14 @@ onMounted(load)
             />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="canForceClose" label="等级">
-          <el-select v-model="createForm.level" style="width: 100%">
-            <el-option v-for="option in LEVEL_OPTIONS" :key="option.value" :label="option.label" :value="option.value" />
+        <el-form-item label="异常类型">
+          <el-select v-model="createForm.type" style="width: 100%">
+            <el-option
+              v-for="option in EXCEPTION_TYPE_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
           </el-select>
         </el-form-item>
         <el-form-item label="发生时间">
