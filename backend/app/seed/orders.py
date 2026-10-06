@@ -108,7 +108,7 @@ def _customer_for(index: int, rng: random.Random, customers: list[Customer]) -> 
     if index == 24:
         return next(customer for customer in customers if customer.code == "NORM-04")
     if index in {25, 26, 27, 28, 29}:
-        codes = {25: "VIP-03", 26: "VIP-01", 27: "NORM-01", 28: "SVIP-01", 29: "NORM-03"}
+        codes = {25: "VIP-03", 26: "VIP-01", 27: "NORM-01", 28: "VIP-04", 29: "NORM-03"}
         return next(customer for customer in customers if customer.code == codes[index])
     # 权重：NORMAL 多、VIP 少
     weighted: list[Customer] = []

@@ -21,7 +21,7 @@ SEED_USERS: list[dict[str, str]] = [
     {"email": "viewer@logiops.dev", "name": "访客", "role": "VIEWER", "phone": "13800000104"},
 ]
 
-# --- 客户（12 个：NORMAL 8 / VIP 3 / SVIP 1） ---------------------------------
+# --- 客户（12 个：NORMAL 8 / VIP 4；2026-10-06 起不再有 SVIP 客户） ------------
 SEED_CUSTOMERS: list[dict[str, Any]] = [
     {
         "code": "VIP-01", "name": "远洋集团", "level": "VIP",
@@ -68,7 +68,7 @@ SEED_CUSTOMERS: list[dict[str, Any]] = [
         "contact_name": "林经理", "phone": "13800000011", "email": "lin@lingnan.example.com",
     },
     {
-        "code": "SVIP-01", "name": "亚太供应链", "level": "SVIP",
+        "code": "VIP-04", "name": "亚太供应链", "level": "VIP",
         "contact_name": "秦总", "phone": "13800000012", "email": "qin@yatai.example.com",
     },
 ]

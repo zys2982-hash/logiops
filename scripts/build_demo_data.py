@@ -116,12 +116,16 @@ def main() -> int:
         check(True, f"车辆卫生：把 {len(fixed)} 台仍在「在途/维修中」的车归位到空闲 {fixed}")
 
         customer_list = c.get("/customers", headers=h, params={"page_size": 50}).json()["items"]
-        # 按客户等级挑三个代表（风险分里客户等级是唯一"放大项"：VIP +1 / SVIP +2）
+        # 按客户等级挑三个代表（风险分里客户等级是唯一"放大项"：VIP +1；2026-10-06 起没有 SVIP 客户）
         by_level: dict[str, dict] = {}
         for item in customer_list:
             by_level.setdefault(str(item.get("level")), item)
         vip = by_level.get("VIP") or customer_list[0]
-        svip = by_level.get("SVIP") or vip
+        # 第 4 张单原来用 SVIP 客户；SVIP 已取消 → 用"另一个 VIP 客户"（没有再复用同一个）
+        vip2 = next(
+            (item for item in customer_list if str(item.get("level")) == "VIP" and item["id"] != vip["id"]),
+            vip,
+        )
         normal = by_level.get("NORMAL") or customer_list[-1]
         free_vehicles = [
             v
@@ -242,15 +246,15 @@ def main() -> int:
             f"O3 {o3['order_no']} 车辆故障单 = 车辆故障1 + VIP1 = 2 分 {case3['level']}，且无 SLA 影响（{pools[1]['plate_no']} 维修中）",
         )
 
-        # ---------------- 订单 4：在途 + 车辆故障（待确认；SVIP → 1+2 = 3 分 HIGH） ----------------
-        o4 = create_order(svip, "北京", "郑州", 690, "化工原料 20 吨", minutes_ago=420)
+        # ---------------- 订单 4：在途 + 车辆故障（待确认；VIP → 1+1 = 2 分 MEDIUM） ----------------
+        o4 = create_order(vip2, "北京", "郑州", 690, "化工原料 20 吨", minutes_ago=420)
         o4 = dispatch(o4, pools[2]["plate_no"], minutes_ago=390)
         track(o4["id"], "DEPART", "北京", 360, speed=55)
         track(o4["id"], "NOTE", "石家庄", 180, speed=48, address="京港澳高速石家庄段")
         case4 = create_case(o4["id"], "VEHICLE_BREAKDOWN", 180, "传动轴异响，服务区检修中")
         check(
-            case4["status"] == "DETECTED" and int(case4["risk_score"]) == 3 and case4["level"] == "HIGH",
-            f"O4 {o4['order_no']} 车辆故障单（{o4['customer_level']}）= 1+2 = 3 分 HIGH，待确认",
+            case4["status"] == "DETECTED" and int(case4["risk_score"]) == 2 and case4["level"] == "MEDIUM",
+            f"O4 {o4['order_no']} 车辆故障单（{o4['customer_level']}）= 1+1 = 2 分 MEDIUM，待确认",
         )
 
         # ---------------- 订单 5：已送达**超时** → 自动建延误单（VIP，实际延误 400min → 4 分 CRITICAL） ----------------

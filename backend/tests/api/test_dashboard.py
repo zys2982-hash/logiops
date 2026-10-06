@@ -177,9 +177,10 @@ def test_seed_master_data_snapshot(client, db_session, bootstrap):
     seed_workspace(db_session, bootstrap)
     workspace_id = bootstrap["workspace_id"]
     customers = list(db_session.scalars(select(Customer).where(Customer.workspace_id == workspace_id)))
-    assert {item.code for item in customers} >= {"VIP-01", "NORM-01", "SVIP-01"}
-    assert sum(1 for item in customers if item.level == "VIP") == 3
-    assert sum(1 for item in customers if item.level == "SVIP") == 1
+    assert {item.code for item in customers} >= {"VIP-01", "NORM-01", "VIP-04"}
+    # 2026-10-06：唯一的 SVIP 客户（亚太供应链）已改成 VIP → 没有 SVIP 客户
+    assert sum(1 for item in customers if item.level == "VIP") == 4
+    assert sum(1 for item in customers if item.level == "SVIP") == 0
     assert next(item for item in customers if item.code == "VIP-01").name == "远洋集团"
     assert next(item for item in customers if item.code == "NORM-01").name == "华北贸易"
 

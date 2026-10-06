@@ -61,6 +61,7 @@ CASE_A_RECOVERY_LOCAL_HOUR = 20
 # 2026-10-05 新风险模型：车辆故障单 = 车辆故障 1 + 客户等级；延误单 = 延误档位 1/2/3 + 客户等级
 # （建单前提已是违约，不再加"违约 1"）。所以期望等级按新公式重算：
 #   车辆单 → 1 + (NORM 0 / VIP 1 / SVIP 2) = 1~3；延误单 → 档位 + 客户等级（封顶 4）
+#   （2026-10-06 起演示数据里没有 SVIP 客户：原 SVIP-01「亚太供应链」已改成 VIP-04）
 GENERIC_BANDS: list[dict[str, Any]] = [
     {"level": "MEDIUM", "code": "NORM-01", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 0},
     {"level": "MEDIUM", "code": "NORM-02", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 0},
@@ -70,7 +71,7 @@ GENERIC_BANDS: list[dict[str, Any]] = [
     {"level": "HIGH", "code": "NORM-06", "case_type": ExceptionType.DELAY_RISK, "delay": 400},
     {"level": "MEDIUM", "code": "VIP-02", "case_type": ExceptionType.VEHICLE_BREAKDOWN, "delay": 0},
     {"level": "CRITICAL", "code": "VIP-03", "case_type": ExceptionType.DELAY_RISK, "delay": 400},
-    {"level": "HIGH", "code": "SVIP-01", "case_type": ExceptionType.DELAY_RISK, "delay": 45},
+    {"level": "MEDIUM", "code": "VIP-04", "case_type": ExceptionType.DELAY_RISK, "delay": 45},
     {"level": "CRITICAL", "code": "VIP-01", "case_type": ExceptionType.DELAY_RISK, "delay": 400},
 ]
 GENERIC_STATUS_CYCLE: list[str] = [
@@ -837,7 +838,7 @@ def build_case_e(ctx: SeedContext) -> list[ExceptionCase]:
         (25, "VIP-03", ExceptionType.VEHICLE_BREAKDOWN, 0, ExceptionStatus.PROCESSING, "MEDIUM"),
         (26, "VIP-01", ExceptionType.DELAY_RISK, 400, ExceptionStatus.PROCESSING, "CRITICAL"),
         (27, "NORM-01", ExceptionType.DELAY_RISK, 200, ExceptionStatus.DETECTED, "MEDIUM"),
-        (28, "SVIP-01", ExceptionType.DELAY_RISK, 45, ExceptionStatus.RESOLVED, "HIGH"),
+        (28, "VIP-04", ExceptionType.DELAY_RISK, 45, ExceptionStatus.RESOLVED, "MEDIUM"),
         (29, "NORM-03", ExceptionType.VEHICLE_BREAKDOWN, 0, ExceptionStatus.CLOSED, "MEDIUM"),
     ]
     cases: list[ExceptionCase] = []
