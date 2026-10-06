@@ -541,7 +541,9 @@ onMounted(async () => {
       <el-card shadow="never" class="page-card u-mb-12">
         <div class="detail-head">
           <div class="detail-head-main">
-            <h3>{{ displayOrderNo }}</h3>
+            <!-- 最大的编号是**异常单号**（EX…）：点开异常详情时它是主角；
+                 运输订单号在下面「订单信息」卡片里，不在这里重复（用户反馈 2026-10-06）。 -->
+            <h3>{{ exception.case_no }}</h3>
             <el-tag effect="plain">{{ exceptionTypeLabel(exception.current_type ?? exception.type) }}</el-tag>
             <el-tooltip
               v-if="exception.current_type && exception.current_type !== exception.type"
@@ -555,7 +557,6 @@ onMounted(async () => {
             <el-tag v-if="exception.sla_breached" type="danger" effect="dark">SLA 违约 {{ formatDelay(exception.sla_delay_minutes) }}</el-tag>
             <el-tag v-else type="info" effect="plain">{{ formatDelay(exception.sla_delay_minutes) }}</el-tag>
             <span class="u-text-muted">处理人：{{ assigneeName }}</span>
-            <span class="u-text-muted">异常编号 {{ exception.case_no }}</span>
             <span v-if="exception.merged_count" class="u-text-muted">合并 {{ formatNumber(exception.merged_count) }} 次</span>
           </div>
           <div class="detail-head-actions">
@@ -596,7 +597,7 @@ onMounted(async () => {
       <div class="detail-grid">
         <!-- 左列：事实 -->
         <div class="detail-col">
-          <PanelCard title="订单信息" :subtitle="exception.case_no" icon="Van">
+          <PanelCard title="订单信息" icon="Van">
             <el-descriptions :column="2" size="small" border>
               <el-descriptions-item label="订单号">{{ displayOrderNo }}</el-descriptions-item>
               <el-descriptions-item label="状态">{{ exception.order?.status ?? '—' }}</el-descriptions-item>
