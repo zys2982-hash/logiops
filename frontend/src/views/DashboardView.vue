@@ -117,10 +117,11 @@ onMounted(load)
             empty-text="当前没有待处置异常（待确认 / 处理中）"
             @row-click="(row: DashboardExceptionBrief) => router.push(`/exceptions/${row.id}`)"
           >
-            <el-table-column label="异常编号" min-width="150">
+            <el-table-column label="异常单号" min-width="170">
               <template #default="{ row }">
                 <b class="u-mono">{{ row.case_no }}</b>
-                <div class="u-text-muted">
+                <div class="order-sub">
+                  <span class="u-text-muted">订单 </span>
                   <router-link :to="`/orders/${row.order_id}`" class="order-link" @click.stop>
                     {{ row.order_no ?? `#${row.order_id}` }}
                   </router-link>
@@ -183,6 +184,20 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 待处置异常表：副行＝这张异常对应的运输订单号（可点 → 订单详情） */
+.order-sub {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.order-link {
+  color: #6b7280;
+  text-decoration: none;
+}
+.order-link:hover {
+  color: #2f6fed;
+  text-decoration: underline;
+}
+
 .stat-card {
   display: flex;
   align-items: center;

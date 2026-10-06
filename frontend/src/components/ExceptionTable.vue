@@ -47,12 +47,19 @@ function isEnded(status?: string | null): boolean {
     :empty-text="emptyText ?? '暂无异常数据'"
     @row-click="(row: ExceptionListItem) => emit('row-click', row)"
   >
-    <el-table-column label="订单号" min-width="150">
+    <el-table-column label="异常单号" min-width="170">
       <template #default="{ row }">
-        <router-link :to="`/orders/${row.order_id}`" class="order-link" @click.stop>
-          {{ row.order_no ?? `#${row.order_id}` }}
+        <!-- 主行＝**异常单号**（点它进异常详情）；副行＝这张异常挂在哪张**运输订单**上。
+             原来是反的（蓝字给订单号、灰字给异常号），第一次看的人会分不清（用户反馈 2026-10-06）。 -->
+        <router-link :to="`/exceptions/${row.id}`" class="case-link" @click.stop>
+          {{ row.case_no }}
         </router-link>
-        <div class="u-text-muted u-mono">{{ row.case_no }}</div>
+        <div class="order-sub">
+          <span class="u-text-muted">订单 </span>
+          <router-link :to="`/orders/${row.order_id}`" class="order-link" @click.stop>
+            {{ row.order_no ?? `#${row.order_id}` }}
+          </router-link>
+        </div>
       </template>
     </el-table-column>
     <el-table-column label="客户" min-width="150">
@@ -102,9 +109,24 @@ function isEnded(status?: string | null): boolean {
 </template>
 
 <style scoped>
-.order-link {
+/* 主行：异常单号（可点 → 异常详情） */
+.case-link {
   color: #2f6fed;
   text-decoration: none;
   font-weight: 600;
+}
+
+/* 副行：这张异常对应的运输订单号（可点 → 订单详情） */
+.order-sub {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.order-link {
+  color: #6b7280;
+  text-decoration: none;
+}
+.order-link:hover {
+  color: #2f6fed;
+  text-decoration: underline;
 }
 </style>
