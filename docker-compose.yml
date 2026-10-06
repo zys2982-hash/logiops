@@ -35,11 +35,12 @@ services:
       # MySQL 8 默认 caching_sha2_password；PyMySQL 需 cryptography（后端依赖已含）
       - --default-authentication-plugin=caching_sha2_password
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      # 首次初始化时自动建 logiops 库与 logiops 账号（云上请用强口令：根目录 .env 里设 MYSQL_PASSWORD）
+      # 云上务必在根目录 .env 里设置（缺了 compose 会直接报错，不会静默用弱口令）
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD in .env}
+      # 首次初始化时自动建 logiops 库与 logiops 账号
       MYSQL_DATABASE: logiops
       MYSQL_USER: logiops
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-logiops}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
     ports:
       # 只绑本机：容器之间走 docker 网络，不需要把数据库暴露到公网
       - "127.0.0.1:${MYSQL_PORT:-3307}:3306"
@@ -73,10 +74,12 @@ services:
     environment:
       APP_ENV: ${APP_ENV:-local}
       # 容器内用服务名 mysql，不用 127.0.0.1:3307
-      DATABASE_URL: mysql+pymysql://logiops:${MYSQL_PASSWORD:-logiops}@mysql:3306/logiops?charset=utf8mb4
-      TEST_DATABASE_URL: mysql+pymysql://logiops:${MYSQL_PASSWORD:-logiops}@mysql:3306/logiops_test?charset=utf8mb4
-      # 云上务必换成随机串：openssl rand -hex 32
-      SECRET_KEY: ${SECRET_KEY:-dev-only-change-me}
+      DATABASE_URL: mysql+pymysql://logiops:${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}@mysql:3306/logiops?charset=utf8mb4
+      TEST_DATABASE_URL: mysql+pymysql://logiops:${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}@mysql:3306/logiops_test?charset=utf8mb4
+      # 云上务必换成随机串：openssl rand -hex 32（缺了 compose 直接报错）
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      # 演示账号口令：仓库是公开的，默认值等于公开口令 —— 云上在 .env 里设强口令后重新 seed
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo@12345}
       # 云上填你的站点地址，例如 http://1.2.3.4 或 https://demo.example.com（同源部署时其实用不到，填上更稳）
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
       # 时钟：真实时间（现行口径）；演示虚拟时钟的 replay 保留给测试/验收

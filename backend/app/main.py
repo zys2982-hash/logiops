@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import FastAPI, Request
@@ -18,6 +19,21 @@ from app.core.logging import setup_logging
 
 setup_logging()
 settings = get_settings()
+
+# 部署到公网最容易被忽略的一步：SECRET_KEY 忘了换（本仓库是公开的，默认值人尽皆知）。
+# 这里只在启动日志里**显式告警**，不阻断启动（本地开发仍开箱即用）。
+DEFAULT_SECRET_KEYS = {
+    "",
+    "dev-only-change-me",
+    "local-dev-secret-change-me",
+    "ci-only-not-a-secret",
+    "local-dev-secret-change-me-in-real-deployments",
+}
+if settings.secret_key in DEFAULT_SECRET_KEYS:
+    logging.getLogger("logiops.security").warning(
+        "SECRET_KEY 仍是默认/弱值：部署到公网前请在 .env 里换成随机串"
+        "（openssl rand -hex 32 或跑 scripts/deploy-env.sh），否则任何人都能伪造登录令牌"
+    )
 
 app = FastAPI(
     title="LogiOps 物流异常协同平台 API",

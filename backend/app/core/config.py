@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     demo_random_seed: int = 20260930
     # 演示数据规模：compact（默认，3 单，每种异常类型一单）| full（1000 单完整规模）
     seed_scale: str = "compact"
+    # 演示账号（owner/admin/operator/viewer）的口令，seed 建号时用它哈希入库。
+    # ⚠️ 本仓库是**公开**的，所以这个默认值等于公开口令：部署到公网务必在服务器 .env 里
+    #    设 DEMO_PASSWORD=<强口令>（scripts/deploy-env.sh 会自动生成），然后重新 seed。
+    demo_password: str = "Demo@12345"
     # AI 分析限流窗口（秒，按"工作区+用户"计；0 = 关闭）。基线 §10 承诺 1 次/5 秒 → 429 RATE_LIMITED
     rate_limit_ai_analyze_seconds: float = 5.0
     # AI 总开关（默认 **关闭**）：项目拥有者决定先停掉全部 AI 逻辑，后续重建。

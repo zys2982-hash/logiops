@@ -121,7 +121,8 @@ def _ensure_workspace(session: Session, workspace_id: int | None) -> Workspace:
 
 def _upsert_users(ctx: SeedContext) -> None:
     session, workspace = ctx.session, ctx.workspace
-    password_hash = hash_password(catalog.DEMO_PASSWORD)
+    # 口令可被环境变量覆盖（部署到公网时用强口令）：DEMO_PASSWORD=<强口令>
+    password_hash = hash_password(get_settings().demo_password or catalog.DEMO_PASSWORD)
     for spec in catalog.SEED_USERS:
         user = session.scalars(select(User).where(User.email == spec["email"])).first()
         if user is None:
