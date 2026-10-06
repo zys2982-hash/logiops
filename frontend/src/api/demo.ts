@@ -6,12 +6,12 @@ export function getDemoState(): Promise<DemoState> {
   return get<DemoState>('/demo/state')
 }
 
-/** POST /demo/actions/tick {minutes} 推进时钟（触发 ETA 重算/检测/自动关闭） */
+/** POST /demo/actions/tick {minutes} 推进时钟（触发 ETA 重算/检测；不自动收口异常） */
 export function demoTick(minutes: number): Promise<DemoTickResult> {
   return post<DemoTickResult>('/demo/actions/tick', { minutes })
 }
 
-/** POST /demo/actions/advance-to-less 一步推到“送达并自动关闭” */
+/** POST /demo/actions/advance-to-less 一步推到“送达”，并按人工起点显式关闭目标异常 */
 export function demoAdvanceToLess(): Promise<DemoTickResult> {
   return post<DemoTickResult>('/demo/actions/advance-to-less')
 }

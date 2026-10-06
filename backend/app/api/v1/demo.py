@@ -336,11 +336,22 @@ def demo_reset(ctx: ContextDep, payload: ResetRequest) -> dict:
     return {"reset": True, "scenario": payload.scenario, "scale": summary.get("seed_scale"), "summary": summary}
 
 
-@router.post("/actions/advance-to-less", summary="推进到主案例送达（仅 CLOCK_MODE=replay）")
+@router.post("/actions/advance-to-less", summary="推进到主案例送达并显式收口目标异常（仅 CLOCK_MODE=replay）")
 def demo_advance(ctx: ContextDep) -> dict:
+    """演示页「推进到送达并关闭」：推进时钟到送达，然后**以人工起点**关掉目标异常。
+
+    2026-10-06 起异常不再随送达 / 超时自动收口；这里是按钮显式要求的一次性收口
+    （close_target=True，审计 actor = 当前用户），不是隐式自动关闭。
+    """
     from app.services.tick import advance_until_delivered
 
     _reject_when_real_clock("推进到送达（advance-to-less，依赖虚拟时钟跳跃）")
-    result = advance_until_delivered(ctx.session, ctx.repos, workspace_id=ctx.workspace_id)
+    result = advance_until_delivered(
+        ctx.session,
+        ctx.repos,
+        workspace_id=ctx.workspace_id,
+        close_target=True,
+        actor_id=ctx.user.id,
+    )
     ctx.audit("demo.advance_to_delivered", resource_type="workspace", resource_id=ctx.workspace_id, after=result)
     return {"offset_minutes": clock_state.offset_minutes, "now_utc": now_utc().isoformat(), **result}

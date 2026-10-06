@@ -221,7 +221,8 @@ class ExceptionService:
         （非 REPAIRING）转交给那张仍打开的单子，等它结束时再恢复——否则后结束的单子只
         知道自己录入时车辆已是 REPAIRING，会把车辆永久留在维修中（津A·12345 卡住的那个问题）。
         车辆当前不是 REPAIRING（例如轨迹 REPAIR_END 已改过）或原本就是 REPAIRING 时不覆盖，
-        免得把别的流程写的状态改错。边界：非车辆故障类型 / 本单没驱动过车辆状态直接返回。
+        免得把别的流程写的状态改错。订单已送达过（行程结束）时释放为 IDLE 而不是原状态。
+        边界：非车辆故障类型 / 本单没驱动过车辆状态直接返回。
         """
         if str(case.type) != str(ExceptionType.VEHICLE_BREAKDOWN) or not case.vehicle_id:
             return None
@@ -249,7 +250,12 @@ class ExceptionService:
             and status_before_release == REPAIRING_STATUS
             and origin != REPAIRING_STATUS
         ):
-            vehicle.status = origin
+            # 订单已经跑完（送达过：order.delivered_at 有值）→ 车不该回到"在途"这种原状态，
+            # 直接放回 IDLE。2026-10-06：送达不再自动收口异常，所以车在送达后可能一直挂在
+            # 维修中，直到人工点「解决 / 关闭」才走这里释放 —— 释放目标必须是 IDLE 而不是原状态。
+            order = self.repos.orders.get(case.order_id)
+            trip_finished = order is not None and order.delivered_at is not None
+            vehicle.status = str(VehicleStatus.IDLE) if trip_finished else origin
             bump_version(vehicle)
             self.repos.vehicles.save(vehicle)
             restored = True
@@ -451,11 +457,13 @@ class ExceptionService:
             if text not in {member.value for member in ExceptionLevel}:
                 raise validation_error("level 非法", fields=[{"loc": "level", "msg": text}])
 
-        existing = self.repos.exceptions.find_open_by_order(order.id)
+        # 同一订单**同一问题类型**最多一张未结束单（2026-10-06 起允许"车辆单 + 延误单"并存，
+        # 所以按类型判重；不能因为别的类型还挂着就把这张挡掉）。
+        existing = self.repos.exceptions.find_open_by_order_and_type(order.id, kind)
         if existing is not None:
             raise AppError(
                 ErrorCode.OPEN_EXCEPTION_EXISTS,
-                "该订单已有未关闭异常",
+                f"该订单已有未关闭的「{kind}」异常",
                 {"exception_id": existing.id, "case_no": existing.case_no, "status": existing.status},
             )
 
@@ -1673,28 +1681,6 @@ class ExceptionService:
             "parse_error": message.parse_error,
             "created_at": read_models.iso(message.created_at),
         }
-
-    # --- 供 tick 使用 -----------------------------------------------------
-    def auto_close_resolved(self, *, hours: int = 24, moment: datetime | None = None) -> list[int]:
-        now = to_naive_utc(moment) or now_naive()
-        threshold = now - timedelta(hours=hours)
-        closed: list[int] = []
-        for case in self.repos.exceptions.all(
-            filters=[ExceptionCase.status == str(ExceptionStatus.RESOLVED)]
-        ):
-            order = self.repos.orders.get(case.order_id)
-            delivered_at = to_naive_utc(order.delivered_at) if order else None
-            if delivered_at is not None and delivered_at <= threshold:
-                self.close(
-                    case.id,
-                    reason_code="DELIVERED",
-                    note=f"送达后 {hours} 小时自动关闭",
-                    expected_version=None,
-                    actor_id=None,
-                    system=True,
-                )
-                closed.append(case.id)
-        return closed
 
     def pending_approval_count(self, exception_id: int) -> int:
         return len(

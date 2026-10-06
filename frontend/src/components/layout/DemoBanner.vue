@@ -89,7 +89,7 @@ onMounted(() => {
       <el-tooltip
         v-else
         placement="bottom"
-        content="演示时钟：可快进 / 跳转，用于演示自动关闭与 ETA 重算；它与真实时间不同，界面上所有业务时间都取自它。"
+        content="演示时钟：可快进 / 跳转，用于演示 ETA 重算与异常检测（异常的解决/关闭仍需人工点）；它与真实时间不同，界面上所有业务时间都取自它。"
       >
         <el-tag size="small" type="warning" effect="plain">演示时钟（模拟）</el-tag>
       </el-tooltip>

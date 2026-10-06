@@ -152,8 +152,8 @@ def test_failed_approval_execution_can_be_retried(db_session, bootstrap):
         executor.retry(approval.id, actor_id=None)
 
 
-def test_run_tick_delivers_and_auto_closes(db_session, bootstrap):
-    """推进时钟：送达 → 异常 RESOLVED → 24h 后 CLOSED（DETECTED 必须人工确认，不在自动链路上）。"""
+def test_run_tick_delivers_but_never_auto_closes(db_session, bootstrap):
+    """推进时钟：只会送到，**异常绝不自动收口**（2026-10-06：解决 / 关闭只由人工点）。"""
     repos = _support.repos_for(db_session, bootstrap)
     case = _support.detected_exception(repos, bootstrap, stall_minutes=130)
     assert case.status == str(ExceptionStatus.DETECTED)
@@ -165,7 +165,7 @@ def test_run_tick_delivers_and_auto_closes(db_session, bootstrap):
     assert case.status == str(ExceptionStatus.PROCESSING)
 
     result = tick.advance_until_delivered(db_session, repos, workspace_id=bootstrap["workspace_id"])
-    assert result["stopped_reason"] == "TARGET_CLOSED", result
+    assert result["stopped_reason"] == "EXCEPTION_NEEDS_MANUAL_STEP", result
     assert result["ticks"] >= 1
     assert result["advanced_minutes"] > 0
     assert result["target_order_no"]
@@ -173,17 +173,26 @@ def test_run_tick_delivers_and_auto_closes(db_session, bootstrap):
 
     loaded = repos.exceptions.get(case.id)
     assert loaded is not None
-    assert loaded.status == str(ExceptionStatus.CLOSED)
-    assert loaded.closed_at is not None
-    assert loaded.close_reason in {"DELIVERED", "MANUAL"}
+    # 送到就停：异常还开着，等人工处置（没有 closed_at / close_reason）
+    assert loaded.status == str(ExceptionStatus.PROCESSING)
+    assert loaded.closed_at is None
+    assert loaded.resolved_at is None
     order = repos.orders.get(case.order_id)
     assert order is not None and order.status in {"DELIVERED", "CLOSED"}
 
-    # 幂等：再推一次不报错，直接返回当前状态
+    # 幂等：再推一次不报错，状态不变
     again = tick.advance_until_delivered(db_session, repos, workspace_id=bootstrap["workspace_id"])
-    assert again["stopped_reason"] in {"TARGET_CLOSED", "TARGET_DELIVERED", "ALREADY_CLOSED"}
     assert again["ticks"] == 0
-    assert again["final_exception_status"] == str(ExceptionStatus.CLOSED)
+    assert again["final_exception_status"] == str(ExceptionStatus.PROCESSING)
+
+    # 只有 close_target=True（演示按钮 = 人工起点）那次才收口
+    forced = tick.advance_until_delivered(
+        db_session, repos, workspace_id=bootstrap["workspace_id"], close_target=True
+    )
+    assert forced["stopped_reason"] == "TARGET_CLOSED", forced
+    closed = repos.exceptions.get(case.id)
+    assert closed is not None and closed.status == str(ExceptionStatus.CLOSED)
+    assert closed.closed_at is not None
 
 
 def test_run_tick_is_deterministic_for_clock_offset(db_session, bootstrap):

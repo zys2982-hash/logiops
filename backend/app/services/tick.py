@@ -9,7 +9,7 @@ POST /demo/actions/advance-to-less 内部循环 tick 直到订单送达并触发
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -29,7 +29,7 @@ from app.models.transport import Order
 from app.repositories import Repos
 from app.services import detection_flow, eta_flow
 from app.services.approvals import ApprovalExecutor
-from app.services.common import now_naive, to_naive_utc
+from app.services.common import now_naive
 from app.services.exceptions import ExceptionService
 from app.services.orders import OrderService
 
@@ -157,29 +157,26 @@ def _recalc_and_detect(repos: Repos, moved: set[int], orders: list[Order]) -> di
     return {"eta_updates": eta_updates, "exceptions_touched": sorted(set(touched))}
 
 
-def _resolve_cleared_risks(repos: Repos, orders: list[Order]) -> list[int]:
-    """§8.2：PROCESSING + 新轨迹恢复且规则判定风险解除 → RESOLVED（不产生"降级但仍挂着"的中间态）。"""
-    service = ExceptionService(repos)
-    resolved: list[int] = []
+def _refresh_open_cases(repos: Repos, orders: list[Order]) -> list[int]:
+    """在途订单的未结束异常 → 按新轨迹刷新影响与分数，**但不改状态**（用户口径 2026-10-06）。
+
+    §8.2 原来的"风险解除 → 自动 RESOLVED"已下线：解决 / 关闭只能由人工在异常页点。
+    风险真解除时单子就停在处理中、当前风险显示 0，等人工处置 —— 程序不替用户做这个决定。
+    刷新仍遵守"只升不降"（与 eta_flow 文档口径一致）：SLA 数字按事实刷新，
+    但绝不"系统悄悄把高危降级"。
+    """
+    refreshed: list[int] = []
     for order in orders:
         if str(order.status) != IN_TRANSIT:
             continue
         case = repos.exceptions.find_open_by_order(order.id)
         if case is None or str(case.status) != str(ExceptionStatus.PROCESSING):
             continue
-        # 只升不降（与 eta_flow 文档口径一致）：SLA 数字按事实刷新，但绝不"系统悄悄把高危降级"；
-        # 风险真解除时由下面的 resolve 收口，而不是留一张"降级但还挂着"的单
-        eta_flow.refresh_case_impact(repos, case, order, eta_at=order.current_eta_at, allow_downgrade=False)
-        if not bool(case.sla_breached):
-            service.resolve(
-                case.id,
-                note="新轨迹恢复，规则判定风险已解除（系统自动解除异常）",
-                expected_version=None,
-                actor_id=None,
-                system=True,
-            )
-            resolved.append(case.id)
-    return resolved
+        eta_flow.refresh_case_impact(
+            repos, case, order, eta_at=order.current_eta_at, allow_downgrade=False
+        )
+        refreshed.append(case.id)
+    return refreshed
 
 
 def run_tick(
@@ -201,11 +198,11 @@ def run_tick(
         repos, progress_step=progress_step, minutes=minutes, orders=orders
     )
     flow = _recalc_and_detect(repos, tracking["moved"], orders)
-    risk_cleared = _resolve_cleared_risks(repos, orders)
+    risk_refreshed = _refresh_open_cases(repos, orders)
     expired = ApprovalExecutor(repos).expire_stale()
 
-    exception_service = ExceptionService(repos)
-    closed_exceptions = exception_service.auto_close_resolved()
+    # 异常**不再自动收口**（用户口径 2026-10-06）：已解决 / 已关闭只能由人工点。
+    # 只保留订单侧的"送达后 24h 自动归档"——那是订单状态，不是异常状态。
     closed_orders = OrderService(repos).auto_close_delivered()
     after_count = repos.exceptions.count()
 
@@ -218,9 +215,10 @@ def run_tick(
         "eta_updates": flow["eta_updates"],
         "exceptions_touched": flow["exceptions_touched"],
         "exceptions_created": max(after_count - before_count, 0),
-        "exceptions_resolved": risk_cleared,
+        "exceptions_refreshed": risk_refreshed,
+        "exceptions_resolved": [],
         "approvals_expired": expired,
-        "exceptions_closed": closed_exceptions,
+        "exceptions_closed": [],
         "orders_closed": closed_orders,
     }
 
@@ -300,13 +298,17 @@ def advance_until_delivered(
     minutes: int = 30,
     progress_step: float | None = None,
     max_minutes: int = 72 * 60,
-    close_after_hours: int = 24,
+    close_target: bool = False,
+    actor_id: int | None = None,
 ) -> dict[str, Any]:
-    """把"门面案例"推到送达 + 异常 CLOSED（含送达后 24h 自动关闭）。
+    """把"门面案例"推到**送达**。
 
     - 未指定 target_order_id 时，锁定"未关闭异常中最早创建者"（Demo 主案例 = CASE-A）。
+    - 默认**不改变异常状态**（用户口径 2026-10-06：解决 / 关闭只由人工点）：
+      送到之后目标异常仍开着，`stopped_reason=EXCEPTION_NEEDS_MANUAL_STEP`，等人工处置。
+    - `close_target=True`：显式的一次性收口（演示页「推进到送达并关闭」按钮走这条），
+      以**人工起点**关闭目标异常并写审计（actor_id 记操作人），不做隐式自动关闭。
     - 幂等：目标已 CLOSED 时直接返回当前状态。
-    - 等维修恢复 / 等 24h 自动关闭时直接跳跃步长，避免无意义空转。
     """
     repos = repos or Repos(session, workspace_id)
     order, case = _pick_target(repos, target_order_id)
@@ -319,7 +321,6 @@ def advance_until_delivered(
     ticks = 0
     advanced = 0
     stopped_reason = "MAX_MINUTES"
-    settled_after_delivery = False
     while advanced < max_minutes:
         order = repos.orders.get(order.id)
         case = repos.exceptions.get(case.id) if case is not None else None
@@ -332,29 +333,11 @@ def advance_until_delivered(
             if case is None:
                 stopped_reason = "TARGET_DELIVERED"
                 break
-            delivered_at = to_naive_utc(order.delivered_at)
-            if not settled_after_delivery and status_now == str(OrderStatus.DELIVERED) and delivered_at:
-                # 只差"送达后 24h 自动关闭"：直接跳到截止时刻
-                deadline = delivered_at + timedelta(hours=close_after_hours, minutes=1)
-                gap = int((deadline - now_naive()).total_seconds() // 60)
-                step = max(minutes, min(gap, max_minutes - advanced))
-                if step <= 0:
-                    break
-                run_tick(
-                    session,
-                    repos,
-                    workspace_id=workspace_id,
-                    minutes=step,
-                    progress_step=0.0,
-                    focus_order_id=order.id,
-                )
-                ticks += 1
-                advanced += step
-                settled_after_delivery = True
-                continue
-            # 送达 24h 已推过：给终局结论（DETECTED/CONFIRMING/ANALYZING 需人工推进，不能自动关闭）
+            # 已经送到：默认到此为止（异常等人工），不再推"送达后 24h 自动关闭"
             stopped_reason = (
-                "TARGET_CLOSED" if str(case.status) == str(ExceptionStatus.CLOSED) else "EXCEPTION_NEEDS_MANUAL_STEP"
+                "TARGET_CLOSED"
+                if str(case.status) == str(ExceptionStatus.CLOSED)
+                else "EXCEPTION_NEEDS_MANUAL_STEP"
             )
             break
 
@@ -381,6 +364,24 @@ def advance_until_delivered(
 
     final_order = repos.orders.get(order.id) if order is not None else None
     final_case = repos.exceptions.get(case.id) if case is not None else None
+    if (
+        close_target
+        and final_case is not None
+        and final_order is not None
+        and str(final_order.status) in {str(OrderStatus.DELIVERED), str(OrderStatus.CLOSED)}
+        and str(final_case.status) != str(ExceptionStatus.CLOSED)
+    ):
+        # 一次性显式收口：不是"系统自动"，而是这次调用（演示页按钮 = 人工起点）要求关掉
+        ExceptionService(repos).close(
+            final_case.id,
+            reason_code="DELIVERED",
+            note="演示：一键推进到送达并关闭（人工起点，非自动收口）",
+            expected_version=None,
+            actor_id=actor_id,
+            forced=True,
+        )
+        final_case = repos.exceptions.get(final_case.id)
+
     if final_case is not None and str(final_case.status) == str(ExceptionStatus.CLOSED):
         stopped_reason = "TARGET_CLOSED"
     elif (

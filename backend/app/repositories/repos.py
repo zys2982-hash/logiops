@@ -210,6 +210,35 @@ class ExceptionRepository(BaseRepository[ExceptionCase]):
         )
         return self.session.scalars(stmt).unique().first()
 
+    def find_open_by_order_and_type(self, order_id: int, type_: str) -> ExceptionCase | None:
+        """同一订单**同一问题类型**的未结束异常（2026-10-06 起允许"车辆单 + 延误单"并存）。
+
+        写入侧保证"同一订单同一类型最多一张未结束单"，这里取最新一张（id 倒序）作防御。
+        凡是要"按类型判断有没有"的地方都该用它，别再用 `find_open_by_order` 随便挑一张。
+        """
+        stmt = (
+            self._scoped(select(ExceptionCase))
+            .where(
+                ExceptionCase.order_id == order_id,
+                ExceptionCase.type == str(type_),
+                ExceptionCase.status.in_([str(status) for status in OPEN_EXCEPTION_STATUSES]),
+            )
+            .order_by(ExceptionCase.id.desc())
+        )
+        return self.session.scalars(stmt).unique().first()
+
+    def list_open_by_order(self, order_id: int) -> list[ExceptionCase]:
+        """某订单全部未结束异常（送达时要把每张单的车辆故障因子对齐现状，所以需要全量）。"""
+        stmt = (
+            self._scoped(select(ExceptionCase))
+            .where(
+                ExceptionCase.order_id == order_id,
+                ExceptionCase.status.in_([str(status) for status in OPEN_EXCEPTION_STATUSES]),
+            )
+            .order_by(ExceptionCase.id.asc())
+        )
+        return list(self.session.scalars(stmt).unique().all())
+
     def next_sequence(self, prefix: str) -> int:
         """取已有 case_no 的**最大序号 + 1**（不能用 COUNT+1：seed 预置编号会让两者不一致）。"""
         rows = self.session.scalars(

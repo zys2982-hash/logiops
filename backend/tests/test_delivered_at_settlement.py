@@ -1,15 +1,18 @@
-"""送达口径（2026-10-05 新模型）：延误只在**订单送达时**按实际时间判定，并可按实际送达时间纠错。
+"""送达口径（2026-10-05 新模型；收口口径 2026-10-06）：延误只在**订单送达时**按实际时间判定，
+并可按实际送达时间纠错。**异常的解决 / 关闭永远由人工触发，程序不自动收口**。
 
 用户口径：
 - 「只有当我在运输订单中选择了送达……如果实际送达时间减去承诺送达时间按照 sla 规则进行比较，
    出现风险等级的时候，再自动生成异常订单」；
-- 「可以留着修改功能，用于……没有正确输入送达时间后的修改」。
+- 「可以留着修改功能，用于……没有正确输入送达时间后的修改」；
+- 「异常的关闭、解决等状态应该由我自己选择触发，不要让程序通过触发一些特定条件自己触发」。
 
 覆盖：
 a) 送达超允许延迟 → 自动建延误单（DETECTED / DELIVERED_BREACH / 延误=实际−承诺 / 违约 / 分数=档位+客户等级）；
 b) 送达未超 → **不建单**；
-c) 送达那刻还开着的车辆单先被收口（处理中→已解决），**再**按实际时间决定要不要建延误单；
-d) 修正实际送达时间：仍违约 → 重算延误与分数；不再违约 → 该延误单自动收口（处理中→已解决；待确认→已关闭/误报）；
+c) 送达那刻还开着的车辆单**不被收口**（仍处理中），超时则另建一张延误单 —— 两张未结束单并存；
+d) 修正实际送达时间：仍违约 → 重算延误与分数；不再违约 → **也不自动收口**，只把事实写进时间线，
+   单子留待人工关闭；
 e) 未送达订单调用 → 409；OPERATOR → 403；早于派车时间 → 422；
 f) 写 `order.delivered_at_corrected` 审计（before/after 带 delivered_at）。
 """
@@ -24,7 +27,6 @@ from app.models import AuditLog
 from app.models.exception import ExceptionCase
 from app.repositories import Repos
 from app.services.common import to_naive_utc
-from app.services.exceptions import ExceptionService
 from app.services.orders import OrderService
 
 ORDERS = "/api/v1/orders"
@@ -117,8 +119,10 @@ def test_delivered_on_time_creates_no_case(client, db_session, bootstrap, operat
     assert _cases(client, operator_headers, order["id"]) == []
 
 
-def test_delivery_first_closes_open_vehicle_case(client, db_session, bootstrap, operator_headers, admin_headers):
-    """c) 送达先把还开着的车辆单收口（处理中→已解决），再按实际时间决定是否建延误单。"""
+def test_delivery_keeps_open_vehicle_case_and_adds_delay_case(
+    client, db_session, bootstrap, operator_headers, admin_headers
+):
+    """c) 送达**不替用户收口**车辆单（仍处理中），超时则另建延误单 —— 两张未结束单并存。"""
     order = _order_with_vehicle(
         client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
     )
@@ -143,16 +147,25 @@ def test_delivery_first_closes_open_vehicle_case(client, db_session, bootstrap, 
 
     cases = _cases(client, operator_headers, order["id"])
     by_type = {case["type"]: case for case in cases}
-    assert by_type["VEHICLE_BREAKDOWN"]["status"] == "RESOLVED", by_type
+    # 车辆单保持处理中：状态只能由人工点「解决 / 关闭」改（不再"送达即闭环"）
+    assert by_type["VEHICLE_BREAKDOWN"]["status"] == "PROCESSING", by_type
+    assert by_type["VEHICLE_BREAKDOWN"]["resolved_at"] is None
+    # 而车已经跑完这趟（送达把它放回 IDLE）→「车辆故障」因子按现状消失（信号级闭环），
+    # 所以这张还开着的单当前风险是 0 —— 单子仍等你处置，只是风险按现状算
+    assert by_type["VEHICLE_BREAKDOWN"]["risk_factors"] == [], by_type
+    assert by_type["VEHICLE_BREAKDOWN"]["current_risk_score"] == 0, by_type
+    # 延误单照建（同一个问题只一张单，但允许与车单并存）
     assert by_type["DELAY_RISK"]["status"] == "DETECTED", by_type
     assert by_type["DELAY_RISK"]["detection_rule"] == "DELIVERED_BREACH"
     assert by_type["DELAY_RISK"]["sla_delay_minutes"] == 200
+    vehicle = client.get(f"/api/v1/vehicles/{bootstrap['vehicle'].id}", headers=operator_headers).json()
+    assert vehicle["status"] == "IDLE", vehicle
 
 
-def test_correct_delivered_at_to_on_time_closes_delay_case(
+def test_correct_delivered_at_to_on_time_keeps_case_open(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
-    """d-1) 送达时间录错：修正为"按时"→ 该延误单自动收口（待确认 → 已关闭/误报）。"""
+    """d-1) 送达时间录错：修正为"按时"→ **不自动收口**，单子仍待人工处置，但不再报违约。"""
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
     promised, _ = _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
     case = _cases(client, operator_headers, order["id"])[0]
@@ -166,13 +179,28 @@ def test_correct_delivered_at_to_on_time_closes_delay_case(
     assert fixed.status_code == 200, fixed.text
 
     after = client.get(f"{EXCEPTIONS}/{case['id']}", headers=operator_headers).json()
-    assert after["status"] == "CLOSED", after  # 待确认只能归档为已关闭（状态机合法出口）
-    assert after["close_reason"] == "INVALID"
-    assert after["current_risk_score"] == 0 and after["current_level"] == "LOW"
+    assert after["status"] == "DETECTED", after  # 仍然是待确认：收口由人工点
+    assert after["resolved_at"] is None and after["closed_at"] is None
     assert after["sla_breached"] is False
+    assert int(after["sla_delay_minutes"] or 0) <= 0
+
+    # 人工点「关闭 / 误报」→ 才真正结束
+    closed = client.post(
+        f"{EXCEPTIONS}/{case['id']}/close",
+        headers=admin_headers,
+        json={
+            "reason_code": "INVALID",
+            "note": "修正送达时间后确认是误报",
+            "expected_version": after["version"],
+        },
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "CLOSED"
 
 
-def test_correct_delivered_at_still_breaching_recomputes(client, db_session, bootstrap, operator_headers, admin_headers):
+def test_correct_delivered_at_still_breaching_recomputes(
+    client, db_session, bootstrap, operator_headers, admin_headers
+):
     """d-2) 修正后仍违约（400 → 200 分钟）→ 延误与分数按新时间重算。"""
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
     promised, _ = _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
@@ -252,4 +280,3 @@ def test_correct_delivered_at_writes_audit(client, db_session, bootstrap, operat
     assert str(row.after_json.get("delivered_at")).replace("T", " ") == str(expected_after)
     assert row.after_json.get("note") == "纠错"
     assert db_session.get(ExceptionCase, _cases(client, operator_headers, order["id"])[0]["id"]) is not None
-    assert ExceptionService  # 引用保持（本文件用到服务层语义）

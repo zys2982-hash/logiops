@@ -514,7 +514,7 @@ onMounted(async () => {
                 <el-button type="primary" size="small" :loading="saving" @click="correctDeliveredAt">
                   保存并重算
                 </el-button>
-                <span class="u-text-muted">仍违约 → 重算延误与分数；不再违约 → 自动解决该延误异常</span>
+                <span class="u-text-muted">仍违约 → 重算延误与分数；不再违约 → 只重算，单子仍挂着等你点「关闭」</span>
               </el-form-item>
             </el-form>
           </PanelCard>
@@ -753,7 +753,9 @@ onMounted(async () => {
               </el-form>
             </template>
 
-            <!-- 已解决但未归档：占着"同一订单只能一个未关闭异常"的名额，归档后订单才能再录入 -->            <template v-if="canHandleException && resolvedExceptions.length > 0">
+            <!-- 已解决但未归档：同一问题类型还占着一个"未关闭"名额（2026-10-06 起按类型判重，
+                 车辆单与延误单可以并存），归档后该类型才能再录入。 -->
+            <template v-if="canHandleException && resolvedExceptions.length > 0">
               <el-divider content-position="left">归档异常（已解决 → 已关闭）</el-divider>
               <el-form label-width="80px" size="small">
                 <el-form-item label="选择异常">

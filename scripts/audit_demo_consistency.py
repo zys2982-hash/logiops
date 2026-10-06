@@ -99,39 +99,32 @@ def main() -> int:
                         f"状态是 {vehicle.status}（因子与现状矛盾）"
                     )
 
-        # 4) 订单状态与异常状态互斥关系
+        # 4) 订单状态与异常状态的关系
+        #    2026-10-06 口径：异常收口只由人工点「解决 / 关闭」，所以送达 / 关闭 / 取消的订单
+        #    **允许**继续挂着未结束异常 —— 那正是"等人处置"的正常状态，不再算不一致。
         for case in cases:
             order = next((o for o in orders if o.id == case.order_id), None)
             if order is None:
                 continue
-            if order.status in {"DELIVERED", "CLOSED", "CANCELLED"} and case.status in OPEN:
-                # 例外：**送达后按实际时间自动建的延误单**本来就是"送达才出现、等人处置"，
-                # 未结束是正常的（2026-10-05 新模型）；车辆/其它类型的单在送达时必须已收口。
-                is_delivered_delay = (
-                    str(case.type) == "DELAY_RISK"
-                    and str(case.detection_rule) == "DELIVERED_BREACH"
-                    and order.delivered_at is not None
-                )
-                if not is_delivered_delay:
-                    bad(f"ex#{case.id} {case.case_no} 未结束，但订单 {order.order_no} 已 {order.status}（送达即闭环没生效）")
             if order.status == "CREATED" and case.status in OPEN:
                 bad(f"ex#{case.id} {case.case_no} 未结束，但订单 {order.order_no} 还在「待发车」（未派车就出异常）")
             if order.status == "CREATED" and order.vehicle_id:
                 bad(f"订单 {order.order_no} 未派车却已绑定车辆（应在派车时才绑定）")
 
-        # 5) 同一订单最多一张未结束异常（例外：送达结算允许"已解决的车辆单 + 待确认的延误单"并存，
-        #    因为送达那刻车辆单会被收口为已解决（仍算"未关闭"），随后按实际时间建的延误单必须能落下来）
+        # 5) 同一订单**同一问题类型**最多一张未结束异常
+        #    2026-10-06：允许"未结束的车辆单 + 未结束的延误单"并存（程序不再替用户收口，
+        #    车辆单会一直挂到人工处置），但同一类型不许重复建单。
         for order in orders:
             open_cases = [c for c in cases if c.order_id == order.id and c.status in OPEN]
-            if len(open_cases) > 1:
-                delay_cases = [c for c in open_cases if str(c.type) == "DELAY_RISK"]
-                others = [c for c in open_cases if str(c.type) != "DELAY_RISK"]
-                if not (
-                    len(delay_cases) == 1
-                    and str(delay_cases[0].detection_rule) == "DELIVERED_BREACH"
-                    and all(str(c.status) == "RESOLVED" for c in others)
-                ):
-                    bad(f"订单 {order.order_no} 有 {len(open_cases)} 张未结束异常：{[c.case_no for c in open_cases]}")
+            by_type: dict[str, list] = {}
+            for case in open_cases:
+                by_type.setdefault(str(case.type), []).append(case)
+            for case_type, group in by_type.items():
+                if len(group) > 1:
+                    bad(
+                        f"订单 {order.order_no} 有 {len(group)} 张未结束的「{case_type}」异常："
+                        f"{[c.case_no for c in group]}"
+                    )
 
         # 6) 时间顺序：建单 ≤ 派车 ≤ 发生 ≤（解决/关闭）；不允许未来时间；轨迹在派车之后
         for order in orders:
@@ -151,10 +144,11 @@ def main() -> int:
             if events and base and max(e.occurred_at for e in events) < base:
                 bad(f"订单 {order.order_no} 轨迹全部早于派车时间")
 
-        # 6b) 新风险模型不变量（2026-10-05）
+        # 6b) 新风险模型不变量（2026-10-05；收口口径 2026-10-06）
         #     · 车辆故障单不做 SLA 判定 → 不应有 sla_delay_minutes / sla_breached
-        #     · 延误单只在送达后产生 → 订单必须已送达，且延误 = 实际送达 − 承诺送达，且必须违约
-        #     · 已送达且未超允许延迟的订单 → 不应有未结束的延误单
+        #     · 延误单只在送达后产生 → 订单必须已送达，且延误 = 实际送达 − 承诺送达
+        #     · sla_breached 必须与"延误 vs 规则允许延迟"一致（改过送达时间后可合法地翻成 False；
+        #       单子不再自动收口，会挂着等人工点「解决 / 关闭」）
         for case in cases:
             order = next((o for o in orders if o.id == case.order_id), None)
             if str(case.type) == "VEHICLE_BREAKDOWN":
@@ -179,8 +173,17 @@ def main() -> int:
                             f"ex#{case.id} {case.case_no} 延误 {case.sla_delay_minutes} ≠ "
                             f"实际送达−承诺送达 {expected_delay}"
                         )
-                if not case.sla_breached:
-                    bad(f"ex#{case.id} {case.case_no} 延误单必须是违约产生的（sla_breached=False）")
+                # sla_breached 必须与"延误 vs 规则允许延迟"一致。2026-10-06 起不能再要求
+                # "延误单一直报违约"：改过实际送达时间后它会合法地翻成 False（单子仍挂着或已人工收口）。
+                rule = rules.get(order.sla_rule_id) if order.sla_rule_id else None
+                if rule is not None and case.sla_delay_minutes is not None:
+                    allowed = int(getattr(rule, "max_delay_minutes", 0) or 0)
+                    should_breach = int(case.sla_delay_minutes) > allowed
+                    if bool(case.sla_breached) != should_breach:
+                        bad(
+                            f"ex#{case.id} {case.case_no} sla_breached={case.sla_breached} 与规则不一致："
+                            f"延误 {case.sla_delay_minutes} 分钟 / 允许 {allowed} 分钟"
+                        )
                 codes = {str(f.get("code")) for f in (case.risk_factors_json or [])}
                 if "SLA_BREACH" in codes:
                     bad(f"ex#{case.id} {case.case_no} 延误单不该再有 SLA_BREACH 因子（新版不重复计违约）")
@@ -194,7 +197,14 @@ def main() -> int:
                 if c.order_id == order.id and str(c.type) == "DELAY_RISK" and str(c.status) in OPEN
             ]
             if delay <= 0 and open_delay:
-                bad(f"订单 {order.order_no} 未超时（提前 {-delay} 分钟）却有未结束延误单 {[c.case_no for c in open_delay]}")
+                # 2026-10-06：改过送达时间后"已不再违约"的单不再自动收口，会一直挂着等人工关闭。
+                # 允许存在，但不许还挂着「违约」的判定 —— 数字必须跟着事实走。
+                still_breached = [c for c in open_delay if c.sla_breached]
+                if still_breached:
+                    bad(
+                        f"订单 {order.order_no} 未超时（提前 {-delay} 分钟）却有未结束延误单仍在报违约："
+                        f"{[c.case_no for c in still_breached]}"
+                    )
 
         for case in cases:
             if case.occurred_at > now:

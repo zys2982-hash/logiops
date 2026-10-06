@@ -156,8 +156,9 @@ def refresh_case_impact(
     · **延误单才走 SLA**：延误 = 实际送达 − 承诺送达（送达后才有延误单），风险分 = 延误档位 + 客户等级。
 
     allow_downgrade=False：等级/风险分只升不降（用于 tick 的合并刷新）。
-    机器提议阶段（DETECTED/CONFIRMING）不允许"高危单静默降档"，风险真的解除时
-    由 PROCESSING → RESOLVED 或"送达即闭环"收口（Lead 验收口径）。
+    机器提议阶段（DETECTED/CONFIRMING）不允许"高危单静默降档"。
+    2026-10-06 起程序**不再自动收口异常**（送达 / 风险解除都只刷新数字），所以
+    "风险真的解除了"就表现为：单子仍挂着，但当前风险已经降到很低，等人工点「解决 / 关闭」。
     """
     settings = get_settings()
     customer = repos.customers.get(case.customer_id)

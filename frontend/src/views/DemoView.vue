@@ -102,7 +102,7 @@ async function tick(): Promise<void> {
   try {
     await demo.tick(tickMinutes.value)
     logAction(
-      `快进 ${tickMinutes.value} 分钟（顺带跑了一轮轨迹/重算/检测/自动关闭）`,
+      `快进 ${tickMinutes.value} 分钟（顺带跑了一轮轨迹/重算/检测）`,
       `POST /demo/actions/tick {minutes: ${tickMinutes.value}}`,
     )
     // 后端明确拒绝时（例如状态机 409）不谎报成功，错误提示已由拦截器给出
@@ -243,7 +243,7 @@ onMounted(async () => {
       show-icon
       class="u-mb-12"
       title="演示工具（仅本地演示）"
-      description="① 时间控制：真实时间模式（CLOCK_MODE=system，现行默认）下系统直接用现实时间，快进/跳转已停用；只有 CLOCK_MODE=replay 时才需要手动推虚拟时钟（推进即触发：轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查 → 自动关闭检查）。② 一键重置回到 seed 初始态（演示翻车 3 秒恢复）。权限：APP_ENV=local 且 ADMIN+ 才有 demo.control。AI 模式（回放样本 / 真实大模型）在顶部横幅上直接切换。"
+      description="① 时间控制：真实时间模式（CLOCK_MODE=system，现行默认）下系统直接用现实时间，快进/跳转已停用；只有 CLOCK_MODE=replay 时才需要手动推虚拟时钟（推进即触发：轨迹生成 → ETA 重算 → 异常检测 → 审批过期检查；异常的解决/关闭不参与自动链路，要人工点）。② 一键重置回到 seed 初始态（演示翻车 3 秒恢复）。权限：APP_ENV=local 且 ADMIN+ 才有 demo.control。AI 模式（回放样本 / 真实大模型）在顶部横幅上直接切换。"
     />
 
     <el-row :gutter="12">
@@ -326,7 +326,8 @@ onMounted(async () => {
               <el-button text type="primary" @click="refresh">刷新状态</el-button>
             </el-form-item>
             <div class="u-text-muted" style="line-height: 1.7">
-              1）<b>快进 N 分钟</b>：让虚拟时间走 N 分钟，顺便跑一遍自动链路（轨迹 → ETA 重算 → 检测 → 自动关闭）。<br />
+              1）<b>快进 N 分钟</b>：让虚拟时间走 N 分钟，顺便跑一遍自动链路（轨迹 → ETA 重算 → 检测）。
+              异常的解决 / 关闭不会被自动触发，要自己去异常页点。<br />
               2）<b>跳到该时间</b>：选好年月日时分秒，直接把虚拟时钟设到那一刻（秒级精确，只改时钟）。
               跳完想立刻触发一次检测，再点一次「快进 1 分钟」。
             </div>

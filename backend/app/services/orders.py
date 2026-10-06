@@ -17,7 +17,6 @@ from app.models.enums import (
     AuditSource,
     DetectionRule,
     DriverStatus,
-    ExceptionStatus,
     ExceptionType,
     OrderStatus,
     TrackingEventType,
@@ -546,6 +545,9 @@ class OrderService:
         bump_version(order)
         self.repos.orders.save(order)
 
+        # 车辆：订单跑完就放回 IDLE（原口径不变）。注意这**不会**收口还开着的车辆故障单——
+        # 单子仍挂着等你点「解决 / 关闭」（2026-10-06 口径）；车已上路，"车辆故障"因子按现状
+        # 自然消失（信号级闭环），所以那张单的当前风险会变成 0，这不是错，是"按现状算"。
         if order.vehicle_id:
             vehicle = self.repos.vehicles.get(order.vehicle_id)
             if vehicle is not None:
@@ -571,45 +573,25 @@ class OrderService:
             source=AuditSource.SYSTEM if actor_id is None else AuditSource.MANUAL,
         )
 
-        # 送达即闭环：PROCESSING → RESOLVED；DETECTED/CONFIRMING/ANALYZING → CLOSED(DELIVERED)
-        # 绝不允许"货物已到但异常还挂着"的搁浅状态（§8.1 IN_TRANSIT→DELIVERED 副作用）
-        case = self.repos.exceptions.find_open_by_order(order.id)
-        if case is not None:
-            from app.services.exceptions import ExceptionService  # 局部导入避免循环
-
-            service = ExceptionService(self.repos)
-            if state_machine.can_transition(
-                state_machine.EntityKind.EXCEPTION, case.status, ExceptionStatus.RESOLVED
-            ):
-                service.resolve(
-                    case.id,
-                    note="订单已送达，系统自动解除异常",
-                    actor_id=None,
-                    expected_version=None,
-                    system=True,
-                )
-            elif state_machine.can_transition(
-                state_machine.EntityKind.EXCEPTION, case.status, ExceptionStatus.CLOSED
-            ):
-                service.close(
-                    case.id,
-                    reason_code="DELIVERED",
-                    note="订单已送达，系统自动归档未处理异常",
-                    expected_version=None,
-                    actor_id=None,
-                    forced=True,
-                    system=True,
-                )
+        # 送达**不再自动收口异常**（用户口径 2026-10-06）：已解决 / 已关闭只能由人工在异常页或
+        # 订单页点「解决 / 关闭」触发。程序只做"送达超时 → 建延误单"（见 `_settle_delivered_delay`）
+        # 与数字重算，绝不替用户结束一张单 —— 送达那刻还开着的车辆故障单就继续挂着，等人工处置。
+        #
+        # 顺手把「车辆故障」因子对齐现状（比如上面因为车单还没收口而保留了 REPAIRING，
+        # 或车辆此前已被别的路径改过状态）。读取时本来也会自愈，这里先落库，DB 层自检才一致。
+        for case in self.repos.exceptions.list_open_by_order(order.id):
+            eta_flow.sync_case_vehicle_factor(self.repos, case, order)
 
         self._settle_delivered_delay(order, actor_id=actor_id)
         return order
 
     def _settle_delivered_delay(self, order: Order, *, actor_id: int | None) -> ExceptionCase | None:
-        """送达口径结算（用户口径 2026-10-05）——**只在送达后**用实际时间比承诺时间。
+        """送达口径结算（用户口径 2026-10-05；收口口径 2026-10-06）——**只在送达后**比实际时间与承诺。
 
         · 实际送达 − 承诺送达 > 规则允许延迟 → 自动建「延误异常单」（DETECTED 待确认）；
         · 未超 → 不建单；
-        · 已存在未结束的延误单（送达时间被修正的场合）→ 重算延误与分数；修正后不再违约则自动解决。
+        · 已存在未结束的延误单（送达时间被修正的场合）→ 重算延误与分数，**但不自动收口**：
+          不再违约也只是把事实写进时间线，解决 / 关闭永远由人工点。
         在途不再按预测 ETA 建延误异常（旧 `ETA_BREACH_SLA` 规则已下线）。
         """
         if order.delivered_at is None:
@@ -619,64 +601,41 @@ class OrderService:
             return None
         actual_delay = int(round((order.delivered_at - promised).total_seconds() / 60))
         breached = actual_delay > int(match.max_delay_minutes)
-        existing = self.repos.exceptions.find_open_by_order(order.id)
-        # 只有"未结束的**延误**单"才算已有延误单；送达那刻刚被收口的车辆单（RESOLVED 仍算未关闭）
-        # 不阻挡延误单的产生 —— 同一订单允许"已解决的车辆单 + 新的延误单"并存（各管一个问题）
-        delay_case = (
-            existing
-            if existing is not None and str(existing.type) == str(ExceptionType.DELAY_RISK)
-            else None
+        # 按类型找：2026-10-06 起同一订单允许"未结束的车辆单 + 未结束的延误单"并存（各管一个问题），
+        # 所以这里必须精确找**延误**单，不能拿"最新那张未结束单"顶替。
+        existing = self.repos.exceptions.find_open_by_order_and_type(
+            order.id, str(ExceptionType.DELAY_RISK)
         )
+        delay_case = existing
 
         if delay_case is not None:
             # 送达时间被修正 → 重算（允许升也允许降：修正就是要把算错的改回来）
             eta_flow.refresh_case_impact(
                 self.repos, existing, order, eta_at=order.delivered_at, allow_downgrade=True
             )
-            if not breached:
-                from app.services.exceptions import ExceptionService  # 局部导入避免循环
-
-                service = ExceptionService(self.repos)
-                reason = (
-                    "修正实际送达时间后未超允许延迟"
-                    f"（实际延误 {actual_delay} 分钟 ≤ 允许 {match.max_delay_minutes} 分钟）"
-                )
-                # 状态机只允许 PROCESSING → RESOLVED；待确认（DETECTED）的单只能归档为已关闭
-                if state_machine.can_transition(
-                    state_machine.EntityKind.EXCEPTION, existing.status, ExceptionStatus.RESOLVED
-                ):
-                    service.resolve(
-                        existing.id,
-                        note=reason,
-                        actor_id=actor_id,
-                        expected_version=None,
-                        system=actor_id is None,
-                    )
-                elif state_machine.can_transition(
-                    state_machine.EntityKind.EXCEPTION, existing.status, ExceptionStatus.CLOSED
-                ):
-                    service.close(
-                        existing.id,
-                        reason_code="INVALID",
-                        note=f"{reason}（原判为误报，自动归档）",
-                        expected_version=None,
-                        actor_id=actor_id,
-                        forced=True,
-                        system=actor_id is None,
-                    )
-            else:
-                add_event(
-                    self.repos.session,
-                    self.repos,
-                    exception_id=existing.id,
-                    event_type="ETA_UPDATED",
-                    from_status=existing.status,
-                    to_status=existing.status,
-                    actor_type=ActorType.SYSTEM,
-                    actor_id=actor_id,
-                    note=f"按修正后的实际送达时间重算：延误 {actual_delay} 分钟（允许 {match.max_delay_minutes} 分钟）",
-                    detail={"delivered_at": str(order.delivered_at), "actual_delay_minutes": actual_delay},
-                )
+            # 无论是否仍违约都**不自动收口**（用户口径 2026-10-06）：单子留给人工点「解决 / 关闭」，
+            # 程序只把重算后的事实写进时间线，避免"系统悄悄结束一张单"。
+            add_event(
+                self.repos.session,
+                self.repos,
+                exception_id=existing.id,
+                event_type="ETA_UPDATED",
+                from_status=existing.status,
+                to_status=existing.status,
+                actor_type=ActorType.SYSTEM,
+                actor_id=actor_id,
+                note=(
+                    f"按修正后的实际送达时间重算：延误 {actual_delay} 分钟"
+                    f"（允许 {match.max_delay_minutes} 分钟）"
+                    + ("" if breached else "，已不再违约；是否收口由人工决定")
+                ),
+                detail={
+                    "delivered_at": str(order.delivered_at),
+                    "actual_delay_minutes": actual_delay,
+                    "breached": breached,
+                    "auto_closed": False,
+                },
+            )
             return existing
 
         if breached and delay_case is None:
@@ -700,8 +659,9 @@ class OrderService:
         """修正**实际送达时间**（送达时间录错时用；用户口径 2026-10-05）。
 
         只允许在订单已送达（DELIVERED）后修正 —— 延误单本质上就是"实际 vs 承诺"的比较结果，
-        没有实际送达时间就没有延误可言。修正后立即按新时间重算该订单的延误单（见 `_settle_delivered_delay`）：
-        仍违约 → 重算分数；不再违约 → 自动解决那张延误单。
+        没有实际送达时间就没有延误可言。修正后立即按新时间重算该订单的延误单
+        （见 `_settle_delivered_delay`）：仍违约 → 重算分数；不再违约 → 只写事实，
+        **不自动收口**（解决 / 关闭由人工在异常页点）。
         """
         order = self.get(order_id)
         if str(order.status) != str(OrderStatus.DELIVERED):
@@ -747,10 +707,13 @@ class OrderService:
         """送达超时 → 自动建「延误异常单」（DETECTED 待确认，detection_rule=DELIVERED_BREACH）。"""
         from app.services import detection_flow  # 局部导入避免循环
 
-        # 已有未结束的**延误**单就不再叠加（同一个问题只一张单）；
-        # 送达那刻刚被收口的其它类型单（如已解决的车辆单）不算阻拦
-        open_case = self.repos.exceptions.find_open_by_order(order.id)
-        if open_case is not None and str(open_case.type) == str(ExceptionType.DELAY_RISK):
+        # 已有未结束的**延误**单就不再叠加（同一个问题只一张单，按类型精确查）；
+        # 其它类型（车辆故障等）的未结束单不阻挡延误单 —— 2026-10-06 起允许两者并存，
+        # 因为程序不再替用户收口，车辆单会一直挂到人工处置为止。
+        open_delay = self.repos.exceptions.find_open_by_order_and_type(
+            order.id, str(ExceptionType.DELAY_RISK)
+        )
+        if open_delay is not None:
             return None
 
         case = detection_flow.create_case_record(
@@ -925,19 +888,8 @@ class OrderService:
         bump_version(order)
         self.repos.orders.save(order)
 
-        for case in self.repos.exceptions.list_open():
-            if case.order_id != order.id:
-                continue
-            from app.services.exceptions import ExceptionService  # 局部导入避免循环
-
-            ExceptionService(self.repos).close(
-                case.id,
-                reason_code="ORDER_CANCELLED",
-                note=reason,
-                expected_version=None,
-                actor_id=actor_id,
-                forced=True,
-            )
+        # 取消订单**不再连带关闭**它的异常单（用户口径 2026-10-06：异常状态只由人工在异常页点）。
+        # 订单没了、异常单还开着是允许的 —— 由人来决定它是解决还是关闭。
         write_audit(
             self.session,
             self.repos,

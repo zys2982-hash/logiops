@@ -137,7 +137,7 @@ def test_case_a_full_closed_loop(client, db_session, bootstrap, operator_headers
     )
     assert audit.status_code == 200 and audit.json()["total"] >= 1
 
-    # 7) 推进演示时钟：车辆恢复 → 送达 → 异常自动关闭
+    # 7) 推进演示时钟：车辆恢复 → 送达；该按钮按"人工起点"显式收口（不再有自动关闭链路）
     advanced = client.post("/api/v1/demo/actions/advance-to-less", headers=operator_headers)
     assert advanced.status_code == 200, advanced.text
     final = client.get(f"/api/v1/exceptions/{exception_id}", headers=operator_headers).json()
