@@ -4,8 +4,9 @@
 
 口径：
 - `type` = **建单原因**（历史，不随现实变化）；
-- `current_type` = **当前问题**（按 risk_factors 实时推导：还带车辆故障因子 → 车辆故障，否则 → 延误风险），
-  列表 / 详情 / 订单时间线都用它显示，所以"车修好了只剩延误"时界面会自己变过来。
+- `current_type` = **当前问题**：未结束的单里，还带「车辆故障」因子 → 车辆故障；没有该因子时
+  **沿用建单原因**（2026-10-06 修正：原来无条件兜底成"延误风险"，会把车已修好、还没人收口的
+  车辆故障单错标成延误）；已结束的单也沿用建单原因。列表 / 详情 / 订单时间线都用它显示。
 """
 
 from __future__ import annotations
@@ -67,7 +68,7 @@ def test_manual_create_without_type_infers_origin_and_current_type(
 
 
 def test_current_type_follows_reality_not_origin(client, bootstrap, operator_headers, admin_headers):
-    """车辆问题解除后：建单原因不变，但「当前问题」变成延误风险 —— 这就是"不要用类型固定他"。"""
+    """车辆问题解除后：建单原因不变；「当前问题」不再错标成延误 —— 没有车辆故障因子就沿用建单原因。"""
     order = _order(client, operator_headers, bootstrap, admin_headers=admin_headers, with_vehicle=True)
     created = client.post(
         EXCEPTIONS,
@@ -88,7 +89,9 @@ def test_current_type_follows_reality_not_origin(client, bootstrap, operator_hea
     assert cleared.status_code == 200, cleared.text
     body = cleared.json()
     assert body["type"] == "VEHICLE_BREAKDOWN", "建单原因保留为历史"
-    assert body["current_type"] == "DELAY_RISK", "车辆故障因子已移除 → 当前问题是延误风险"
+    # 2026-10-06：没有车辆故障因子时沿用建单原因，不再无条件兜底成"延误风险"
+    # （车辆故障单不做 SLA 判定，永远不会带延误因子；叫它延误是错标）
+    assert body["current_type"] == "VEHICLE_BREAKDOWN", "车已修好但单子还挂着 → 仍是车辆故障（沿用建单原因）"
     assert body["status"] == "DETECTED", "异常单本身继续存在"
 
     # 结束之后就"没有当前了"：current_type 回到建单原因（历史判定口径）

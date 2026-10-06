@@ -246,17 +246,22 @@ def current_case_type(case: ExceptionCase) -> str:
 
     用户口径（2026-10-04）：「一个异常订单的异常是实时改变的，不要用类型固定他」——
     同一张单会随现实变化（车辆修好了、只剩延误/违约），所以界面该显示"现在是什么问题"：
-    · 未结束（DETECTED / PROCESSING）：按风险因子实时推导 —— 还带「车辆故障」因子 → 车辆故障，
-      否则 → 延误风险（延误时长 / SLA 违约 / VIP 都属延误口径）；
+    · 未结束（DETECTED / PROCESSING）：还带「车辆故障」因子 → 车辆故障；
+      没有该因子时**沿用建单原因**（2026-10-06 修正，见下）；
     · 已结束（RESOLVED / CLOSED）：没有"当前"了，直接沿用建单原因（历史判定，见 ENDED_EXCEPTION_STATUSES）。
     `case.type` 始终保留为建单原因（历史），两者不同时前端会一起标出来。
+
+    2026-10-06 修正：原来"没有车辆故障因子就无条件兜底成延误风险"，会把"车已修好、还没人收口"
+    的**车辆故障单**错标成延误（2026-10-05 起车辆故障单不做 SLA 判定，永远不会带延误因子，
+    所以那个兜底分支只会误标）。现在没有该因子时沿用建单原因：延误单显示延误风险（不变），
+    车辆故障单显示车辆故障 —— 与已结束的单同一条规则。
     """
     if str(case.status) in ENDED_EXCEPTION_STATUSES:
         return str(case.type)
     codes = {str(factor.get("code")) for factor in (case.risk_factors_json or []) if isinstance(factor, dict)}
     if VEHICLE_BREAKDOWN_FACTOR in codes:
         return str(ExceptionType.VEHICLE_BREAKDOWN)
-    return str(ExceptionType.DELAY_RISK)
+    return str(case.type)
 
 
 def current_case_risk(case: ExceptionCase) -> tuple[str, int]:
