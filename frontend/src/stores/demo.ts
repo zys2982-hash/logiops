@@ -3,7 +3,7 @@
  * 顶部横幅据此显示 "AI 分析来源：回放样本/真实大模型" 与 "业务时间：2026-09-30 19:05"。
  */
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { demoApi } from '@/api'
 import { ApiError } from '@/api/request'
@@ -37,8 +37,37 @@ export const useDemoStore = defineStore('demo', () => {
   const aiEnabled = computed(
     () => (state.value as unknown as { ai_enabled?: boolean }).ai_enabled !== false,
   )
-  const businessNowUtc = computed(() => state.value.now_utc)
-  const businessTimeText = computed(() => formatDateTime(state.value.now_utc, 'YYYY-MM-DD HH:mm'))
+
+  /**
+   * 业务时间必须"自己会走"（用户反馈 2026-10-06：右下角现实时间在走，页面上的业务时间不动）。
+   * 原来 `businessNowUtc` 直接用 `/demo/state` 的 `now_utc`，只在页面加载时取一次 → 挂机 16 分钟就差 16 分钟。
+   * 现在：
+   * · **真实时间模式**（`CLOCK_MODE=system`）→ 本地每秒自走，并用"服务端 − 浏览器"的偏差校正，显示与后端一致；
+   * · **虚拟时钟模式**（`replay`）→ 保持冻结，只在「快进 / 跳转」之后变（那才是虚拟时钟的语义）。
+   */
+  const nowTick = ref(Date.now())
+  const serverSkewMs = ref(0)
+  watch(
+    () => state.value.now_utc,
+    (value) => {
+      const parsed = value ? Date.parse(value) : Number.NaN
+      if (!Number.isNaN(parsed)) serverSkewMs.value = parsed - Date.now()
+    },
+    { immediate: true },
+  )
+  if (typeof window !== 'undefined') {
+    window.setInterval(() => {
+      nowTick.value = Date.now()
+    }, 1000)
+  }
+
+  const businessNowUtc = computed(() =>
+    clockMode.value === 'system'
+      ? new Date(nowTick.value + serverSkewMs.value).toISOString()
+      : state.value.now_utc,
+  )
+  /** 顶部横幅/页头显示：带秒，能一眼看出它在走 */
+  const businessTimeText = computed(() => formatDateTime(businessNowUtc.value, 'YYYY-MM-DD HH:mm:ss'))
   const baseDateText = computed(() => formatDateTime(state.value.base_date, 'YYYY-MM-DD'))
   const offsetMinutes = computed(() => state.value.offset_minutes ?? 0)
 
