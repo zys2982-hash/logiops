@@ -20,6 +20,7 @@ from app.models.exception import ExceptionCase
 from app.models.transport import Order
 from app.schemas.common import to_iso_z
 from app.schemas.dashboard import DashboardSummary, ExceptionBrief, TrendPoint, TrendResponse
+from app.services import eta_flow
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -28,6 +29,15 @@ ViewCtx = Annotated[RequestContext, Depends(require(Perm.DASHBOARD_VIEW))]
 TREND_DAYS = 7
 HIGH_RISK_LEVELS = [str(ExceptionLevel.HIGH), str(ExceptionLevel.CRITICAL)]
 OPEN_STATUSES = [str(status) for status in OPEN_EXCEPTION_STATUSES]
+# **未结束**（≠ "未关闭"）：已解决 / 已关闭的单没有"当前风险"（列表显示"无风险 · 0 分"），
+# 所以它们不该再算进"高风险 / 严重"卡片与高风险 Top5（用户口径 2026-10-06：
+# 「高风险的判定应该依据当前异常中心的状态」，与异常中心「等级」列同口径）。
+ACTIVE_STATUSES = [
+    str(ExceptionStatus.DETECTED),
+    str(ExceptionStatus.PROCESSING),
+    str(ExceptionStatus.CONFIRMING),
+    str(ExceptionStatus.ANALYZING),
+]
 
 
 def _local_day_start_utc_naive(day_start_local) -> object:
@@ -73,6 +83,11 @@ def _brief(case: ExceptionCase) -> ExceptionBrief:
         order_no=order.order_no if order else None,
         customer_name=customer.name if customer else None,
         type=str(case.type),
+        # 与异常中心同一套口径：界面显示"当前问题 / 当前风险"（已结束 → 无风险 0 分），
+        # 存档的 level / risk_score 也一并带上（详情页的"历史判定"要用）
+        current_type=eta_flow.current_case_type(case),
+        current_level=eta_flow.current_case_risk(case)[0],
+        current_risk_score=eta_flow.current_case_risk(case)[1],
         level=str(case.level),
         status=str(case.status),
         risk_score=case.risk_score,
@@ -92,16 +107,18 @@ def summary(ctx: ViewCtx) -> DashboardSummary:
     by_status = repos.exceptions.count_by_status()
     by_level = repos.exceptions.count_by_level()
 
+    # 高风险只数**未结束**的单（已解决 / 已关闭 → 当前风险 0 分，不算高风险），
+    # 与异常中心「等级」列显示的当前风险同一口径。
     high_risk = repos.exceptions.count(
         ExceptionCase.level.in_(HIGH_RISK_LEVELS),
-        ExceptionCase.status.in_(OPEN_STATUSES),
+        ExceptionCase.status.in_(ACTIVE_STATUSES),
     )
     high_risk_top = [
         _brief(case)
         for case in repos.exceptions.all(
             filters=[
                 ExceptionCase.level.in_(HIGH_RISK_LEVELS),
-                ExceptionCase.status.in_(OPEN_STATUSES),
+                ExceptionCase.status.in_(ACTIVE_STATUSES),
             ],
             order_by=[ExceptionCase.risk_score.desc(), ExceptionCase.id.desc()],
         )[:5]

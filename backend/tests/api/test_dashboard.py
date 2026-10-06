@@ -280,6 +280,74 @@ def test_dashboard_summary(client, db_session, bootstrap):
     assert body["now_utc"].endswith("Z")
 
 
+def test_dashboard_high_risk_follows_current_status(
+    client, db_session, bootstrap, admin_headers, operator_headers
+):
+    """高风险只看**当前**风险（用户口径 2026-10-06）。
+
+    已解决 / 已关闭的单在异常中心显示"无风险 · 0 分"，所以它们不该再算进「高风险 / 严重」卡片，
+    也不该出现在高风险 Top5 里 —— 卡片的判定必须和异常中心「等级」列同一口径。
+    """
+    svip = Customer(
+        workspace_id=bootstrap["workspace_id"],
+        code="SVIP-01",
+        name="巨头集团",
+        level="SVIP",
+    )
+    db_session.add(svip)
+    db_session.commit()
+
+    order = client.post(
+        "/api/v1/orders",
+        headers=admin_headers,
+        json={
+            "customer_id": svip.id,
+            "origin_city": "天津",
+            "dest_city": "上海",
+            "distance_km": 800,
+        },
+    ).json()
+    dispatched = client.patch(
+        f"/api/v1/orders/{order['id']}",
+        headers=operator_headers,
+        json={"carrier_id": bootstrap["carrier"].id, "vehicle_id": bootstrap["vehicle"].id},
+    )
+    assert dispatched.status_code == 200, dispatched.text
+
+    # 车辆故障 1 + SVIP 2 = 3 分 → HIGH（未结束 → 当前风险就是它）
+    case = client.post(
+        "/api/v1/exceptions",
+        headers=operator_headers,
+        json={
+            "order_id": order["id"],
+            "type": "VEHICLE_BREAKDOWN",
+            "occurred_at": bootstrap["base_time"].isoformat(),
+            "note": "爆胎待修",
+        },
+    ).json()
+    assert case["level"] == "HIGH" and case["risk_score"] == 3, case
+
+    body = client.get("/api/v1/dashboard/summary", headers=operator_headers).json()
+    assert body["high_risk"] == 1, body
+    assert [item["id"] for item in body["high_risk_top"]] == [case["id"]], body["high_risk_top"]
+    # Top5 也要带上"当前问题 / 当前风险"（与异常中心同口径，前端表格直接用）
+    assert body["high_risk_top"][0]["current_type"] == "VEHICLE_BREAKDOWN"
+    assert body["high_risk_top"][0]["current_level"] == "HIGH"
+
+    closed = client.post(
+        f"/api/v1/exceptions/{case['id']}/close",
+        headers=operator_headers,
+        json={"reason_code": "MANUAL", "note": "现场确认是误报", "expected_version": case["version"]},
+    )
+    assert closed.status_code == 200, closed.text
+
+    after = client.get("/api/v1/dashboard/summary", headers=operator_headers).json()
+    assert after["high_risk"] == 0, "已关闭的单当前风险 0 分，不该再算高风险"
+    assert after["high_risk_top"] == [], "已关闭的单不该再进高风险 Top5"
+    # 存档等级仍在（详情页"历史判定"要用），只是不再当作当前风险
+    assert after["by_level"]["HIGH"] == 1
+
+
 def test_dashboard_trend_endpoint(client, db_session, bootstrap):
     seed_workspace(db_session, bootstrap)
     headers = bootstrap["headers"]["VIEWER"]
