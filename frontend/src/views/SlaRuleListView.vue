@@ -32,7 +32,6 @@ const form = reactive({
 const scopeOptions = [
   { value: 'DEFAULT', label: '默认（兜底）' },
   { value: 'CUSTOMER_LEVEL', label: '按客户等级' },
-  { value: 'CUSTOMER', label: '指定客户' },
 ]
 
 const sorted = computed(() => [...result.value.items].sort((a, b) => a.priority - b.priority))
@@ -110,7 +109,7 @@ onMounted(load)
   <div class="page">
     <PanelCard
       title="SLA 规则"
-      :subtitle="`共 ${result.total} 条 · 按 priority 升序匹配，越具体越优先`"
+      :subtitle="`共 ${result.total} 条 · 只保留「VIP 客户等级规则」+「默认规则」两种`"
       icon="Timer"
     >
       <template #actions>
@@ -121,8 +120,8 @@ onMounted(load)
       <el-alert
         type="info"
         :closable="false"
-        title="匹配顺序（§8.3）"
-        description="1) scope_type=CUSTOMER 且 scope_value=order.customer.code → 2) CUSTOMER_LEVEL 且 scope_value=customer.level → 3) DEFAULT；承诺到达 = 发车时间 + deadline_offset_hours；违约 = sla_delay_minutes > max_delay_minutes。"
+        title="匹配顺序"
+        description="先看客户等级：VIP 客户命中「VIP 客户等级规则」，其余客户一律走「默认规则」（越具体越优先）。承诺到达 = 发车时间 + 承诺时长；违约 = 延误 > 允许延迟。「指定客户」作用域已下线。"
         class="u-mb-12"
       />
 
@@ -157,8 +156,8 @@ onMounted(load)
       </el-table>
 
       <div class="u-text-muted u-mt-8">
-        Seed 规则：DEFAULT=30h/30min、CUSTOMER_LEVEL:VIP=24h/0min、CUSTOMER:VIP-01=24h/0min ·
-        API：GET|POST /sla-rules · GET|PATCH /sla-rules/{id}
+        Seed 规则（两条）：DEFAULT=30h/30min、CUSTOMER_LEVEL:VIP=24h/0min ·
+        API：GET|POST /sla-rules · GET|PATCH /sla-rules/{id}（「指定客户」作用域已下线，创建会 422）
       </div>
     </PanelCard>
 
@@ -171,7 +170,8 @@ onMounted(load)
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.scope_type !== 'DEFAULT'" label="scope_value">
-          <el-input v-model="form.scope_value" :placeholder="form.scope_type === 'CUSTOMER_LEVEL' ? 'VIP / SVIP / NORMAL' : 'VIP-01'" />
+          <el-input v-model="form.scope_value" placeholder="VIP" />
+          <div class="u-text-muted">目前只用 VIP 这一档（其余客户走「默认规则」）；接口仍接受其它客户等级值。</div>
         </el-form-item>
         <el-form-item label="承诺时长(h)">
           <el-input-number v-model="form.deadline_offset_hours" :min="1" :max="240" />

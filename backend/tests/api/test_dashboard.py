@@ -42,7 +42,8 @@ def test_seed_scale_and_idempotency(client, db_session, bootstrap):
     assert counts["carriers"] == 4
     assert counts["vehicles"] == 24
     assert counts["drivers"] == 24
-    assert counts["sla_rules"] == 3
+    # 用户口径 2026-10-06：SLA 规则只保留「VIP 客户等级规则」+「默认规则」两条
+    assert counts["sla_rules"] == 2
     assert counts["orders"] == 1000
     assert counts["tracking_events"] >= 5000
     assert counts["exceptions"] == 50
@@ -80,7 +81,9 @@ def test_case_a_is_computed_by_rules(client, db_session, bootstrap):
     assert case_a["risk_score"] == 2
     assert {item["code"] for item in case_a["risk_factors"]} == {"VEHICLE_BREAKDOWN", "CUSTOMER_VIP"}
     assert case_a["eta_method"] in {"REPAIR_WAIT", "MOVING_AVG_SPEED", "FALLBACK"}
-    assert "VIP-01" in case_a["sla_rule"]
+    # VIP-01 专属规则已下线 → VIP-01 客户走「VIP 客户等级规则」（同为 24h/0min）
+    assert "VIP 客户规则" in case_a["sla_rule"], case_a["sla_rule"]
+    assert "VIP-01" not in case_a["sla_rule"], case_a["sla_rule"]
 
     order = db_session.scalars(select(Order).where(Order.order_no == CASE_A_ORDER_NO)).one()
     case = db_session.scalars(select(ExceptionCase).where(ExceptionCase.order_id == order.id)).one()
@@ -180,13 +183,15 @@ def test_seed_master_data_snapshot(client, db_session, bootstrap):
     assert next(item for item in customers if item.code == "VIP-01").name == "远洋集团"
     assert next(item for item in customers if item.code == "NORM-01").name == "华北贸易"
 
+    # SLA 规则只剩两条（用户口径 2026-10-06）：「指定客户 VIP-01」已删除
     rules = list(db_session.scalars(select(SlaRule).where(SlaRule.workspace_id == workspace_id)))
+    assert len(rules) == 2, [rule.name for rule in rules]
     default = next(item for item in rules if item.scope_type == "DEFAULT")
     vip = next(item for item in rules if item.scope_type == "CUSTOMER_LEVEL")
-    special = next(item for item in rules if item.scope_type == "CUSTOMER")
     assert (default.deadline_offset_hours, default.max_delay_minutes) == (30, 30)
     assert (vip.deadline_offset_hours, vip.max_delay_minutes) == (24, 0)
-    assert special.scope_value == "VIP-01" and (special.deadline_offset_hours, special.max_delay_minutes) == (24, 0)
+    assert vip.scope_value == "VIP"
+    assert not [item for item in rules if item.scope_type == "CUSTOMER"], "「指定客户」规则应已下线"
 
     drivers = list(db_session.scalars(select(Driver).where(Driver.workspace_id == workspace_id)))
     vehicles = list(db_session.scalars(select(Vehicle).where(Vehicle.workspace_id == workspace_id)))

@@ -77,7 +77,11 @@ def match_rule(
     default_offset_hours: int = DEFAULT_OFFSET_HOURS,
     default_max_delay_minutes: int = DEFAULT_MAX_DELAY_MINUTES,
 ) -> SlaMatch:
-    """按 具体客户 > 客户等级 > 默认 的顺序匹配，同级取 priority 最小者。"""
+    """按 具体客户 > 客户等级 > 默认 的顺序匹配，同级取 priority 最小者。
+
+    2026-10-06 起「具体客户（`CUSTOMER`）」已不在界面/接口开放（只保留「客户等级 VIP」与「默认」），
+    这里保留该分支只为兼容历史库里已存在的旧规则；新库不会再产生。
+    """
     active = [rule for rule in rules if getattr(rule, "is_active", True)]
 
     def best(scope_type: SlaScopeType, scope_value: str | None) -> Any | None:

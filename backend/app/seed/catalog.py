@@ -97,22 +97,18 @@ VEHICLE_TYPES: list[tuple[str, float]] = [
 ]
 PLATE_PREFIXES: list[str] = ["津A", "沪B", "京C", "鲁A", "苏E", "浙A"]
 
-# --- SLA 规则（§8.3 内置三条） -----------------------------------------------
+# --- SLA 规则（用户口径 2026-10-06：只保留「VIP 客户等级规则」+「默认规则」两种）---
+# 「指定客户（VIP-01 专属）」已下线：界面不再提供该作用域，接口创建 CUSTOMER 作用域会被 422 拦掉。
 SEED_SLA_RULES: list[dict[str, Any]] = [
     {
         "name": "默认规则", "scope_type": "DEFAULT", "scope_value": None,
         "deadline_offset_hours": 30, "max_delay_minutes": 30, "priority": 100,
-        "description": "发车后 30 小时承诺到达，允许延迟 30 分钟",
+        "description": "发车后 30 小时承诺到达，允许延迟 30 分钟（兜底：非 VIP 客户）",
     },
     {
         "name": "VIP 客户规则", "scope_type": "CUSTOMER_LEVEL", "scope_value": "VIP",
         "deadline_offset_hours": 24, "max_delay_minutes": 0, "priority": 10,
         "description": "VIP 客户发车后 24 小时承诺到达，不允许延迟",
-    },
-    {
-        "name": "VIP-01 专属规则", "scope_type": "CUSTOMER", "scope_value": "VIP-01",
-        "deadline_offset_hours": 24, "max_delay_minutes": 0, "priority": 1,
-        "description": "远洋集团专属：24 小时承诺，零容忍延迟",
     },
 ]
 

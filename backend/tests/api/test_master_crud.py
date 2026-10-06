@@ -241,9 +241,18 @@ def test_sla_rules_list_create_patch(client, admin_headers, bootstrap):
     invalid_scope = client.post(
         "/api/v1/sla-rules",
         headers=admin_headers,
-        json={"name": "缺 scope_value", "scope_type": "CUSTOMER"},
+        json={"name": "缺 scope_value", "scope_type": "CUSTOMER_LEVEL"},
     )
     assert invalid_scope.status_code == 422
+
+    # 「指定客户」作用域已下线（用户口径 2026-10-06：只保留「按客户等级 VIP」与「默认」）
+    retired_scope = client.post(
+        "/api/v1/sla-rules",
+        headers=admin_headers,
+        json={"name": "VIP-01 专属", "scope_type": "CUSTOMER", "scope_value": "VIP-01"},
+    )
+    assert retired_scope.status_code == 422, retired_scope.text
+    assert retired_scope.json()["error"]["code"] == "VALIDATION_ERROR"
 
     patched = client.patch(
         f"/api/v1/sla-rules/{created.json()['id']}", headers=admin_headers, json={"max_delay_minutes": 15}

@@ -1,6 +1,10 @@
 """SLA 规则维护（基线文档 §10.3【SLA 规则】、§8.3）。
 
-规则匹配优先级由 ``app.rules.sla.match_rule`` 决定：具体客户 > 客户等级 > 默认，同级取 priority 最小者。
+用户口径（2026-10-06）：**只保留两种规则** ——「VIP 客户等级规则」（`CUSTOMER_LEVEL:VIP`）与「默认规则」（`DEFAULT`）。
+「指定客户（`CUSTOMER`，例如 VIP-01 专属）」已下线：界面不再提供该作用域，本模块创建/修改成该作用域会返回 422。
+（`app.rules.sla.match_rule` 仍保留 `CUSTOMER` 分支，只为兼容历史库里已存在的旧规则。）
+
+规则匹配由 ``app.rules.sla.match_rule`` 决定：具体客户（历史）> 客户等级 > 默认；同一档取 priority 最小者。
 唯一键 ``(workspace_id, scope_type, scope_value)``：手工查重后返回 409 DUPLICATE_ENTITY。
 """
 
@@ -23,6 +27,9 @@ router = APIRouter(prefix="/sla-rules", tags=["sla"])
 ViewCtx = Annotated[RequestContext, Depends(require(Perm.SLA_VIEW))]
 ManageCtx = Annotated[RequestContext, Depends(require(Perm.SLA_MANAGE))]
 
+# 只开放这两种作用域（顺序 = 界面展示顺序）
+SUPPORTED_SCOPE_TYPES = ("DEFAULT", "CUSTOMER_LEVEL")
+
 
 def _find_same_scope(ctx: RequestContext, scope_type: str, scope_value: str | None, exclude_id: int | None = None):
     for rule in ctx.repos.sla_rules.all(order_by=[SlaRule.priority.asc(), SlaRule.id.asc()]):
@@ -34,12 +41,17 @@ def _find_same_scope(ctx: RequestContext, scope_type: str, scope_value: str | No
 
 
 def _validate_scope(scope_type: str, scope_value: str | None) -> None:
+    if scope_type not in SUPPORTED_SCOPE_TYPES:
+        raise validation_error(
+            "「指定客户」作用域已下线：SLA 规则只保留「按客户等级（VIP）」与「默认」两种",
+            field="scope_type",
+        )
     if scope_type == "DEFAULT":
         if scope_value:
             raise validation_error("DEFAULT 作用域不能填 scope_value", field="scope_value")
         return
     if not scope_value:
-        raise validation_error("CUSTOMER / CUSTOMER_LEVEL 作用域必须填 scope_value", field="scope_value")
+        raise validation_error("CUSTOMER_LEVEL 作用域必须填 scope_value（如 VIP）", field="scope_value")
 
 
 @router.get("", response_model=list[SlaRuleOut], summary="SLA 规则列表（按 priority 升序）")
