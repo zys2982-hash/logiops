@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.db.session import session_scope
 from app.models import Customer, Order, SlaRule, Vehicle
+from app.models.master import Driver
 from app.models.exception import ExceptionCase
 from app.models.transport import TrackingEvent
 
@@ -34,6 +35,7 @@ def main() -> int:
         orders = list(session.scalars(select(Order).order_by(Order.id)))
         cases = list(session.scalars(select(ExceptionCase).order_by(ExceptionCase.id)))
         vehicles = {v.id: v for v in session.scalars(select(Vehicle))}
+        drivers = {d.id: d for d in session.scalars(select(Driver))}
         customers = {c.id: c for c in session.scalars(select(Customer))}
         rules = {r.id: r for r in session.scalars(select(SlaRule))}
         tracking = list(session.scalars(select(TrackingEvent).order_by(TrackingEvent.order_id, TrackingEvent.occurred_at)))
@@ -78,6 +80,38 @@ def main() -> int:
                 bad(
                     f"车辆 {vehicles[vehicle_id].plate_no} 同时挂在 {len(group)} 张未结束订单："
                     f"{[o.order_no for o in group]}"
+                )
+
+        # 2b) 车 / 司机状态必须跟着订单（用户口径 2026-10-06）
+        #     · 未结束订单（DISPATCHED/IN_TRANSIT）→ 它的车必须 IN_TRANSIT（维修中例外）、司机必须 ON_TRIP
+        #     · 反向：ON_TRIP 的司机、IN_TRANSIT 的车必须真的挂着一张未结束订单（不能"卡在出车中"）
+        live_orders = [order for order in orders if order.status in LIVE_ORDER]
+        live_vehicle_ids = {order.vehicle_id for order in live_orders if order.vehicle_id}
+        live_driver_ids = {order.driver_id for order in live_orders if order.driver_id}
+        for order in live_orders:
+            vehicle = vehicles.get(order.vehicle_id) if order.vehicle_id else None
+            if vehicle is not None and str(vehicle.status) not in {"IN_TRANSIT", "REPAIRING"}:
+                bad(
+                    f"订单 {order.order_no} 未结束（{order.status}），但车 {vehicle.plate_no} "
+                    f"状态是 {vehicle.status}（车没跟着订单走）"
+                )
+            driver = drivers.get(order.driver_id) if order.driver_id else None
+            if driver is not None and str(driver.status) != "ON_TRIP":
+                bad(
+                    f"订单 {order.order_no} 未结束（{order.status}），但司机 {driver.name} "
+                    f"状态是 {driver.status}（司机没跟着订单走）"
+                )
+        for vehicle in vehicles.values():
+            if str(vehicle.status) == "IN_TRANSIT" and vehicle.id not in live_vehicle_ids:
+                bad(
+                    f"车辆 {vehicle.plate_no} 停在 IN_TRANSIT，却没挂任何未结束订单"
+                    f"（车卡在在途；跑一次 scripts/sync_crew_status.py --apply 可修）"
+                )
+        for driver in drivers.values():
+            if str(driver.status) == "ON_TRIP" and driver.id not in live_driver_ids:
+                bad(
+                    f"司机 {driver.name} 停在 ON_TRIP，却没挂任何未结束订单"
+                    f"（司机卡在出车中；跑一次 scripts/sync_crew_status.py --apply 可修）"
                 )
 
         # 3) 车辆"维修中"必须有且仅有未结束的车辆故障异常；反之仍计着"车辆故障因子"的未结束单必须让车维修中

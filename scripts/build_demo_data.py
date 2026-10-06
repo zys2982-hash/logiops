@@ -43,7 +43,7 @@ from app.models.enums import ExceptionStatus, VehicleStatus
 from app.repositories import Repos
 from app.rules import sla as sla_rules
 from app.rules import state_machine
-from app.services import eta_flow
+from app.services import crew, eta_flow
 from app.services.common import apply_transition, bump_version, to_naive_utc
 from app.services.exceptions import ExceptionService
 from app.services.orders import OrderService
@@ -308,6 +308,16 @@ def main() -> int:
             json={"reason_code": "INVALID", "note": "现场确认为传感器误报，关闭异常", "expected_version": version7},
         )
         check(closed.status_code == 200, f"O7 {o7['order_no']} 误报 → 异常 CLOSED（车辆已释放）")
+
+        # 车 / 司机状态按订单现状对齐（用户口径 2026-10-06）：
+        # 旧脚本只归位车辆、从不碰司机，于是"在途订单的司机还显示空闲 / 没单的司机却出车中"
+        with session_scope() as session:
+            crew_changes = crew.sync_with_orders(Repos(session, workspace_id=1))
+        check(
+            True,
+            f"车/司机状态对齐：{len(crew_changes)} 处变更 "
+            f"{[(c['kind'], c['name'], c['from'], c['to']) for c in crew_changes] or '（本来就一致）'}",
+        )
 
         print("\n=== 订单 / 异常 对应关系 ===")
         for order in c.get("/orders", headers=h, params={"page_size": 50}).json()["items"]:

@@ -40,6 +40,7 @@ from app.seed import catalog
 from app.seed.cases import add_audit, build_all_cases, build_case_a, build_case_d
 from app.seed.orders import COMPACT_ORDER_INDICES, ORDER_TOTAL, build_orders, build_tracking_events
 from app.seed.state import SeedContext
+from app.services.crew import sync_with_orders
 
 logger = logging.getLogger("logiops.seed")
 
@@ -516,6 +517,13 @@ def seed_all(
             source="MANUAL",
         )
     session.flush()
+
+    # 车 / 司机状态必须跟着订单事实走（用户口径 2026-10-06）：
+    # catalog 里的司机/车辆状态是"看起来像"的死规则（index%N），跟真实订单无关，
+    # 会出现"在途订单的司机却空闲""没人开车的司机却出车中"。这里按订单现状全量对齐。
+    crew_changes = sync_with_orders(Repos(session, workspace_id=workspace.id))
+    if crew_changes:
+        logger.info("车/司机状态对齐：%s 处变更 %s", len(crew_changes), crew_changes[:5])
 
     summary = _summary(ctx, scenario=DEFAULT_SCENARIO, cleared={})
     summary["seed_scale"] = chosen_scale

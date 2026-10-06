@@ -29,7 +29,7 @@ from app.models.transport import Order, TrackingEvent
 from app.repositories import Repos
 from app.rules import sla as sla_rules
 from app.rules import state_machine
-from app.services import detection_flow, eta_flow, read_models
+from app.services import crew, detection_flow, eta_flow, read_models
 from app.services.common import (
     add_event,
     apply_transition,
@@ -132,6 +132,9 @@ class OrderService:
         order = self.get(order_id)
         check_version(order, expected_version, "订单")
         before = self._snapshot(order)
+        # 改派要能释放"原来的人车"：先记下原绑定（下面可能改 vehicle/driver）
+        previous_vehicle_id = order.vehicle_id
+        previous_driver_id = order.driver_id
 
         if order.status in {str(OrderStatus.CLOSED), str(OrderStatus.CANCELLED)}:
             raise AppError(
@@ -177,6 +180,20 @@ class OrderService:
                 self._apply_vehicle_driver_binding(order)
                 bump_version(order)
                 self.repos.orders.save(order)
+
+        # 车 / 司机状态随订单走（用户口径 2026-10-06）：
+        # · 订单还在途（已派车 / 在途）→ 新车新司机上岗（车回在途、司机出车）；
+        # · 换了人车（含"只改司机"这种不走 dispatch 的路径）→ 旧车旧司机放回空闲，
+        #   否则旧司机会一直卡在「出车中」（这正是用户反馈的现象）。
+        if str(order.status) in crew.LIVE_ORDER_STATUSES:
+            crew.occupy(self.repos, order)
+        if previous_vehicle_id != order.vehicle_id or previous_driver_id != order.driver_id:
+            crew.release(
+                self.repos,
+                vehicle_id=previous_vehicle_id,
+                driver_id=previous_driver_id,
+                exclude_order_id=order.id,
+            )
 
         write_audit(
             self.session,
@@ -317,6 +334,9 @@ class OrderService:
         order = self.get(order_id)
         plan = state_machine.plan_transition(ORDER_KIND, order.status, OrderStatus.DISPATCHED)
         before = self._snapshot(order)
+        # 改派要能释放"原来的人车"：先记下原绑定，绑定新资源后再把旧的放回空闲
+        previous_vehicle_id = order.vehicle_id
+        previous_driver_id = order.driver_id
 
         if carrier_id is not None:
             carrier = self.repos.carriers.get_or_404(carrier_id, "承运商不存在")
@@ -346,17 +366,16 @@ class OrderService:
         bump_version(order)
         self.repos.orders.save(order)
 
-        vehicle = self.repos.vehicles.get(order.vehicle_id) if order.vehicle_id else None
-        if vehicle is not None and str(vehicle.status) == str(VehicleStatus.IDLE):
-            vehicle.status = str(VehicleStatus.IN_TRANSIT)
-            vehicle.current_city = vehicle.current_city or order.origin_city
-            bump_version(vehicle)
-            self.repos.vehicles.save(vehicle)
-        driver = self.repos.drivers.get(order.driver_id) if order.driver_id else None
-        if driver is not None and str(driver.status) == str(DriverStatus.AVAILABLE):
-            driver.status = str(DriverStatus.ON_TRIP)
-            bump_version(driver)
-            self.repos.drivers.save(driver)
+        # 车 / 司机状态随订单走（用户口径 2026-10-06）：本单占用的车回在途、司机出车
+        crew.occupy(self.repos, order)
+        # 改派换掉的"旧车旧司机"要放回空闲，否则会卡在"出车中"（旧代码只设新的、不释放旧的）
+        if previous_vehicle_id != order.vehicle_id or previous_driver_id != order.driver_id:
+            crew.release(
+                self.repos,
+                vehicle_id=previous_vehicle_id,
+                driver_id=previous_driver_id,
+                exclude_order_id=order.id,
+            )
 
         write_audit(
             self.session,
@@ -820,19 +839,18 @@ class OrderService:
         bump_version(order)
         self.repos.orders.save(order)
 
-        if want in {str(OrderStatus.DELIVERED), str(OrderStatus.CLOSED)}:
-            if order.vehicle_id:
-                vehicle = self.repos.vehicles.get(order.vehicle_id)
-                if vehicle is not None and str(vehicle.status) == str(VehicleStatus.IN_TRANSIT):
-                    vehicle.status = str(VehicleStatus.IDLE)
-                    bump_version(vehicle)
-                    self.repos.vehicles.save(vehicle)
-            if order.driver_id:
-                driver = self.repos.drivers.get(order.driver_id)
-                if driver is not None and str(driver.status) != str(DriverStatus.AVAILABLE):
-                    driver.status = str(DriverStatus.AVAILABLE)
-                    bump_version(driver)
-                    self.repos.drivers.save(driver)
+        # 车 / 司机状态跟着订单走（用户口径 2026-10-06）：原来只处理"送达/关闭时释放"，
+        # 直设成「已发车 / 在途」时车与司机纹丝不动 —— 现在两个方向都同步：
+        # 在途（DISPATCHED / IN_TRANSIT）就上岗，其余（待发车 / 送达 / 关闭 / 取消）就释放。
+        if want in crew.LIVE_ORDER_STATUSES:
+            crew.occupy(self.repos, order)
+        else:
+            crew.release(
+                self.repos,
+                vehicle_id=order.vehicle_id,
+                driver_id=order.driver_id,
+                exclude_order_id=order.id,
+            )
 
         write_audit(
             self.session,
@@ -890,6 +908,13 @@ class OrderService:
 
         # 取消订单**不再连带关闭**它的异常单（用户口径 2026-10-06：异常状态只由人工在异常页点）。
         # 订单没了、异常单还开着是允许的 —— 由人来决定它是解决还是关闭。
+        # 但车与司机要放回空闲（订单行程结束了，人车不该继续占着）。
+        crew.release(
+            self.repos,
+            vehicle_id=order.vehicle_id,
+            driver_id=order.driver_id,
+            exclude_order_id=order.id,
+        )
         write_audit(
             self.session,
             self.repos,
