@@ -24,9 +24,15 @@ WORKDIR /app
 # 仅先拷贝清单文件，让依赖层可缓存
 COPY package.json pnpm-lock.yaml* .npmrc* ./
 
+# 国内网络：默认走 npmmirror（实测 registry.npmjs.org 直连很慢/易超时）。
+# 想用官方源：docker compose build --build-arg NPM_REGISTRY=https://registry.npmjs.org
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
 # --frozen-lockfile 优先（可复现）；无 lock 文件时回退，避免首次构建直接失败
-RUN corepack pnpm install --frozen-lockfile \
-    || corepack pnpm install --no-frozen-lockfile
+# 注：镜像站是原样透传，lockfile 里的 integrity 校验依然通过
+RUN corepack pnpm config set registry "$NPM_REGISTRY" \
+ && (corepack pnpm install --frozen-lockfile \
+     || corepack pnpm install --no-frozen-lockfile)
 
 # 拷贝源码后构建（Vite 6 产物默认在 dist/）
 COPY . .

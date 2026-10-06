@@ -18,10 +18,17 @@
 # ---------------------------------------------------------------------------
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
+# 国内网络：默认走阿里云 PyPI 镜像（实测 pypi.org 直连很慢/易超时）。
+# 想用官方源：docker compose build --build-arg UV_INDEX_URL=https://pypi.org/simple/
+ARG UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=0 \
-    UV_PROJECT_ENVIRONMENT=/opt/venv
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_INDEX_URL=${UV_INDEX_URL} \
+    UV_DEFAULT_INDEX=${UV_INDEX_URL} \
+    PIP_INDEX_URL=${UV_INDEX_URL}
 
 WORKDIR /build
 
