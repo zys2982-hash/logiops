@@ -25,7 +25,6 @@ import { businessNowText, displayIsoToUtc, formatDateTime, formatDelay } from '@
 import {
   customerLevelLabel,
   exceptionStatusLabel,
-  exceptionTypeLabel,
   orderStatusLabel,
   orderStatusType,
   TRACKING_EVENT_OPTIONS,
@@ -50,50 +49,48 @@ const saving = ref(false)
 const canManage = computed(() => auth.can(Perm.ORDER_MANAGE))
 const canTrack = computed(() => auth.can(Perm.TRACKING_WRITE))
 const canCreateException = computed(() => auth.can(Perm.EXCEPTION_CREATE))
-const canHandleException = computed(() => auth.can(Perm.EXCEPTION_HANDLE))
 
-/* ------------------------------------------------ 在途异常（录入 / 结束） */
+/* ------------------------------------------------ 在途异常（订单页只负责"录入车辆故障"） */
 const demo = useDemoStore()
 /**
- * 两个口径必须分开（踩过坑）：
- * - **后端"未关闭"**含 RESOLVED：同一订单只允许一个未关闭异常（DETECTED/PROCESSING/RESOLVED，
- *   旧数据的 CONFIRMING/ANALYZING 也算未关闭）
- *   → 决定"能不能录入新异常"，UI 必须与后端一致，否则点了必然 409
- * - **展示口径**（用户要求）：只有 RESOLVED/CLOSED 才算"已结束"→ 时间线灰点
+ * 订单页的定位（用户口径 2026-10-06）：**这里只能加异常，不能结束异常**。
+ * - 只能录「车辆故障」：延误＝实际送达 − 承诺送达，按 SLA 规则在**送达时自动生成**，不能手工录；
+ * - 结束 / 归档 / 车辆已修复 一律去「异常中心」那张单里做（本页不再提供）；
+ * - 一个订单可以同时有「车辆故障 + 延误」两张独立异常单，但**同一类型只能有一张未关闭单**：
+ *   后端 `find_open_by_order_and_type` 的"未关闭"含 RESOLVED（已解决未归档也占名额，CLOSED 才释放），
+ *   所以这里的判断必须同口径，否则点了必然 409。
  */
 const UNCLOSED_EXCEPTION_STATUSES = new Set(['DETECTED', 'CONFIRMING', 'ANALYZING', 'PROCESSING', 'RESOLVED'])
 const unclosedExceptions = computed(() =>
   relatedExceptions.value.filter((item) => UNCLOSED_EXCEPTION_STATUSES.has(String(item.status))),
 )
-/** 还能"结束（解决）"的：非 RESOLVED/CLOSED */
-const openExceptions = computed(() =>
-  relatedExceptions.value.filter(
-    (item) => !['RESOLVED', 'CLOSED'].includes(String(item.status)),
-  ),
+/** 占着"车辆故障"名额的未关闭单（含已解决未归档） */
+const unclosedVehicleException = computed(
+  () => unclosedExceptions.value.find((item) => String(item.type) === 'VEHICLE_BREAKDOWN') ?? null,
 )
-/** 已解决但尚未归档的：只能"归档（关闭）"，关掉后该订单才能再录入新异常 */
-const resolvedExceptions = computed(() =>
-  relatedExceptions.value.filter((item) => String(item.status) === 'RESOLVED'),
+/** 该订单上未关闭的延误单：与车辆故障是两张独立单，可以并存，只是提示一下 */
+const unclosedDelayException = computed(
+  () => unclosedExceptions.value.find((item) => String(item.type) === 'DELAY_RISK') ?? null,
 )
-/** 可做"车辆已修复"（信号级闭环）的：未结束的车辆故障异常 —— 只去掉车辆故障那 1 分，异常继续 */
-const breakdownExceptions = computed(() =>
-  openExceptions.value.filter((item) => String(item.type) === 'VEHICLE_BREAKDOWN'),
+/** 能不能录车辆故障：有权限 + 已派车（车故障要挂在车上）+ 该类型没有未关闭单 */
+const canCreateVehicleException = computed(
+  () =>
+    canCreateException.value &&
+    Boolean(order.value?.vehicle_id) &&
+    unclosedVehicleException.value === null,
 )
+const createBlockedReason = computed(() => {
+  if (!order.value?.vehicle_id) {
+    return '该订单还没派车（未绑定车辆）：车辆故障要挂在车上，请先派车再来录。'
+  }
+  if (unclosedVehicleException.value) {
+    return `该订单已有未结束的车辆故障异常（${unclosedVehicleException.value.case_no} · ${exceptionStatusLabel(unclosedVehicleException.value.status)}）：同一类型只能有一张，请先去「异常中心」处理它。`
+  }
+  return ''
+})
 
 const exceptionForm = reactive({
   occurred_at: '',
-  note: '',
-})
-const resolveForm = reactive({
-  exception_id: null as number | null,
-  note: '',
-})
-const archiveForm = reactive({
-  exception_id: null as number | null,
-  note: '',
-})
-const clearIssueForm = reactive({
-  exception_id: null as number | null,
   note: '',
 })
 
@@ -294,6 +291,16 @@ async function createEvent(): Promise<void> {
 
 async function createIncident(): Promise<void> {
   if (!order.value) return
+  if (!order.value.vehicle_id) {
+    ElMessage.warning('该订单还没派车（未绑定车辆），车辆故障要挂在车上')
+    return
+  }
+  if (unclosedVehicleException.value) {
+    ElMessage.warning(
+      `该订单已有未结束的车辆故障异常（${unclosedVehicleException.value.case_no}），请去「异常中心」处理`,
+    )
+    return
+  }
   if (!exceptionForm.occurred_at) {
     ElMessage.warning('请选择异常发生时间')
     return
@@ -311,120 +318,17 @@ async function createIncident(): Promise<void> {
     }
     await exceptionApi.createException({
       order_id: order.value.id,
-      // 不传 type：类型不再是"录入项"，后端按订单现场推建单原因；
-      // 界面上的「当前问题」由风险因子实时推导（车辆修好了就显示延误风险）
+      // 订单页只允许录车辆故障（2026-10-06 口径）：延误只能由"实际送达 − 承诺送达"按 SLA 规则
+      // 在订单送达时自动生成，不能手工录。
+      type: 'VEHICLE_BREAKDOWN',
       occurred_at: occurredAt,
       note: exceptionForm.note.trim(),
     })
-    ElMessage.success('异常已录入（待确认）；可在异常详情里继续「确认 → AI 分析」')
+    ElMessage.success('车辆故障异常已录入（待确认）；结束请去「异常中心」那张单里处理')
     exceptionForm.note = ''
     await load()
   } finally {
     exceptionSaving.value = false
-  }
-}
-
-async function endIncident(): Promise<void> {
-  if (!resolveForm.exception_id) {
-    ElMessage.warning('请选择要结束的异常')
-    return
-  }
-  if (!resolveForm.note.trim()) {
-    ElMessage.warning('请填写结束说明')
-    return
-  }
-  const target = openExceptions.value.find((item) => item.id === resolveForm.exception_id)
-  if (!target || typeof target.version !== 'number') {
-    ElMessage.warning('该异常的版本信息缺失，请刷新页面后重试')
-    return
-  }
-  exceptionSaving.value = true
-  try {
-    // 状态机决定合法出口：只有「处理中」能 → 已解决；其余状态（待确认/确认中/分析中）
-    // 只能 → 已关闭。两者在时间线上都算"已结束"（灰点），所以按钮文案统一叫"结束异常"。
-    const canResolve = String(target.status) === 'PROCESSING'
-    if (canResolve) {
-      await exceptionApi.resolveException(resolveForm.exception_id, {
-        note: resolveForm.note.trim(),
-        expected_version: target.version,
-      })
-      ElMessage.success('异常已结束（已解决）')
-    } else {
-      await exceptionApi.closeException(resolveForm.exception_id, {
-        reason_code: 'MANUAL',
-        note: resolveForm.note.trim(),
-        expected_version: target.version,
-      })
-      ElMessage.success(`异常已结束（由${exceptionStatusLabel(target.status)}直接归档为已关闭）`)
-    }
-    resolveForm.exception_id = null
-    resolveForm.note = ''
-  } catch {
-    // 409（状态机/版本冲突）/422 已由响应拦截器提示；这里刷新拿最新状态
-  } finally {
-    exceptionSaving.value = false
-    await load()
-  }
-}
-
-/**
- * 车辆已修复（信号级闭环）：只解除这张单上的「车辆故障」问题（车辆状态恢复、该因子不再计分），
- * **异常单继续存在**。一键生效、说明可选（用户反馈："订单那里的异常修复了以后，直接把那 1 分移除就行"）。
- * 另：在订单时间线录「维修完成（REPAIR_END）」也会把车辆改回在途 —— 那样因子会在读取时**自动移除**。
- */
-async function clearVehicleIssue(): Promise<void> {
-  if (!clearIssueForm.exception_id) {
-    ElMessage.warning('请选择要解除车辆故障的异常')
-    return
-  }
-  const target = breakdownExceptions.value.find((item) => item.id === clearIssueForm.exception_id)
-  if (!target || typeof target.version !== 'number') {
-    ElMessage.warning('该异常的版本信息缺失，请刷新页面后重试')
-    return
-  }
-  exceptionSaving.value = true
-  try {
-    await exceptionApi.clearVehicleIssue(clearIssueForm.exception_id, {
-      note: clearIssueForm.note.trim() || '车辆已修复（订单页一键解除车辆故障问题）',
-      expected_version: target.version,
-    })
-    ElMessage.success('已解除「车辆故障」问题，异常继续跟进（分数已按现状重算）')
-    clearIssueForm.exception_id = null
-    clearIssueForm.note = ''
-  } catch {
-    // 409（终态/非车辆故障/版本冲突）已由响应拦截器提示；这里刷新拿最新状态
-  } finally {
-    exceptionSaving.value = false
-    await load()
-  }
-}
-
-/** 归档（关闭）已解决的异常：CLOSED 是终态，关掉后该订单才能再录入新异常 */
-async function archiveIncident(): Promise<void> {
-  if (!archiveForm.exception_id) {
-    ElMessage.warning('请选择要归档的异常')
-    return
-  }
-  const target = resolvedExceptions.value.find((item) => item.id === archiveForm.exception_id)
-  if (!target || typeof target.version !== 'number') {
-    ElMessage.warning('该异常的版本信息缺失，请刷新页面后重试')
-    return
-  }
-  exceptionSaving.value = true
-  try {
-    await exceptionApi.closeException(archiveForm.exception_id, {
-      reason_code: 'MANUAL',
-      note: archiveForm.note.trim() || '问题已处理，归档该异常',
-      expected_version: target.version,
-    })
-    ElMessage.success('异常已归档（已关闭）')
-    archiveForm.exception_id = null
-    archiveForm.note = ''
-  } catch {
-    // 409/422 已由拦截器提示
-  } finally {
-    exceptionSaving.value = false
-    await load()
   }
 }
 
@@ -630,158 +534,82 @@ onMounted(async () => {
           </PanelCard>
 
           <PanelCard
-            v-if="canCreateException || canHandleException"
-            title="在途异常"
-            subtitle="路上出问题就记一笔；问题消除后点「结束异常」"
+            v-if="canCreateException"
+            title="在途异常（只录车辆故障）"
+            subtitle="延误异常由订单送达时按 SLA 自动生成；结束 / 归档请去「异常中心」"
             icon="Warning"
             class="u-mb-12"
           >
-            <template v-if="canCreateException">
-              <div class="form-section-title u-mb-8">录入异常</div>
-              <el-alert
-                type="info"
-                :closable="false"
-                show-icon
-                class="u-mb-8"
-                title="不需要选异常类型"
-                description="异常单的问题是实时变化的（车辆修好、只剩延误/违约会被自动重算），类型不作为录入项：系统按风险因子实时推导「当前问题」。"
-              />
-              <el-alert
-                v-if="unclosedExceptions.length > 0"
-                type="warning"
-                :closable="false"
-                show-icon
-                class="u-mb-8"
-                :title="`该订单已有未关闭的异常（${unclosedExceptions[0]?.case_no} · ${exceptionStatusLabel(unclosedExceptions[0]?.status)}）`"
-                description="同一订单同时只能有一个未关闭异常：请先在下方「结束异常」把它解决；已解决但未归档的，再点「归档异常」关闭它，之后才能录入新的。"
-              />
-              <el-form label-width="80px" size="small">
-                <el-form-item label="发生时间">
-                  <el-date-picker
-                    v-model="exceptionForm.occurred_at"
-                    type="datetime"
-                    value-format="YYYY-MM-DD HH:mm"
-                    style="width: 100%"
-                  />
-                </el-form-item>
-                <el-form-item label="说明">
-                  <el-input
-                    v-model="exceptionForm.note"
-                    type="textarea"
-                    :autosize="{ minRows: 2, maxRows: 4 }"
-                    placeholder="例如：右后轮胎压异常，已在服务区处理"
-                  />
-                </el-form-item>
-                <el-form-item>
-                  <el-button
-                    type="danger"
-                    plain
-                    size="small"
-                    :loading="exceptionSaving"
-                    :disabled="unclosedExceptions.length > 0"
-                    @click="createIncident"
-                  >
-                    录入异常
-                  </el-button>
-                  <span class="u-text-muted">等级由规则算，不用选</span>
-                </el-form-item>
-              </el-form>
-            </template>
-
-            <template v-if="canHandleException">
-              <el-divider content-position="left">结束异常</el-divider>
-              <el-empty v-if="openExceptions.length === 0" description="当前没有未结束的异常" :image-size="40" />
-              <el-form v-else label-width="80px" size="small">
-                <el-form-item label="选择异常">
-                  <el-select v-model="resolveForm.exception_id" style="width: 100%" placeholder="选择未结束的异常">
-                    <el-option
-                      v-for="item in openExceptions"
-                      :key="item.id"
-                      :label="`${item.case_no}　${exceptionTypeLabel(item.current_type ?? item.type)}　${exceptionStatusLabel(item.status)}`"
-                      :value="item.id"
-                    />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="结束说明">
-                  <el-input
-                    v-model="resolveForm.note"
-                    type="textarea"
-                    :autosize="{ minRows: 2, maxRows: 4 }"
-                    placeholder="例如：轮胎已更换，恢复正常行驶"
-                  />
-                </el-form-item>
-                <el-form-item>
-                  <el-button type="primary" size="small" :loading="exceptionSaving" @click="endIncident">
-                    结束异常
-                  </el-button>
-                  <span class="u-text-muted">处理中→已解决；其余状态→直接归档为已关闭（都算已结束，时间线变灰点）</span>
-                </el-form-item>
-              </el-form>
-            </template>
-
-            <!-- 车辆已修复：只解除车辆故障问题（信号级闭环），异常单继续 —— 与上面「结束异常」不同 -->
-            <template v-if="canHandleException && breakdownExceptions.length > 0">
-              <el-divider content-position="left">车辆已修复（只解除车辆故障，不结束异常）</el-divider>
-              <el-form label-width="80px" size="small">
-                <el-form-item label="选择异常">
-                  <el-select v-model="clearIssueForm.exception_id" style="width: 100%" placeholder="选择未结束的车辆故障异常">
-                    <el-option
-                      v-for="item in breakdownExceptions"
-                      :key="item.id"
-                      :label="`${item.case_no}　${exceptionTypeLabel(item.current_type ?? item.type)}　${exceptionStatusLabel(item.status)}`"
-                      :value="item.id"
-                    />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="说明">
-                  <el-input
-                    v-model="clearIssueForm.note"
-                    type="textarea"
-                    :autosize="{ minRows: 2, maxRows: 4 }"
-                    placeholder="例如：轮胎已更换，车辆恢复在途"
-                  />
-                </el-form-item>
-                <el-form-item>
-                  <el-button size="small" :loading="exceptionSaving" @click="clearVehicleIssue">
-                    车辆已修复（只去掉车辆故障风险）
-                  </el-button>
-                  <span class="u-text-muted">
-                    车辆状态恢复 + 该因子不再计分（例如 4 分 → 3 分）；<b>异常单继续跟进</b>，
-                    延误 / 违约等其它问题仍在。要结束整单请用上面的「结束异常」
-                  </span>
-                </el-form-item>
-              </el-form>
-            </template>
-
-            <!-- 已解决但未归档：同一问题类型还占着一个"未关闭"名额（2026-10-06 起按类型判重，
-                 车辆单与延误单可以并存），归档后该类型才能再录入。 -->
-            <template v-if="canHandleException && resolvedExceptions.length > 0">
-              <el-divider content-position="left">归档异常（已解决 → 已关闭）</el-divider>
-              <el-form label-width="80px" size="small">
-                <el-form-item label="选择异常">
-                  <el-select v-model="archiveForm.exception_id" style="width: 100%" placeholder="选择已解决、待归档的异常">
-                    <el-option
-                      v-for="item in resolvedExceptions"
-                      :key="item.id"
-                      :label="`${item.case_no}　${exceptionTypeLabel(item.current_type ?? item.type)}　已解决`"
-                      :value="item.id"
-                    />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="归档说明">
-                  <el-input
-                    v-model="archiveForm.note"
-                    type="textarea"
-                    :autosize="{ minRows: 2, maxRows: 4 }"
-                    placeholder="可选：例如已核对无遗留问题"
-                  />
-                </el-form-item>
-                <el-form-item>
-                  <el-button size="small" :loading="exceptionSaving" @click="archiveIncident">归档异常</el-button>
-                  <span class="u-text-muted">关闭是终态；归档后该订单才能录入新异常</span>
-                </el-form-item>
-              </el-form>
-            </template>
+            <div class="form-section-title u-mb-8">录入异常</div>
+            <el-alert
+              type="info"
+              :closable="false"
+              show-icon
+              class="u-mb-8"
+              title="订单页只能录「车辆故障」"
+              description="延误＝实际送达 − 承诺送达，按 SLA 规则在订单点「送达」时自动判定并建单，所以不能手工录。同一订单可以同时有「车辆故障 + 延误」两张独立异常单，各管一个问题。"
+            />
+            <el-alert
+              v-if="unclosedVehicleException"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="u-mb-8"
+              :title="`该订单已有未结束的车辆故障异常（${unclosedVehicleException.case_no} · ${exceptionStatusLabel(unclosedVehicleException.status)}）`"
+              description="同一订单同一类型只能有一张：请去「异常中心」打开这张单，用里面的「解决 / 关闭」结束它，这里才能再录车辆故障。"
+            />
+            <el-alert
+              v-else-if="unclosedDelayException"
+              type="info"
+              :closable="false"
+              show-icon
+              class="u-mb-8"
+              :title="`该订单另有一张未结束的延误异常（${unclosedDelayException.case_no}）`"
+              description="车辆故障与延误是两张独立异常单，可以并存：车辆故障照录；那张延误单请去「异常中心」处理。"
+            />
+            <el-alert
+              v-else-if="order && !order.vehicle_id"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="u-mb-8"
+              title="该订单还没派车（未绑定车辆）"
+              description="车辆故障要挂在车上：先在本页派车（选承运商 / 车辆 / 司机），再来录异常。"
+            />
+            <el-form label-width="80px" size="small">
+              <el-form-item label="发生时间">
+                <el-date-picker
+                  v-model="exceptionForm.occurred_at"
+                  type="datetime"
+                  value-format="YYYY-MM-DD HH:mm"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              <el-form-item label="说明">
+                <el-input
+                  v-model="exceptionForm.note"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 4 }"
+                  placeholder="例如：右后轮胎压异常，已在服务区处理"
+                />
+              </el-form-item>
+              <el-form-item>
+                <el-button
+                  type="danger"
+                  plain
+                  size="small"
+                  :loading="exceptionSaving"
+                  :disabled="!canCreateVehicleException"
+                  @click="createIncident"
+                >
+                  录入车辆故障
+                </el-button>
+                <el-button link type="primary" size="small" @click="router.push('/exceptions')">
+                  去异常中心处理 / 结束 →
+                </el-button>
+                <span v-if="createBlockedReason" class="u-text-muted">{{ createBlockedReason }}</span>
+              </el-form-item>
+            </el-form>
           </PanelCard>
 
           <PanelCard v-if="!canManage && !canTrack" title="只读视图" icon="View" class="u-mb-12">
