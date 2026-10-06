@@ -4,15 +4,15 @@ import { useRouter } from 'vue-router'
 
 import PanelCard from '@/components/PanelCard.vue'
 import ExceptionTable from '@/components/ExceptionTable.vue'
+import RiskTag from '@/components/RiskTag.vue'
 import { exceptionApi, systemApi } from '@/api'
-import { dashboardSummary as summaryFixture, dashboardTrend as trendFixture } from '@/mocks/fixtures'
-import { formatDate } from '@/utils/datetime'
-import type { DashboardSummary, DashboardTrendPoint, ExceptionListItem } from '@/types'
+import { dashboardSummary as summaryFixture } from '@/mocks/fixtures'
+import { exceptionStatusLabel, exceptionStatusType, exceptionTypeLabel } from '@/utils/format'
+import type { DashboardExceptionBrief, DashboardSummary, ExceptionListItem } from '@/types'
 
 const router = useRouter()
 
 const summary = ref<DashboardSummary>({ ...summaryFixture })
-const trend = ref<DashboardTrendPoint[]>([...(trendFixture.items ?? [])])
 const topRisk = ref<ExceptionListItem[]>([])
 const loading = ref(false)
 
@@ -26,35 +26,36 @@ const cards = computed(() => [
   { key: 'resolved', label: '已解决', value: summary.value.resolved, color: '#67c23a', icon: 'CircleCheck' },
 ])
 
-const slaBreached = computed(() => summary.value.sla_breached_open ?? summary.value.sla_breached)
+/** 待处置异常：未结束的单，后端已按"当前风险倒序 → 挂得越久越靠前"排好 */
+const actionQueue = computed<DashboardExceptionBrief[]>(() => summary.value.action_queue ?? [])
 
-/** 趋势点实测字段是 detected / breached（旧命名 exceptions / sla_breached 仅作兼容） */
-function pointDetected(point: DashboardTrendPoint): number {
-  return point.detected ?? point.exceptions ?? 0
+/** 已挂时长（分钟）→ `2 天 3 小时` / `6 小时 20 分钟` / `35 分钟` */
+function agingText(minutes?: number | null): string {
+  if (minutes === null || minutes === undefined) return '—'
+  if (minutes < 60) return `${minutes} 分钟`
+  const days = Math.floor(minutes / 1440)
+  const hours = Math.floor((minutes % 1440) / 60)
+  const mins = minutes % 60
+  if (days > 0) return `${days} 天${hours > 0 ? ` ${hours} 小时` : ''}`
+  return `${hours} 小时${mins > 0 ? ` ${mins} 分钟` : ''}`
 }
 
-function pointBreached(point: DashboardTrendPoint): number {
-  return point.breached ?? point.sla_breached ?? 0
-}
-
-const maxTrend = computed(() =>
-  Math.max(1, ...trend.value.map((point) => Math.max(pointDetected(point), pointBreached(point)))),
-)
-
-function barHeight(value: number): string {
-  return `${Math.round((value / maxTrend.value) * 100)}%`
+/** 挂太久给个视觉提示：超过 8 小时标红，超过 2 小时标黄 */
+function agingClass(minutes?: number | null): string {
+  if (minutes === null || minutes === undefined) return ''
+  if (minutes >= 480) return 'log-level-CRITICAL'
+  if (minutes >= 120) return 'u-text-warn'
+  return ''
 }
 
 async function load(): Promise<void> {
   loading.value = true
   try {
-    const [summaryResult, trendResult, listResult] = await Promise.allSettled([
+    const [summaryResult, listResult] = await Promise.allSettled([
       systemApi.getDashboardSummary(),
-      systemApi.getDashboardTrend(),
       exceptionApi.listExceptions({ page: 1, page_size: 5, sort: '-risk_score,-created_at' }),
     ])
     if (summaryResult.status === 'fulfilled') summary.value = summaryResult.value
-    if (trendResult.status === 'fulfilled') trend.value = trendResult.value.items ?? []
     if (listResult.status === 'fulfilled') topRisk.value = listResult.value.items
     // summary 自带 high_risk_top：列表接口异常时用它兜底
     if (topRisk.value.length === 0 && summary.value.high_risk_top?.length) {
@@ -76,7 +77,7 @@ onMounted(load)
       show-icon
       class="u-mb-16"
       title="异常优先的运营总览"
-      description="统计卡来自 GET /dashboard/summary，趋势来自 GET /dashboard/trend；高风险 Top5 按 risk_score desc 排序，与异常中心同一套规则等级（§8.6）。"
+      description="统计卡与两张表都来自 GET /dashboard/summary：待处置异常＝未结束的单（按当前风险倒序 → 挂得越久越靠前），高风险 Top5＝未结束且当前等级为高/严重；口径与异常中心一致（§8.6）。"
     />
 
     <el-row :gutter="12" class="u-mb-16">
@@ -95,32 +96,77 @@ onMounted(load)
 
     <el-row :gutter="12">
       <el-col :md="14">
-        <PanelCard title="近 7 天异常与违约趋势" icon="TrendCharts">
+        <PanelCard
+          title="待处置异常"
+          subtitle="未结束的单 · 当前风险倒序 → 挂得越久越靠前"
+          icon="AlarmClock"
+          class="u-h-full"
+        >
           <template #actions>
-            <el-tag size="small" type="warning" effect="plain">异常</el-tag>
-            <el-tag size="small" type="danger" effect="plain">SLA 违约</el-tag>
+            <el-button size="small" text type="primary" @click="router.push('/exceptions')">
+              进入异常中心
+            </el-button>
           </template>
-          <div class="chart">
-            <div v-for="point in trend" :key="point.date" class="chart-col">
-              <div class="chart-bars">
-                <div
-                  class="chart-bar chart-bar--exception"
-                  :style="{ height: barHeight(pointDetected(point)) }"
-                  :title="`异常 ${pointDetected(point)}`"
+          <el-table
+            v-loading="loading"
+            :data="actionQueue"
+            size="small"
+            border
+            stripe
+            row-key="id"
+            empty-text="当前没有待处置异常（待确认 / 处理中）"
+            @row-click="(row: DashboardExceptionBrief) => router.push(`/exceptions/${row.id}`)"
+          >
+            <el-table-column label="异常编号" min-width="150">
+              <template #default="{ row }">
+                <b class="u-mono">{{ row.case_no }}</b>
+                <div class="u-text-muted">
+                  <router-link :to="`/orders/${row.order_id}`" class="order-link" @click.stop>
+                    {{ row.order_no ?? `#${row.order_id}` }}
+                  </router-link>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="客户" min-width="120">
+              <template #default="{ row }">{{ row.customer_name ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="当前问题" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain">{{ exceptionTypeLabel(row.current_type ?? row.type) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="当前风险" width="130" align="center">
+              <template #default="{ row }">
+                <RiskTag
+                  :level="row.current_level ?? row.level"
+                  :score="row.current_risk_score ?? row.risk_score"
+                  show-score
                 />
-                <div
-                  class="chart-bar chart-bar--breach"
-                  :style="{ height: barHeight(pointBreached(point)) }"
-                  :title="`违约 ${pointBreached(point)}`"
-                />
-              </div>
-              <div class="u-text-muted">{{ formatDate(point.date).slice(5) }}</div>
-              <div class="u-text-muted">{{ pointDetected(point) }}/{{ pointBreached(point) }}</div>
-            </div>
-          </div>
-          <div class="u-text-muted u-mt-8">
-            今日 SLA 违约数：<b class="log-level-CRITICAL">{{ slaBreached }}</b>（seed 数据，供演示折线）
-          </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="exceptionStatusType(row.status)">
+                  {{ exceptionStatusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="承运商" min-width="110">
+              <template #default="{ row }">{{ row.carrier_name ?? '—' }}</template>
+            </el-table-column>
+            <el-table-column label="已挂时长" width="110" align="center">
+              <template #default="{ row }">
+                <span :class="agingClass(row.age_minutes)">{{ agingText(row.age_minutes) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80" fixed="right">
+              <template #default="{ row }">
+                <router-link :to="`/exceptions/${row.id}`" @click.stop>
+                  <el-button size="small" text type="primary">详情</el-button>
+                </router-link>
+              </template>
+            </el-table-column>
+          </el-table>
         </PanelCard>
       </el-col>
 

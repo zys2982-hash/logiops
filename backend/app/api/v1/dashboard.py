@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -21,6 +21,7 @@ from app.models.transport import Order
 from app.schemas.common import to_iso_z
 from app.schemas.dashboard import DashboardSummary, ExceptionBrief, TrendPoint, TrendResponse
 from app.services import eta_flow
+from app.services.common import now_naive
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -73,15 +74,21 @@ def _trend(ctx: RequestContext, days: int = TREND_DAYS) -> list[TrendPoint]:
     return points
 
 
-def _brief(case: ExceptionCase) -> ExceptionBrief:
+def _brief(case: ExceptionCase, *, now: datetime | None = None) -> ExceptionBrief:
     order = case.order
     customer = case.customer
+    carrier = case.carrier
+    occurred_at = case.occurred_at
+    age_minutes = None
+    if now is not None and occurred_at is not None:
+        age_minutes = max(int((now - occurred_at).total_seconds() // 60), 0)
     return ExceptionBrief(
         id=case.id,
         case_no=case.case_no,
         order_id=case.order_id,
         order_no=order.order_no if order else None,
         customer_name=customer.name if customer else None,
+        carrier_name=carrier.name if carrier else None,
         type=str(case.type),
         # 与异常中心同一套口径：界面显示"当前问题 / 当前风险"（已结束 → 无风险 0 分），
         # 存档的 level / risk_score 也一并带上（详情页的"历史判定"要用）
@@ -94,13 +101,20 @@ def _brief(case: ExceptionCase) -> ExceptionBrief:
         sla_breached=bool(case.sla_breached),
         sla_delay_minutes=case.sla_delay_minutes,
         expected_eta_at=to_iso_z(case.expected_eta_at),
+        occurred_at=to_iso_z(occurred_at),
+        age_minutes=age_minutes,
         updated_at=to_iso_z(case.updated_at),
     )
 
 
-@router.get("/summary", response_model=DashboardSummary, summary="首屏统计卡 + 高风险 Top5 + 近 7 天趋势")
+@router.get(
+    "/summary",
+    response_model=DashboardSummary,
+    summary="首屏统计卡 + 待处置异常 + 高风险 Top5 + 近 7 天趋势",
+)
 def summary(ctx: ViewCtx) -> DashboardSummary:
     now = now_utc()
+    business_now = now_naive()  # 业务时钟（真实时间或演示虚拟时钟），"已挂时长"按它算
     day_start = _local_day_start_utc_naive(today_local())
     repos = ctx.repos
 
@@ -114,7 +128,7 @@ def summary(ctx: ViewCtx) -> DashboardSummary:
         ExceptionCase.status.in_(ACTIVE_STATUSES),
     )
     high_risk_top = [
-        _brief(case)
+        _brief(case, now=business_now)
         for case in repos.exceptions.all(
             filters=[
                 ExceptionCase.level.in_(HIGH_RISK_LEVELS),
@@ -122,6 +136,16 @@ def summary(ctx: ViewCtx) -> DashboardSummary:
             ],
             order_by=[ExceptionCase.risk_score.desc(), ExceptionCase.id.desc()],
         )[:5]
+    ]
+
+    # 待处置异常：**未结束**（待确认 / 处理中）按"当前风险倒序 → 挂得越久越靠前"，
+    # 这就是运营首屏该看的"现在要处理什么"（2026-10-06 用它替掉了 7 天趋势折线图）。
+    action_queue = [
+        _brief(case, now=business_now)
+        for case in repos.exceptions.all(
+            filters=[ExceptionCase.status.in_(ACTIVE_STATUSES)],
+            order_by=[ExceptionCase.risk_score.desc(), ExceptionCase.occurred_at.asc()],
+        )[:8]
     ]
 
     return DashboardSummary(
@@ -153,6 +177,7 @@ def summary(ctx: ViewCtx) -> DashboardSummary:
         by_level=by_level,
         by_status=by_status,
         high_risk_top=high_risk_top,
+        action_queue=action_queue,
         trend=_trend(ctx),
     )
 

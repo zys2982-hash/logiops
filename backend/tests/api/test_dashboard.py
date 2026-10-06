@@ -348,6 +348,113 @@ def test_dashboard_high_risk_follows_current_status(
     assert after["by_level"]["HIGH"] == 1
 
 
+def _crew_and_case(
+    client,
+    db_session,
+    bootstrap,
+    admin_headers,
+    operator_headers,
+    *,
+    customer,
+    plate_no: str,
+    occurred_at,
+) -> dict:
+    """建一台车 + 一张订单 + 一条车辆故障异常（派车后录入，车辆故障 1 + 客户等级）。"""
+    driver = Driver(
+        workspace_id=bootstrap["workspace_id"],
+        name=f"司机{plate_no[-4:]}",
+        phone="13700000000",
+        carrier_id=bootstrap["carrier"].id,
+        license_no=f"A{plate_no[-4:]}",
+    )
+    db_session.add(driver)
+    db_session.flush()
+    vehicle = Vehicle(
+        workspace_id=bootstrap["workspace_id"],
+        plate_no=plate_no,
+        vehicle_type="9.6米厢车",
+        capacity_ton=18,
+        carrier_id=bootstrap["carrier"].id,
+        status="IDLE",
+        current_city="天津",
+    )
+    db_session.add(vehicle)
+    db_session.flush()
+    vehicle.current_driver_id = driver.id
+    db_session.commit()
+
+    order = client.post(
+        "/api/v1/orders",
+        headers=admin_headers,
+        json={
+            "customer_id": customer.id,
+            "origin_city": "天津",
+            "dest_city": "上海",
+            "distance_km": 800,
+        },
+    ).json()
+    dispatched = client.patch(
+        f"/api/v1/orders/{order['id']}",
+        headers=operator_headers,
+        json={"carrier_id": bootstrap["carrier"].id, "vehicle_id": vehicle.id},
+    )
+    assert dispatched.status_code == 200, dispatched.text
+    case = client.post(
+        "/api/v1/exceptions",
+        headers=operator_headers,
+        json={
+            "order_id": order["id"],
+            "type": "VEHICLE_BREAKDOWN",
+            "occurred_at": occurred_at.isoformat(),
+            "note": "爆胎待修",
+        },
+    ).json()
+    return case
+
+
+def test_dashboard_action_queue_orders_pending_by_risk_then_age(
+    client, db_session, bootstrap, admin_headers, operator_headers
+):
+    """待处置异常：只列**未结束**的单，按当前风险倒序、同级按挂得越久越靠前，并带承运商与已挂时长。"""
+    svip = Customer(workspace_id=bootstrap["workspace_id"], code="SVIP-09", name="巨头集团", level="SVIP")
+    db_session.add(svip)
+    db_session.commit()
+
+    base = bootstrap["base_time"]
+    high = _crew_and_case(
+        client, db_session, bootstrap, admin_headers, operator_headers,
+        customer=svip, plate_no="津A·20001", occurred_at=base,
+    )
+    older = _crew_and_case(
+        client, db_session, bootstrap, admin_headers, operator_headers,
+        customer=bootstrap["customers"]["normal"], plate_no="津A·20002", occurred_at=base,
+    )
+    newer = _crew_and_case(
+        client, db_session, bootstrap, admin_headers, operator_headers,
+        customer=bootstrap["customers"]["normal"], plate_no="津A·20003",
+        occurred_at=base + timedelta(hours=2),
+    )
+    assert high["level"] == "HIGH" and high["risk_score"] == 3, high
+    assert older["risk_score"] == 1 and newer["risk_score"] == 1, (older, newer)
+
+    # 结束掉一条：它不该再出现在待处置里
+    db_session.get(ExceptionCase, newer["id"]).status = "RESOLVED"
+    db_session.get(ExceptionCase, newer["id"]).resolved_at = utcnow_naive()
+    db_session.commit()
+
+    body = client.get("/api/v1/dashboard/summary", headers=operator_headers).json()
+    queue = body["action_queue"]
+    assert [item["id"] for item in queue] == [high["id"], older["id"]], queue
+    assert queue[0]["current_type"] == "VEHICLE_BREAKDOWN"
+    assert queue[0]["current_level"] == "HIGH" and queue[0]["current_risk_score"] == 3
+    for item in queue:
+        assert item["status"] in {"DETECTED", "PROCESSING"}, item
+        assert item["carrier_name"] == bootstrap["carrier"].name, item
+        assert item["age_minutes"] is not None and item["age_minutes"] >= 0, item
+    # 挂得越久 → age 越大（同级排序就是按它）
+    assert queue[0]["age_minutes"] >= queue[1]["age_minutes"]
+
+
 def test_dashboard_trend_endpoint(client, db_session, bootstrap):
     seed_workspace(db_session, bootstrap)
     headers = bootstrap["headers"]["VIEWER"]

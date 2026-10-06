@@ -13,6 +13,7 @@ class ExceptionBrief(BaseModel):
     order_id: int
     order_no: str | None = None
     customer_name: str | None = None
+    carrier_name: str | None = None
     type: str
     current_type: str | None = None
     current_level: str | None = None
@@ -24,6 +25,10 @@ class ExceptionBrief(BaseModel):
     sla_delay_minutes: int | None = None
     expected_eta_at: str | None = None
     delivered_at: str | None = None
+    occurred_at: str | None = None
+    age_minutes: int | None = Field(
+        default=None, description="已挂时长（分钟）：从问题发生到现在，给『待处置异常』表用"
+    )
     updated_at: str | None = None
 
 
@@ -68,6 +73,9 @@ class DashboardSummary(BaseModel):
     by_level: dict[str, int] = Field(default_factory=dict)
     by_status: dict[str, int] = Field(default_factory=dict)
     high_risk_top: list[ExceptionBrief] = Field(default_factory=list)
+    action_queue: list[ExceptionBrief] = Field(
+        default_factory=list, description="待处置异常（未结束按当前风险 + 已挂时长排序）"
+    )
     trend: list[TrendPoint] = Field(default_factory=list)
 
 

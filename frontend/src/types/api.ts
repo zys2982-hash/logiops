@@ -995,7 +995,32 @@ export interface DashboardSummary {
   by_level?: Record<string, number>
   by_status?: Record<string, number>
   high_risk_top?: ExceptionListItem[]
+  /** 待处置异常（未结束，按当前风险倒序 → 挂得越久越靠前；含 age_minutes / carrier_name） */
+  action_queue?: DashboardExceptionBrief[]
   trend?: DashboardTrendPoint[]
+}
+
+/** /dashboard/summary 里的异常简报（比列表项多了承运商与"已挂时长"） */
+export interface DashboardExceptionBrief {
+  id: number
+  case_no: string
+  order_id: number
+  order_no?: string | null
+  customer_name?: string | null
+  carrier_name?: string | null
+  type: string
+  current_type?: string | null
+  current_level?: ExceptionLevel | null
+  current_risk_score?: number | null
+  level: string
+  status: string
+  risk_score?: number | null
+  sla_breached?: boolean
+  sla_delay_minutes?: number | null
+  occurred_at?: string | null
+  /** 已挂时长（分钟，从问题发生算到现在） */
+  age_minutes?: number | null
+  updated_at?: string | null
 }
 
 /** 趋势点（实测：detected / breached / resolved / closed） */
