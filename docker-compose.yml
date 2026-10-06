@@ -36,13 +36,13 @@ services:
       - --default-authentication-plugin=caching_sha2_password
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
-      # 首次初始化时自动建 logiops 库与 logiops 账号（仅本机演示用弱密码，勿用于生产）
+      # 首次初始化时自动建 logiops 库与 logiops 账号（云上请用强口令：根目录 .env 里设 MYSQL_PASSWORD）
       MYSQL_DATABASE: logiops
       MYSQL_USER: logiops
-      MYSQL_PASSWORD: logiops
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-logiops}
     ports:
-      # 宿主机 3307 → 容器 3306：本机已有 MySQL 占用 3306（附录 D-A）
-      - "3307:3306"
+      # 只绑本机：容器之间走 docker 网络，不需要把数据库暴露到公网
+      - "127.0.0.1:${MYSQL_PORT:-3307}:3306"
     volumes:
       - logiops-mysql-data:/var/lib/mysql
       # scripts/init_db.sql 同时创建 logiops_test 库并授权（幂等，重复执行安全）
@@ -71,29 +71,36 @@ services:
       mysql:
         condition: service_healthy
     environment:
-      APP_ENV: local
+      APP_ENV: ${APP_ENV:-local}
       # 容器内用服务名 mysql，不用 127.0.0.1:3307
-      DATABASE_URL: mysql+pymysql://logiops:logiops@mysql:3306/logiops?charset=utf8mb4
-      TEST_DATABASE_URL: mysql+pymysql://logiops:logiops@mysql:3306/logiops_test?charset=utf8mb4
+      DATABASE_URL: mysql+pymysql://logiops:${MYSQL_PASSWORD:-logiops}@mysql:3306/logiops?charset=utf8mb4
+      TEST_DATABASE_URL: mysql+pymysql://logiops:${MYSQL_PASSWORD:-logiops}@mysql:3306/logiops_test?charset=utf8mb4
+      # 云上务必换成随机串：openssl rand -hex 32
       SECRET_KEY: ${SECRET_KEY:-dev-only-change-me}
-      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+      # 云上填你的站点地址，例如 http://1.2.3.4 或 https://demo.example.com（同源部署时其实用不到，填上更稳）
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
       # 时钟：真实时间（现行口径）；演示虚拟时钟的 replay 保留给测试/验收
-      DEMO_BASE_DATE: 2026-09-30T09:00:00+08:00
-      DEMO_RANDOM_SEED: "20260930"
+      DEMO_BASE_DATE: ${DEMO_BASE_DATE:-2026-09-30T09:00:00+08:00}
+      DEMO_RANDOM_SEED: ${DEMO_RANDOM_SEED:-20260930}
+      # 演示数据规模：compact=3 单（默认，界面清爽）| full=1000 单
+      SEED_SCALE: ${SEED_SCALE:-compact}
       CLOCK_MODE: system
       AI_MODE: replay
       AI_REPLAY_DIR: tests/fixtures/ai
-      # 仅 AI_MODE=live 时才需要；演示默认 replay，留空也能跑全流程
+      # 仅 AI_MODE=live 时才需要；AI 默认关闭（AI_ENABLED=false），留空也能跑全流程
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
     ports:
-      - "8000:8000"
+      # 只绑本机：对外统一走前端 nginx 的 80（它已反代 /api、/docs、/openapi.json）。
+      # 需要直连 8000 调试就改成 "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     # 说明：alembic 尚无迁移脚本时（alembic/versions 为空）本命令等价于"无操作"，
     #      表结构与 FULLTEXT 索引用 `python -m app.cli init-schema` 兜底创建。
     command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()\""]
+      # 注意：健康接口带 /api/v1 前缀（/healthz 是 404，会让容器一直 unhealthy）
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/v1/healthz').read()\""]
       interval: 15s
       timeout: 5s
       retries: 10
@@ -118,7 +125,8 @@ services:
       backend:
         condition: service_started
     ports:
-      - "5173:80"
+      # 对外入口：云服务器用 80；本地想保持旧的 5173 就设 WEB_PORT=5173
+      - "${WEB_PORT:-80}:80"
     networks:
       - logiops
 

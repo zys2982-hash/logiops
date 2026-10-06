@@ -1,0 +1,13 @@
+# 构建上下文瘦身 + 别把本地密钥打进镜像（.env 里有真实的 LLM key，绝不能进镜像）
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+*.db
+*.sqlite3
+.env
+.env.*
+tests/tests-tmp

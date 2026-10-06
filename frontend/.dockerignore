@@ -1,0 +1,9 @@
+# 构建上下文瘦身（前端 Dockerfile 里有 `COPY . .`，不加这个会把 node_modules 整包拷进镜像上下文）
+node_modules
+dist
+.tmp
+.vite
+*.log
+.DS_Store
+.env
+.env.*

@@ -65,6 +65,17 @@ RUN set -eux; \
       '        proxy_set_header X-Forwarded-Proto $scheme;' \
       '        proxy_read_timeout 120s;' \
       '    }' \
+      '' \
+      '    # 接口文档也走同一个端口：http://<站点>/docs（Swagger 会再取 /openapi.json）' \
+      '    location /docs {' \
+      '        proxy_pass http://backend:8000;' \
+      '        proxy_set_header Host $host;' \
+      '        proxy_set_header X-Forwarded-Proto $scheme;' \
+      '    }' \
+      '    location /openapi.json {' \
+      '        proxy_pass http://backend:8000;' \
+      '        proxy_set_header Host $host;' \
+      '    }' \
       '}' \
       > /etc/nginx/conf.d/default.conf
 

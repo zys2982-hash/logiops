@@ -66,9 +66,9 @@ USER logiops
 
 EXPOSE 8000
 
-# 容器内健康检查：/healthz 返回 {status, db, clock_mode, ai_mode}
+# 容器内健康检查：走带前缀的健康接口（`/healthz` 是 404，别写错）
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=10 \
-    CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
+    CMD curl -fsS http://127.0.0.1:8000/api/v1/healthz || exit 1
 
 # 先迁移后启动（compose 里也用同一条命令；若 alembic/versions 为空则等价于无操作）
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
