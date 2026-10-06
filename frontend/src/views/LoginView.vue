@@ -9,22 +9,12 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const form = reactive({ email: 'admin@logiops.dev', password: 'Demo@12345' })
+// 部署到公网后登录页**不再展示演示账号/口令、也不再预填**（用户口径 2026-10-06）：
+// 原来自带 4 个角色的一键填充按钮、并把表单预填成演示账号+统一口令 —— 等于把口令公开。
+// 这条约定由 backend/tests/test_cross_layer_contract.py::test_login_page_does_not_leak_demo_credentials 守护
+// （它会扫这个文件，所以这里**不能写演示邮箱或口令字面量**）。
+const form = reactive({ email: '', password: '' })
 const submitting = ref(false)
-
-// 演示账号域名必须与后端 seed（backend/app/seed/catalog.py）完全一致，否则点按钮会 401。
-// 这条跨层约定由 backend/tests/test_cross_layer_contract.py 守护。
-const demoAccounts = [
-  { email: 'owner@logiops.dev', role: 'OWNER' },
-  { email: 'admin@logiops.dev', role: 'ADMIN' },
-  { email: 'operator@logiops.dev', role: 'OPERATOR' },
-  { email: 'viewer@logiops.dev', role: 'VIEWER' },
-]
-
-function pick(email: string): void {
-  form.email = email
-  form.password = 'Demo@12345'
-}
 
 async function submit(): Promise<void> {
   if (!form.email || !form.password) {
@@ -58,14 +48,14 @@ async function submit(): Promise<void> {
 
       <el-form label-position="top" @submit.prevent="submit">
         <el-form-item label="邮箱">
-          <el-input v-model="form.email" placeholder="admin@logiops.dev" autocomplete="username" />
+          <el-input v-model="form.email" placeholder="you@example.com" autocomplete="username" />
         </el-form-item>
         <el-form-item label="密码">
           <el-input
             v-model="form.password"
             type="password"
             show-password
-            placeholder="Demo@12345"
+            placeholder="请输入密码"
             autocomplete="current-password"
             @keyup.enter="submit"
           />
@@ -73,15 +63,6 @@ async function submit(): Promise<void> {
         <el-button type="primary" style="width: 100%" :loading="submitting" @click="submit">登录</el-button>
       </el-form>
 
-      <el-divider>演示账号（密码统一 Demo@12345）</el-divider>
-      <div class="demo-accounts">
-        <el-button v-for="account in demoAccounts" :key="account.email" size="small" @click="pick(account.email)">
-          {{ account.role }}
-        </el-button>
-      </div>
-      <p class="u-text-muted">
-        后端未就绪时，接口会回落到本地 fixture，登录后仍可浏览全部页面骨架。
-      </p>
       <el-divider />
       <router-link to="/register">没有账号？去注册</router-link>
     </el-card>
@@ -123,11 +104,5 @@ async function submit(): Promise<void> {
   background: #2f6fed;
   color: #fff;
   font-weight: 700;
-}
-
-.demo-accounts {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 </style>

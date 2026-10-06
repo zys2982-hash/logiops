@@ -1,10 +1,11 @@
 """跨层契约测试（Lead 维护）。
 
-前后端之间有一类约定**没有编译器保护**：比如登录页"演示账号"的邮箱必须与后端 seed 创建的账号一致。
-2026-10-02 的真实事故：登录页写的是 `@demo.logiops`，seed 建的是 `@logiops.dev`，
-点演示账号必然 401——本地跑后端测试、跑前端构建都不会发现。
+前后端之间有一类约定**没有编译器保护**。2026-10-02 的真实事故：登录页写的演示账号域名是
+`@demo.logiops`，seed 建的是 `@logiops.dev`，点演示账号必然 401 —— 本地跑后端测试、跑前端构建都发现不了。
 
-这里用两条断言把它钉住：① 登录页出现的账号必须覆盖 seed 全部演示账号；② 前端不许再出现旧域名。
+2026-10-06 起口径变了（要部署到公网）：登录页**不再提供演示账号/口令**，所以原来的
+"登录页必须覆盖 seed 全部账号"改成反向守卫：**登录页不得出现演示口令或演示账号**。
+另外继续守住：前端不许再出现旧域名。
 """
 
 from __future__ import annotations
@@ -26,17 +27,19 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _seed_emails() -> set[str]:
-    from app.seed.catalog import SEED_USERS
+def test_login_page_does_not_leak_demo_credentials():
+    """登录页**不得再出现演示口令或演示账号**（用户口径 2026-10-06：要部署到公网）。
 
-    return {spec["email"] for spec in SEED_USERS}
+    历史背景：原来登录页把表单预填成 `admin@logiops.dev / Demo@12345`，还带
+    OWNER/ADMIN/OPERATOR/VIEWER 四个一键填充按钮与明文口令提示 —— 部署到公网等于公开口令。
+    现在改成只靠输入；谁再把口令/一键填充加回来，这条会红。
+    """
+    from app.seed.catalog import DEMO_PASSWORD
 
-
-def test_login_page_covers_all_seed_accounts():
-    """登录页的演示账号必须包含 seed 创建的全部账号（域名写错就会红）。"""
-    emails = set(EMAIL_RE.findall(LOGIN_VIEW.read_text(encoding="utf-8")))
-    missing = _seed_emails() - emails
-    assert not missing, f"登录页缺少这些 seed 账号（点了会 401）：{sorted(missing)}"
+    text = LOGIN_VIEW.read_text(encoding="utf-8")
+    assert DEMO_PASSWORD not in text, "登录页又出现了演示口令（部署到公网等于公开口令）"
+    leaked = sorted(email for email in set(EMAIL_RE.findall(text)) if email.endswith("@logiops.dev"))
+    assert not leaked, f"登录页又出现了演示账号（点了就能进）：{leaked}"
 
 
 def test_frontend_has_no_legacy_demo_domain():
@@ -50,13 +53,14 @@ def test_frontend_has_no_legacy_demo_domain():
     assert not offenders, f"以下文件仍使用旧域名 {LEGACY_DOMAIN}：{offenders}"
 
 
-def test_seed_demo_password_matches_docs():
-    """演示口令必须与文档/前端一致（同样是跨层约定，写错就登不上）。"""
+def test_seed_demo_password_is_the_expected_demo_value():
+    """演示口令常量仍要与约定一致（seed 用它建账号；上线前建议改掉，见 docs/10 §6）。
+
+    注意：2026-10-06 起登录页**不再展示**该口令（见上一条），所以这里只校验常量本身。
+    """
     from app.seed.catalog import DEMO_PASSWORD
 
     assert DEMO_PASSWORD == "Demo@12345"
-    login_text = LOGIN_VIEW.read_text(encoding="utf-8")
-    assert DEMO_PASSWORD in login_text, "登录页没有出现演示口令，前端与 seed 可能已不一致"
 
 
 MAX_PAGE_SIZE = 100

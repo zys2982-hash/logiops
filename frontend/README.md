@@ -65,7 +65,7 @@ corepack pnpm preview
 
 | 路由 | 页面 | 说明 |
 |---|---|---|
-| `/login` `/register` | 登录 / 注册 | 演示账号密码统一 `Demo@12345`；登录页提供 OWNER/ADMIN/OPERATOR/VIEWER 一键填充 |
+| `/login` `/register` | 登录 / 注册 | **不展示演示账号/口令**（2026-10-06 起，公网部署要求）：表单不预填、无一键填充；账号见 `docs/09` 或 `docs/10` |
 | `/dashboard` | 总览 | 6 张统计卡 + 近 7 天异常/违约趋势 + 高风险异常 Top5（`risk_score desc`） |
 | `/orders` | 订单列表 | 订单号/状态/客户筛选 + 分页 |
 | `/orders/:id` | 订单详情 | 订单与 SLA 快照、轨迹时间线、派车（`order.manage`）、录入轨迹（`tracking.write`，写入后触发 ETA 重算与异常检测）、关联异常 |
