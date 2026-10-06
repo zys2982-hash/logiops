@@ -40,10 +40,13 @@ COPY pyproject.toml uv.lock ./
 # uv 版本与 CI 保持一致（.github/workflows/ci.yml 固定 0.12.17），保证 uv.lock 可复现
 RUN pip install --no-cache-dir "uv==0.12.17"
 
-# --frozen：严格按 uv.lock 安装，CI 与本地一致；--no-dev：运行镜像不带 pytest/ruff/mypy
-# [tool.uv] package = false → 本仓库不安装自身为包，这里只装第三方依赖
+# ⚠️ 这里**不能加 --frozen**：uv.lock 里 55 个包都记着源仓库 `https://pypi.org/simple`，
+# 而 --frozen 禁止改写 lock → uv 会严格按 lock 里的 pypi.org 去下载，
+# 国内就是龟速/反复重试（实测 12 分钟没下完，而国内镜像只要 1~2 分钟）。
+# 改用 --no-frozen：允许按 UV_INDEX_URL 指定的国内索引重新解析后安装。
+# 可复现性由 CI 保证（.github/workflows/ci.yml 仍用 `uv sync --frozen` 校验 lock 一致性）。
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+    uv sync --no-frozen --no-dev
 
 # ---------------------------------------------------------------------------
 # 阶段 2：运行层（python:3.12-slim，非 root 用户）
