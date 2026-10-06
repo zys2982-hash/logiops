@@ -50,6 +50,19 @@ RUN set -eux; \
       '    root /usr/share/nginx/html;' \
       '    index index.html;' \
       '' \
+      '    # 压缩：nginx 默认只 gzip text/html，JS/CSS 不加压会原样发出去' \
+      '    # （实测：主 JS 1316KB / CSS 356KB → gzip 后 423KB / 48KB，一次访问 1.75MB → 0.49MB）' \
+      '    gzip on;' \
+      '    gzip_comp_level 5;' \
+      '    gzip_min_length 1024;' \
+      '    gzip_proxied any;' \
+      '    gzip_types text/plain text/css application/javascript application/json application/xml image/svg+xml;' \
+      '' \
+      '    # 带 hash 的静态资源可长缓存：文件名变了才会重新下载（重复访问几乎不耗流量）' \
+      '    location /assets/ {' \
+      '        add_header Cache-Control "public, max-age=31536000, immutable";' \
+      '    }' \
+      '' \
       '    # Vue Router history 模式：未知路径回退到 index.html' \
       '    location / {' \
       '        try_files $uri $uri/ /index.html;' \
