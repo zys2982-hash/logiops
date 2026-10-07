@@ -26,9 +26,25 @@ const path = require('path')
  * 用途：Electron 应用若在"还没跑到 whenReady"就退出（单实例锁没拿到、渲染初始化失败等），
  * 界面上什么都看不到、stdout 也可能是空的 —— 这里留下最早期、最可靠的痕迹。
  */
-const BOOT_LOG = process.env.LOGIOPS_BOOT_LOG || path.join(os.tmpdir(), 'logiops-boot.log')
+// 应用名 / 用户数据目录：**必须在 ready 之前、且在任何 getPath 使用之前设定**
+// （实测打包后 app.getName() 取的是 package.json 的 name=logiops-desktop，
+//   导致配置写到 %APPDATA%\logiops-desktop，与文档/菜单里显示的路径不一致）
+app.setName('LogiOps')
+app.setPath('userData', path.join(app.getPath('appData'), 'LogiOps'))
+
+// 企业网络常有 HTTP 代理：确保访问**本机本地服务**（127.0.0.1）时永远不走代理，
+// 否则页面加载可能被代理拦掉 → 窗口一片空白（"打开了没显示"）。
+app.commandLine.appendSwitch('proxy-bypass-list', '127.0.0.1,localhost')
+
+/**
+ * 启动打点：固定写在 %APPDATA%\LogiOps\boot.log（可用 LOGIOPS_BOOT_LOG 覆盖）。
+ * 用固定路径而不是系统临时目录 —— 不同启动方式（双击 / 命令行 / 计划任务）的 TEMP
+ * 可能不一样，日志散落各处就查不到了（2026-10-07 实测踩过）。
+ */
+const BOOT_LOG = process.env.LOGIOPS_BOOT_LOG || path.join(app.getPath('userData'), 'boot.log')
 function bootLog(message) {
   try {
+    fs.mkdirSync(path.dirname(BOOT_LOG), { recursive: true })
     fs.appendFileSync(BOOT_LOG, `[${new Date().toISOString()}] ${message}\n`, 'utf8')
   } catch {
     /* 打点失败不影响运行 */
@@ -38,16 +54,6 @@ bootLog(
   `--- boot --- electron=${process.versions.electron} node=${process.versions.node} ` +
     `runAsNode=${process.env.ELECTRON_RUN_AS_NODE ?? '(unset)'} argv=${process.argv.slice(1).join(' ') || '(none)'}`
 )
-
-// 应用名 / 用户数据目录：**必须在 ready 之前设定**
-// （实测打包后 app.getName() 取的是 package.json 的 name=logiops-desktop，
-//   导致配置写到 %APPDATA%\logiops-desktop，与文档/菜单里显示的路径不一致）
-app.setName('LogiOps')
-app.setPath('userData', path.join(app.getPath('appData'), 'LogiOps'))
-
-// 企业网络常有 HTTP 代理：确保访问**本机本地服务**（127.0.0.1）时永远不走代理，
-// 否则页面加载可能被代理拦掉 → 窗口一片空白（"打开了没显示"）。
-app.commandLine.appendSwitch('proxy-bypass-list', '127.0.0.1,localhost')
 
 const DEFAULT_SERVER = 'http://101.200.139.115'
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'config.json')
@@ -415,8 +421,9 @@ function createWindow() {
 
   // 载入后探一次后端健康状态：连不上就用系统弹窗提示（比页面上的报错更清楚）
   mainWindow.webContents.once('did-finish-load', async () => {
-    // 排障模式：设了 LOGIOPS_CAPTURE_DIR 或 LOGIOPS_CAPTURE=1 时，自动把首屏截下来
-    if (process.env.LOGIOPS_CAPTURE_DIR || process.env.LOGIOPS_CAPTURE === '1') {
+    // 排障模式：自动把首屏截下来（触发方式见 captureRequested）
+    if (captureRequested()) {
+      bootLog('已启用自动截图，3 秒后保存首屏 PNG')
       setTimeout(() => {
         void captureWindow()
       }, 3000)
@@ -532,6 +539,22 @@ function setPublishMode(mode) {
   writeConfig(config)
   log(`发布模式切换为 ${mode}`)
   if (mainWindow) mainWindow.reload()
+}
+
+/**
+ * 是否需要自动截图（排障用）：
+ * - 环境变量 `LOGIOPS_CAPTURE_DIR` 指定目录，或 `LOGIOPS_CAPTURE=1`；
+ * - 或者 userData 下存在标记文件 `capture-on-start.flag`（便于"双击 exe 也能截图"，
+ *   不依赖命令行环境变量）。
+ */
+function captureRequested() {
+  try {
+    return Boolean(process.env.LOGIOPS_CAPTURE_DIR) ||
+      process.env.LOGIOPS_CAPTURE === '1' ||
+      fs.existsSync(path.join(app.getPath('userData'), 'capture-on-start.flag'))
+  } catch {
+    return false
+  }
 }
 
 /**
