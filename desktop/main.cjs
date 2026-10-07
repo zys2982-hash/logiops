@@ -39,6 +39,16 @@ bootLog(
     `runAsNode=${process.env.ELECTRON_RUN_AS_NODE ?? '(unset)'} argv=${process.argv.slice(1).join(' ') || '(none)'}`
 )
 
+// 应用名 / 用户数据目录：**必须在 ready 之前设定**
+// （实测打包后 app.getName() 取的是 package.json 的 name=logiops-desktop，
+//   导致配置写到 %APPDATA%\logiops-desktop，与文档/菜单里显示的路径不一致）
+app.setName('LogiOps')
+app.setPath('userData', path.join(app.getPath('appData'), 'LogiOps'))
+
+// 企业网络常有 HTTP 代理：确保访问**本机本地服务**（127.0.0.1）时永远不走代理，
+// 否则页面加载可能被代理拦掉 → 窗口一片空白（"打开了没显示"）。
+app.commandLine.appendSwitch('proxy-bypass-list', '127.0.0.1,localhost')
+
 const DEFAULT_SERVER = 'http://101.200.139.115'
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'config.json')
 const DIST_DIR = path.join(__dirname, 'web')
@@ -373,11 +383,44 @@ function createWindow() {
     }
   })
   mainWindow.removeMenu?.()
-  mainWindow.once('ready-to-show', () => mainWindow.show())
+  mainWindow.once('ready-to-show', () => {
+    bootLog('ready-to-show → 显示窗口')
+    mainWindow.show()
+    mainWindow.focus()
+  })
+  // 兜底：ready-to-show 在某些环境不会触发（渲染未完成/被代理拦等），
+  // 那样窗口会永远隐藏、用户看到的是"双击了没反应"。这里 4 秒后强制显示。
+  const showFallback = setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      bootLog('ready-to-show 未触发 → 强制显示窗口（界面可能是空白，请看 did-fail-load 日志）')
+      mainWindow.show()
+    }
+  }, 4000)
+  mainWindow.once('closed', () => {
+    clearTimeout(showFallback)
+    mainWindow = null
+  })
+  mainWindow.webContents.on('did-finish-load', () => bootLog('did-finish-load（页面已加载完成）'))
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    bootLog(`did-fail-load code=${errorCode} desc=${errorDescription} url=${validatedURL}`)
+  })
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    bootLog(`render-process-gone ${JSON.stringify(details)}`)
+  })
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    // 只记错误级（0=verbose 1=info 2=warning 3=error），避免刷屏
+    if (level >= 3) bootLog(`renderer console error: ${message}`)
+  })
   mainWindow.loadURL(`http://127.0.0.1:${localPort}/`)
 
   // 载入后探一次后端健康状态：连不上就用系统弹窗提示（比页面上的报错更清楚）
   mainWindow.webContents.once('did-finish-load', async () => {
+    // 排障模式：设了 LOGIOPS_CAPTURE_DIR 或 LOGIOPS_CAPTURE=1 时，自动把首屏截下来
+    if (process.env.LOGIOPS_CAPTURE_DIR || process.env.LOGIOPS_CAPTURE === '1') {
+      setTimeout(() => {
+        void captureWindow()
+      }, 3000)
+    }
     try {
       const ok = await probeHealth()
       if (!ok) {
@@ -491,6 +534,27 @@ function setPublishMode(mode) {
   if (mainWindow) mainWindow.reload()
 }
 
+/**
+ * 截取当前窗口内容存成 PNG。
+ * 排障用：桌面软件"打开了但看不见/白屏"时，截图是唯一能远程确认它到底显示了什么的手段。
+ */
+async function captureWindow() {
+  try {
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const image = await mainWindow.webContents.capturePage()
+    const dir = process.env.LOGIOPS_CAPTURE_DIR || app.getPath('userData')
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, `window-${new Date().toISOString().replace(/[:.]/g, '-')}.png`)
+    fs.writeFileSync(file, image.toPNG())
+    log(`已保存界面截图：${file}`)
+    bootLog(`截图已保存：${file}`)
+    return file
+  } catch (error) {
+    bootLog(`截图失败：${error && error.message}`)
+    return null
+  }
+}
+
 /** 清空页面缓存（下次启动会重新从服务器拉） */
 function clearPageCache() {
   try {
@@ -571,6 +635,18 @@ function buildMenu() {
     {
       label: '帮助',
       submenu: [
+        {
+          label: '保存界面截图…',
+          click: async () => {
+            const file = await captureWindow()
+            dialog.showMessageBox(mainWindow, {
+              type: file ? 'info' : 'error',
+              title: '界面截图',
+              message: file ? '截图已保存' : '截图失败',
+              detail: file || '详情见 startup.log'
+            })
+          }
+        },
         {
           label: '关于 LogiOps',
           click: () => {
