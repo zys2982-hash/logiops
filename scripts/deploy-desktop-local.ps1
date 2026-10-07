@@ -17,7 +17,8 @@ $src = Join-Path $root 'desktop\dist\win-unpacked'
 $dest = Join-Path $env:LOCALAPPDATA 'Programs\LogiOps'
 
 if ($Build) {
-  & pwsh -File (Join-Path $PSScriptRoot 'build-desktop.ps1')
+  # 用当前 PowerShell 宿主执行构建脚本（有些机器没有 pwsh，只有 powershell）
+  & (Join-Path $PSScriptRoot 'build-desktop.ps1')
 }
 
 if (-not (Test-Path (Join-Path $src 'LogiOps.exe'))) {

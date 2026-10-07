@@ -60,11 +60,15 @@ pwsh -File scripts/build-desktop.ps1
 再从桌面/开始菜单快捷方式打开：
 
 ```powershell
-pwsh -File scripts/deploy-desktop-local.ps1          # 用现有构建产物
-pwsh -File scripts/deploy-desktop-local.ps1 -Build   # 先重新打包再安装
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-desktop-local.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-desktop-local.ps1 -Build   # 先重新打包再安装
 ```
 
-（它只做两件事：复制到 `%LOCALAPPDATA%\Programs\LogiOps`、创建快捷方式 —— 不需要管理员、不写注册表。）
+> 直接双击 `scripts\deploy-desktop-local.cmd` 也行（它自带 `-ExecutionPolicy Bypass`；
+> 很多机器默认策略会拒绝运行未签名的 .ps1）。
+
+（它只做两件事：复制到 `%LOCALAPPDATA%\Programs\LogiOps`、创建桌面/开始菜单快捷方式 ——
+不需要管理员、不写注册表。）
 
 **排障三件套**（这套东西就是为此加的）：
 `%APPDATA%\LogiOps\boot.log`（启动打点）、`startup.log`（业务日志）、`window-*.png`（首屏截图，
