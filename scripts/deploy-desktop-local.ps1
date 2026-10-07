@@ -7,14 +7,22 @@
 #   "双击了打不开"。复制到用户目录（ACL 干净）后一切正常 —— 2026-10-07 真机实测。
 #
 # 用法（在仓库根目录）：
-#   pwsh -File scripts/deploy-desktop-local.ps1          # 用现有构建产物安装
-#   pwsh -File scripts/deploy-desktop-local.ps1 -Build   # 先重新打包再安装
-param([switch]$Build)
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-desktop-local.ps1
+#       默认装到 %LOCALAPPDATA%\Programs\LogiOps
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-desktop-local.ps1 -Build
+#       先重新打包再安装
+#   ... -Target D:\LogiOps
+#       装到指定目录（该目录必须对当前用户可写；D:\LogiOps 首次需要管理员建/授权，
+#       见 scripts\install-to-d-logiops.cmd）
+param(
+  [switch]$Build,
+  [string]$Target = (Join-Path $env:LOCALAPPDATA 'Programs\LogiOps')
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $src = Join-Path $root 'desktop\dist\win-unpacked'
-$dest = Join-Path $env:LOCALAPPDATA 'Programs\LogiOps'
+$dest = $Target
 
 if ($Build) {
   # 用当前 PowerShell 宿主执行构建脚本（有些机器没有 pwsh，只有 powershell）
