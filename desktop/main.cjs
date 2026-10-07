@@ -18,7 +18,26 @@ const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron')
 const http = require('http')
 const https = require('https')
 const fs = require('fs')
+const os = require('os')
 const path = require('path')
+
+/**
+ * 启动打点：默认写系统临时目录 logiops-boot.log，可用 LOGIOPS_BOOT_LOG 指定路径。
+ * 用途：Electron 应用若在"还没跑到 whenReady"就退出（单实例锁没拿到、渲染初始化失败等），
+ * 界面上什么都看不到、stdout 也可能是空的 —— 这里留下最早期、最可靠的痕迹。
+ */
+const BOOT_LOG = process.env.LOGIOPS_BOOT_LOG || path.join(os.tmpdir(), 'logiops-boot.log')
+function bootLog(message) {
+  try {
+    fs.appendFileSync(BOOT_LOG, `[${new Date().toISOString()}] ${message}\n`, 'utf8')
+  } catch {
+    /* 打点失败不影响运行 */
+  }
+}
+bootLog(
+  `--- boot --- electron=${process.versions.electron} node=${process.versions.node} ` +
+    `runAsNode=${process.env.ELECTRON_RUN_AS_NODE ?? '(unset)'} argv=${process.argv.slice(1).join(' ') || '(none)'}`
+)
 
 const DEFAULT_SERVER = 'http://101.200.139.115'
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'config.json')
@@ -390,11 +409,17 @@ function buildMenu() {
 // ---------------------------------------------------------------------------
 // 启动
 // ---------------------------------------------------------------------------
+bootLog(`userData=${app.getPath('userData')} appName=${app.getName()} packaged=${app.isPackaged}`)
 const gotLock = app.requestSingleInstanceLock()
+bootLog(`singleInstanceLock=${gotLock}`)
 if (!gotLock) {
+  // 已有实例在跑：正常行为是"把已有窗口拉到前面"。但如果那个实例是坏的（没有窗口），
+  // 用户会看到"双击没反应"。这里把原因写进打点日志，方便排查。
+  bootLog('未拿到单实例锁（已有实例在运行）→ 退出')
   app.quit()
 } else {
   app.on('second-instance', () => {
+    bootLog('收到 second-instance：把已有窗口拉到前面')
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()
@@ -402,15 +427,18 @@ if (!gotLock) {
   })
 
   app.whenReady().then(async () => {
+    bootLog('whenReady 已触发')
     try {
       config = readConfig()
       writeConfig(config)
       log(`启动：serverUrl=${config.serverUrl} version=${app.getVersion()}`)
       const port = await startLocalServer()
       log(`本地服务已启动：http://127.0.0.1:${port}`)
+      bootLog(`本地服务端口=${port}`)
       buildMenu()
       createWindow()
       log('窗口已创建')
+      bootLog('窗口已创建')
     } catch (error) {
       // 关键：启动失败必须弹错并退出。否则主进程会一直活着（没有窗口），
       // 既占着单实例锁、又锁住 exe 文件 → 下一次安装会卡在"无法关闭"。
@@ -418,5 +446,8 @@ if (!gotLock) {
     }
   })
 
-  app.on('window-all-closed', () => app.quit())
+  app.on('window-all-closed', () => {
+    bootLog('所有窗口已关闭 → 退出')
+    app.quit()
+  })
 }
