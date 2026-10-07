@@ -51,6 +51,21 @@ Windows 不允许覆盖**正在运行**的程序文件。如果安装时提示�
 1. 先退出正在运行的 LogiOps（任务管理器 → **「详细信息」**标签页 → `LogiOps.exe` → 结束任务；它可能没有可见窗口）
 2. 或直接改用**便携版**，或重启电脑后再装
 
+> 若上次安装拉起的实例是**管理员权限**，安装程序的自动 `taskkill` 会被拒绝，于是转成"请你手动关闭"（源码见 `app-builder-lib/templates/nsis/include/allowOnlyOneInstallerInstance.nsh`）。
+
+### 提示「不能打开要写入的文件: D:\LogiOps\Uninstall LogiOps.exe」
+
+**安装目录的权限问题**：如果上一次安装是**提权（管理员）运行**的，自定义目录会被"接管"——
+2026-10-07 实测：`D:\LogiOps` 属主变成 `BUILTIN\Administrators`，普通用户只有读取权限，
+于是再装（普通权限）时写不进卸载程序。
+
+处理（任选）：
+1. **推荐**：重新安装时把安装位置改回默认的 `%LOCALAPPDATA%\Programs\LogiOps`（用户目录，一定有写权限）
+2. 右键安装包 → **以管理员身份运行**（能装上，但以后更新/卸载可能还要提权）
+3. 清理旧目录：用**管理员** PowerShell 执行 `Remove-Item D:\LogiOps -Recurse -Force`
+
+**结论**：别把程序装到"需要管理员权限才能写"的目录；用默认安装路径最省事。
+
 ### 出问题时看日志
 
 启动日志写在 `%APPDATA%\LogiOps\startup.log`（含启动失败原因）。
