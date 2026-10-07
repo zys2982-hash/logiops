@@ -49,15 +49,29 @@ let localPort = null
 // ---------------------------------------------------------------------------
 // 配置：服务器地址（写进 %APPDATA%/LogiOps/config.json）
 // ---------------------------------------------------------------------------
+/**
+ * 发布模式（决定"改前端要不要重新打包软件"）：
+ * - `remote-first`（默认）：页面/资源优先从服务器取 → **改前端只需更新服务器，所有客户端刷新即最新**；
+ *   服务器不可用时按"本地缓存 → 包内副本"逐级回退，界面照样能打开。
+ * - `local-only`：只用本地缓存/包内副本（纯离线演示用；前端更新需重新打包）。
+ */
+const PUBLISH_MODES = ['remote-first', 'local-only']
+const DEFAULT_PUBLISH_MODE = 'remote-first'
+
 function readConfig() {
   try {
     const raw = fs.readFileSync(CONFIG_FILE(), 'utf8')
     const parsed = JSON.parse(raw)
-    if (parsed && typeof parsed.serverUrl === 'string' && parsed.serverUrl) return parsed
+    if (parsed && typeof parsed.serverUrl === 'string' && parsed.serverUrl) {
+      return {
+        serverUrl: parsed.serverUrl,
+        mode: PUBLISH_MODES.includes(parsed.mode) ? parsed.mode : DEFAULT_PUBLISH_MODE
+      }
+    }
   } catch {
     /* 首次运行或文件损坏 → 用默认值重建 */
   }
-  return { serverUrl: DEFAULT_SERVER }
+  return { serverUrl: DEFAULT_SERVER, mode: DEFAULT_PUBLISH_MODE }
 }
 
 function writeConfig(config) {
@@ -101,7 +115,7 @@ function failFast(title, error) {
 process.on('uncaughtException', (error) => failFast('LogiOps 运行异常', error))
 process.on('unhandledRejection', (reason) => failFast('LogiOps 运行异常（未处理的 Promise 拒绝）', reason))
 
-let config = { serverUrl: DEFAULT_SERVER }
+let config = { serverUrl: DEFAULT_SERVER, mode: DEFAULT_PUBLISH_MODE }
 
 // ---------------------------------------------------------------------------
 // 本地服务：静态文件 + /api 反向代理
@@ -169,12 +183,93 @@ function proxyToServer(req, res) {
   req.pipe(upstream)
 }
 
-function serveStatic(req, res) {
-  const urlPath = decodeURIComponent((req.url || '/').split('?')[0])
-  const safePath = path
-    .normalize(urlPath)
-    .replace(/^([/\\])+/, '')
-    .replace(/^(\.\.[/\\])+/, '')
+// ---------------------------------------------------------------------------
+// 页面资源：远端优先 → 本地缓存 → 包内副本（三级回退）
+//
+// 为什么要这样：
+// - 只放包内副本 → 改前端必须重新打包分发（"版本化成本"）；
+// - 只放远端（套壳浏览器）→ 服务器/网络一抖就白屏，演示时最致命；
+// - 远端优先 + 缓存回退 → 两者兼得：平时改前端只更新服务器；断网时用上次缓存的最新版；
+//   从没联过网时还能用安装包里那份兜底。
+// ---------------------------------------------------------------------------
+const REMOTE_TIMEOUT_MS = 2500 // 单个资源的远端超时（取不到就立刻回退，不让用户干等）
+const REMOTE_COOLDOWN_MS = 30000 // 熔断：远端刚失败过就 30 秒内不再尝试（否则离线时每个资源都要等 2.5s）
+let remoteDownUntil = 0
+
+const CACHE_DIR = () => path.join(app.getPath('userData'), 'webcache')
+
+function guessMime(urlPath) {
+  return MIME[path.extname(urlPath.split('?')[0]).toLowerCase()] || 'application/octet-stream'
+}
+
+/** 把 URL 路径映射到缓存文件路径（防目录穿越） */
+function cachePathFor(urlPath) {
+  const rel = decodeURIComponent(urlPath.split('?')[0]).replace(/^[/\\]+/, '') || 'index.html'
+  const safe = path.normalize(rel).replace(/^(\.\.[/\\])+/, '')
+  const file = path.join(CACHE_DIR(), safe)
+  return file.startsWith(CACHE_DIR()) ? file : null
+}
+
+function readCache(urlPath) {
+  try {
+    const file = cachePathFor(urlPath)
+    return file && fs.existsSync(file) ? fs.readFileSync(file) : null
+  } catch {
+    return null
+  }
+}
+
+function writeCache(urlPath, buffer) {
+  try {
+    const file = cachePathFor(urlPath)
+    if (!file) return
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, buffer)
+  } catch {
+    /* 缓存失败不影响本次响应 */
+  }
+}
+
+/** 从服务器取一个静态资源；失败/超时/非 2xx 返回 null */
+function fetchRemote(urlPath) {
+  return new Promise((resolve) => {
+    let target
+    try {
+      target = new URL(urlPath, config.serverUrl)
+    } catch {
+      return resolve(null)
+    }
+    const transport = target.protocol === 'https:' ? https : http
+    const req = transport.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port || (target.protocol === 'https:' ? 443 : 80),
+        path: target.pathname + target.search,
+        method: 'GET',
+        timeout: REMOTE_TIMEOUT_MS,
+        headers: { host: target.host, accept: '*/*' }
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (chunk) => chunks.push(chunk))
+        res.on('end', () =>
+          resolve({ status: res.statusCode || 0, contentType: res.headers['content-type'], body: Buffer.concat(chunks) })
+        )
+      }
+    )
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(null)
+    })
+    req.on('error', () => resolve(null))
+    req.end()
+  })
+}
+
+/** 只发安装包里的副本（SPA history 回退到 index.html） */
+function serveBundled(urlPath, res, source = 'bundled') {
+  const safePath = path.normalize(urlPath).replace(/^([/\\])+/, '').replace(/^(\.\.[/\\])+/, '')
   let filePath = path.join(DIST_DIR, safePath)
   if (!filePath.startsWith(DIST_DIR)) {
     res.writeHead(403)
@@ -182,6 +277,14 @@ function serveStatic(req, res) {
     return
   }
   if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    const ext = path.extname(filePath).toLowerCase()
+    if (ext && ext !== '.html') {
+      // 资源类路径（.js/.css/图片…）缺失 → 直接 404。
+      // 绝不能把 index.html 当 JS/CSS 发出去（浏览器会报 MIME/语法错误，页面白屏）。
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('404')
+      return
+    }
     if (fs.existsSync(path.join(filePath, 'index.html'))) {
       filePath = path.join(filePath, 'index.html')
     } else {
@@ -195,16 +298,53 @@ function serveStatic(req, res) {
       res.end('404')
       return
     }
-    res.writeHead(200, { 'content-type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream' })
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream',
+      'x-logiops-source': source
+    })
     res.end(data)
   })
+}
+
+async function handleStatic(req, res) {
+  const urlPath = (req.url || '/').split('?')[0]
+
+  if (config.mode === 'remote-first' && Date.now() >= remoteDownUntil) {
+    const remote = await fetchRemote(req.url)
+    if (remote && remote.status >= 200 && remote.status < 300) {
+      writeCache(urlPath, remote.body)
+      res.writeHead(200, {
+        'content-type': remote.contentType || guessMime(urlPath),
+        'x-logiops-source': 'remote'
+      })
+      res.end(remote.body)
+      return
+    }
+    if (Date.now() >= remoteDownUntil) {
+      remoteDownUntil = Date.now() + REMOTE_COOLDOWN_MS
+      log(`远端取页面失败（${urlPath}），${REMOTE_COOLDOWN_MS / 1000} 秒内改用本地缓存/包内副本`)
+    }
+  }
+
+  const cached = readCache(urlPath)
+  if (cached) {
+    res.writeHead(200, { 'content-type': guessMime(urlPath), 'x-logiops-source': 'cache' })
+    res.end(cached)
+    return
+  }
+
+  serveBundled(urlPath, res, 'bundled')
 }
 
 function startLocalServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       if (isApiPath((req.url || '').split('?')[0])) proxyToServer(req, res)
-      else serveStatic(req, res)
+      else handleStatic(req, res).catch((error) => {
+        log(`页面请求处理失败：${error && error.message}`)
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('500')
+      })
     })
     server.on('error', reject)
     // 端口交给系统随机分配（避免和本机已占用的端口冲突），只监听 127.0.0.1
@@ -334,10 +474,38 @@ ipcMain.handle('logiops:close-settings', () => {
 ipcMain.handle('logiops:info', () => ({
   version: app.getVersion(),
   serverUrl: config.serverUrl,
+  mode: config.mode,
   configPath: CONFIG_FILE(),
+  cachePath: CACHE_DIR(),
   electron: process.versions.electron,
   chrome: process.versions.chrome
 }))
+
+/** 切换发布模式：写入配置 + 重载界面 */
+function setPublishMode(mode) {
+  if (!PUBLISH_MODES.includes(mode)) return
+  config = { ...config, mode }
+  remoteDownUntil = 0
+  writeConfig(config)
+  log(`发布模式切换为 ${mode}`)
+  if (mainWindow) mainWindow.reload()
+}
+
+/** 清空页面缓存（下次启动会重新从服务器拉） */
+function clearPageCache() {
+  try {
+    fs.rmSync(CACHE_DIR(), { recursive: true, force: true })
+    log('已清空页面缓存')
+    dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: '页面缓存',
+      message: '页面缓存已清空',
+      detail: `目录：${CACHE_DIR()}\n下次打开会重新从服务器获取页面。`
+    })
+  } catch (error) {
+    dialog.showErrorBox('清空缓存失败', String(error))
+  }
+}
 
 function buildMenu() {
   const template = [
@@ -363,9 +531,29 @@ function buildMenu() {
               type: ok ? 'info' : 'warning',
               title: '后端连接检测',
               message: ok ? '后端连接正常 ✓' : '连不上后端 ✗',
-              detail: `服务器地址：${config.serverUrl}`
+              detail: `服务器地址：${config.serverUrl}\n发布模式：${config.mode}`
             })
           }
+        },
+        { type: 'separator' },
+        {
+          label: '发布模式',
+          submenu: [
+            {
+              label: '远端优先（改前端只更新服务器）',
+              type: 'radio',
+              checked: config.mode === 'remote-first',
+              click: () => setPublishMode('remote-first')
+            },
+            {
+              label: '仅用本地副本（离线演示）',
+              type: 'radio',
+              checked: config.mode === 'local-only',
+              click: () => setPublishMode('local-only')
+            },
+            { type: 'separator' },
+            { label: '清空页面缓存…', click: clearPageCache }
+          ]
         }
       ]
     },
@@ -392,7 +580,9 @@ function buildMenu() {
               message: `LogiOps 桌面客户端 v${app.getVersion()}`,
               detail: [
                 `后端服务器：${config.serverUrl}`,
+                `发布模式：${config.mode === 'remote-first' ? '远端优先（页面来自服务器）' : '仅用本地副本'}`,
                 `配置文件：${CONFIG_FILE()}`,
+                `页面缓存：${CACHE_DIR()}`,
                 `Electron ${process.versions.electron} / Chromium ${process.versions.chrome}`,
                 '',
                 '数据保存在云端后端，多人多设备共享同一份数据。'
@@ -431,7 +621,7 @@ if (!gotLock) {
     try {
       config = readConfig()
       writeConfig(config)
-      log(`启动：serverUrl=${config.serverUrl} version=${app.getVersion()}`)
+      log(`启动：serverUrl=${config.serverUrl} mode=${config.mode} version=${app.getVersion()}`)
       const port = await startLocalServer()
       log(`本地服务已启动：http://127.0.0.1:${port}`)
       bootLog(`本地服务端口=${port}`)
