@@ -27,6 +27,10 @@ dist/
 .vite/
 *.tsbuildinfo
 
+# desktop（Electron 桌面客户端）：web/ 是打包时从 frontend/dist 拷进来的产物，不入库
+desktop/web/
+desktop/release/
+
 # artifacts / logs
 artifacts/
 *.log

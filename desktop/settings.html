@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>设置服务器地址</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 18px;
+        font: 14px/1.6 "Microsoft YaHei", system-ui, sans-serif;
+        color: #1f2d3d;
+        background: #f7f9fc;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 9px 10px;
+        font-size: 14px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        outline: none;
+      }
+      input:focus {
+        border-color: #2f6fed;
+      }
+      .hint {
+        color: #6b7280;
+        font-size: 12px;
+        margin-top: 8px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 18px;
+      }
+      button {
+        padding: 8px 16px;
+        font-size: 14px;
+        border-radius: 6px;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #2f6fed;
+        border-color: #2f6fed;
+        color: #fff;
+      }
+      .error {
+        color: #d93025;
+        font-size: 12px;
+        min-height: 18px;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <label for="server">后端服务器地址</label>
+    <input id="server" type="text" placeholder="http://101.200.139.115" autofocus />
+    <div class="hint">
+      示例：<code>http://101.200.139.115</code>（你的云服务器公网 IP）或 <code>https://demo.example.com</code>。
+      数据存在这个服务器上，所以团队里每个人填同一个地址就会看到同一份数据。
+    </div>
+    <div class="error" id="error"></div>
+    <div class="row">
+      <button id="cancel">取消</button>
+      <button id="save" class="primary">保存并重新加载</button>
+    </div>
+    <script>
+      const input = document.getElementById('server')
+      const error = document.getElementById('error')
+      window.logiopsSettings.current().then((url) => {
+        input.value = url
+        input.select()
+      })
+      document.getElementById('cancel').onclick = () => window.logiopsSettings.close()
+      document.getElementById('save').onclick = async () => {
+        const result = await window.logiopsSettings.save(input.value)
+        if (!result.ok) error.textContent = result.message || '保存失败'
+      }
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') document.getElementById('save').click()
+      })
+    </script>
+  </body>
+</html>

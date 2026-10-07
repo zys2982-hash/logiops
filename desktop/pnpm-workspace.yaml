@@ -1,0 +1,5 @@
+# pnpm 12：构建脚本白名单必须放在 pnpm-workspace.yaml 的 allowBuilds（.npmrc 里的数组写法会被忽略）
+# electron-winstaller 需要跑它的 postinstall；electron 自身的 postinstall 负责下载 Electron 运行时。
+allowBuilds:
+  electron: true
+  electron-winstaller: true

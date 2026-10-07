@@ -1,0 +1,49 @@
+{
+  "name": "logiops-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LogiOps 物流异常协同平台 · Windows 桌面客户端（Electron 外壳 + 本地反向代理到云端后端）",
+  "author": "zys2982-hash",
+  "license": "UNLICENSED",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --win --dir",
+    "dist": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.logiops.desktop",
+    "productName": "LogiOps",
+    "copyright": "LogiOps demo",
+    "files": [
+      "main.cjs",
+      "settings.html",
+      "settings-preload.cjs",
+      "web/**/*"
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LogiOps",
+      "artifactName": "LogiOps-Setup-${version}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  }
+}
