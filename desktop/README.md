@@ -44,6 +44,32 @@ pwsh -File scripts/build-desktop.ps1
 > 安装版**装完不会自动启动**（`runAfterFinish: false`）。这是刻意的：装完自己起进程，会导致"再装时文件被占用"的经典冲突。
 > 便携版没有安装过程，天然避开这个问题，演示时优先用它。
 
+### ⚠️ 不要从"仓库/工作区目录"直接双击运行构建产物
+
+**2026-10-07 真机实测（重要）**：同一个 exe，
+
+| 运行位置 | 结果 |
+|---|---|
+| 普通目录（如 `%LOCALAPPDATA%\Programs\LogiOps`、`D:\LogiOps`） | ✅ 正常打开 |
+| **DSH/沙箱加固过 ACL 的目录**（如 `D:\workspace1\...`，多出 `CodexSandboxUsers` + Deny 规则） | ❌ `render-process-gone: launch-failed` → 界面出不来，主进程随后崩溃（`0x80000003`） |
+
+原因：Chromium 启动**渲染进程**要用到沙箱/受限令牌机制，而这类目录的 ACL 由沙箱写入
+（`CodexSandboxUsers`、`Everyone: Deny DeleteSubdirectoriesAndFiles`），导致渲染进程创建失败。
+
+**正确做法**：构建完（`scripts/build-desktop.ps1`）后，用下面这条把它"就地安装"到用户目录，
+再从桌面/开始菜单快捷方式打开：
+
+```powershell
+pwsh -File scripts/deploy-desktop-local.ps1          # 用现有构建产物
+pwsh -File scripts/deploy-desktop-local.ps1 -Build   # 先重新打包再安装
+```
+
+（它只做两件事：复制到 `%LOCALAPPDATA%\Programs\LogiOps`、创建快捷方式 —— 不需要管理员、不写注册表。）
+
+**排障三件套**（这套东西就是为此加的）：
+`%APPDATA%\LogiOps\boot.log`（启动打点）、`startup.log`（业务日志）、`window-*.png`（首屏截图，
+放 `capture-on-start.flag` 即自动截图）。
+
 ### 装不上/无法关闭怎么办
 
 Windows 不允许覆盖**正在运行**的程序文件。如果安装时提示「LogiOps 无法关闭」：
