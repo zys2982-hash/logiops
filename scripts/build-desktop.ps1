@@ -1,4 +1,4 @@
-# 一键构建 Windows 桌面安装包（Electron）
+﻿# 一键构建 Windows 桌面安装包（Electron）
 #
 # 用法（在仓库根目录或任意位置）：
 #     pwsh -File scripts/build-desktop.ps1

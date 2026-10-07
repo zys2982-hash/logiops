@@ -1,59 +1,52 @@
 @echo off
 rem ===========================================================================
-rem  把最新版装到 D:\LogiOps（替换旧版本），并让该目录以后可被普通用户更新。
+rem  ?????? D:\LogiOps????????????????????????
 rem
-rem  背景：D:\LogiOps 是上次"提权安装"创建的目录（属主 Administrators），
-rem        普通权限无法删除/写入 —— 所以这一步需要管理员权限（脚本会自动请求 UAC）。
-rem        装完脚本会给你的用户账号加"完全控制"，**以后更新就不需要管理员了**。
+rem  ???????D:\LogiOps ???"????"?????? Administrators??
+rem  ??????????????????? UAC??????????????
+rem  ?????????????
 rem
-rem  用法：双击本文件 → UAC 弹窗点「是」
+rem  ???????? -> UAC ??? [?]
 rem ===========================================================================
 setlocal
-set "SRC=%LOCALAPPDATA%\Programs\LogiOps"
+set "SRC=%~dp0..\desktop\dist\win-unpacked"
+if not exist "%SRC%\LogiOps.exe" set "SRC=%LOCALAPPDATA%\Programs\LogiOps"
 set "DST=D:\LogiOps"
 
 net session >nul 2>&1
 if errorlevel 1 (
-  echo 正在请求管理员权限（请在弹窗中点「是」）...
+  echo Requesting administrator rights... please click YES in the UAC dialog.
   powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
   exit /b
 )
 
 echo.
-echo [1/6] 检查最新版构建产物...
+echo [1/6] Latest build source: %SRC%
 if not exist "%SRC%\LogiOps.exe" (
-  echo   [错误] 找不到 %SRC%\LogiOps.exe
-  echo   请先运行 scripts\deploy-desktop-local.cmd（或 build-desktop.ps1）
+  echo   [ERROR] not found: %SRC%\LogiOps.exe
+  echo   Run scripts\build-desktop.cmd first.
   echo.
   pause
   exit /b 1
 )
-echo    OK: %SRC%\LogiOps.exe
-
-echo [2/6] 结束正在运行的 LogiOps...
+echo [2/6] Stopping running LogiOps...
 taskkill /F /IM LogiOps.exe >nul 2>&1
-
-echo [3/6] 删除旧版本 %DST% ...
+echo [3/6] Removing old %DST% ...
 if exist "%DST%" rmdir /S /Q "%DST%"
-
-echo [4/6] 复制最新版到 %DST% ...
+echo [4/6] Copying to %DST% ...
 mkdir "%DST%" 2>nul
 xcopy "%SRC%\*" "%DST%\" /E /I /Y /Q >nul
 if not exist "%DST%\LogiOps.exe" (
-  echo   [错误] 复制失败
+  echo   [ERROR] copy failed
   pause
   exit /b 1
 )
-
-echo [5/6] 给你的账号加完全控制（以后更新无需管理员）...
+echo [5/6] Granting %USERNAME% full control (future updates need no admin)...
 icacls "%DST%" /grant "%USERNAME%:(OI)(CI)F" /T >nul
-
-echo [6/6] 重建桌面/开始菜单快捷方式（指向 %DST%）...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws=New-Object -ComObject WScript.Shell; foreach($p in @((Join-Path ([Environment]::GetFolderPath('Desktop')) 'LogiOps.lnk'),(Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\LogiOps.lnk'))){$s=$ws.CreateShortcut($p);$s.TargetPath='D:\LogiOps\LogiOps.exe';$s.WorkingDirectory='D:\LogiOps';$s.IconLocation='D:\LogiOps\LogiOps.exe';$s.Description='LogiOps 物流异常协同平台';$s.Save()}"
-
+echo [6/6] Recreating shortcuts...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ws=New-Object -ComObject WScript.Shell; foreach($p in @((Join-Path ([Environment]::GetFolderPath('Desktop')) 'LogiOps.lnk'),(Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\LogiOps.lnk'))){$s=$ws.CreateShortcut($p);$s.TargetPath='D:\LogiOps\LogiOps.exe';$s.WorkingDirectory='D:\LogiOps';$s.IconLocation='D:\LogiOps\LogiOps.exe';$s.Description='LogiOps';$s.Save()}"
 echo.
-echo 完成！已安装到 %DST%
-echo   桌面/开始菜单快捷方式已指向它
-echo   以后更新：powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-desktop-local.ps1 -Target D:\LogiOps
+echo Done. Installed to %DST%
+echo   Update later: powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-desktop-local.ps1 -Target D:\LogiOps
 echo.
 pause
