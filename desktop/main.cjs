@@ -52,6 +52,36 @@ function writeConfig(config) {
   }
 }
 
+/**
+ * 启动日志：写到 %APPDATA%/LogiOps/startup.log。
+ * 桌面软件出问题时，用户能直接把这段日志发出来 —— 否则"没窗口、没输出"完全没法排查
+ * （2026-10-07 的真实教训：一个启动失败的实例变成了无窗口僵尸进程，锁着文件导致装不上）。
+ */
+function log(message) {
+  try {
+    const file = path.join(path.dirname(CONFIG_FILE()), 'startup.log')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.appendFileSync(file, `[${new Date().toISOString()}] ${message}\n`, 'utf8')
+  } catch {
+    /* 日志失败不影响使用 */
+  }
+}
+
+/** 启动环节出错时：必须弹错 + 退出，绝不能留下"没有窗口却还活着"的进程 */
+function failFast(title, error) {
+  const detail = error && error.stack ? error.stack : String(error)
+  log(`FATAL ${title}: ${detail}`)
+  try {
+    dialog.showErrorBox(title, `${detail}\n\n软件将退出。日志：${path.join(path.dirname(CONFIG_FILE()), 'startup.log')}`)
+  } catch {
+    /* 连弹窗都失败时也要退出 */
+  }
+  app.exit(1)
+}
+
+process.on('uncaughtException', (error) => failFast('LogiOps 运行异常', error))
+process.on('unhandledRejection', (reason) => failFast('LogiOps 运行异常（未处理的 Promise 拒绝）', reason))
+
 let config = { serverUrl: DEFAULT_SERVER }
 
 // ---------------------------------------------------------------------------
@@ -372,11 +402,20 @@ if (!gotLock) {
   })
 
   app.whenReady().then(async () => {
-    config = readConfig()
-    writeConfig(config)
-    await startLocalServer()
-    buildMenu()
-    createWindow()
+    try {
+      config = readConfig()
+      writeConfig(config)
+      log(`启动：serverUrl=${config.serverUrl} version=${app.getVersion()}`)
+      const port = await startLocalServer()
+      log(`本地服务已启动：http://127.0.0.1:${port}`)
+      buildMenu()
+      createWindow()
+      log('窗口已创建')
+    } catch (error) {
+      // 关键：启动失败必须弹错并退出。否则主进程会一直活着（没有窗口），
+      // 既占着单实例锁、又锁住 exe 文件 → 下一次安装会卡在"无法关闭"。
+      failFast('LogiOps 启动失败', error)
+    }
   })
 
   app.on('window-all-closed', () => app.quit())

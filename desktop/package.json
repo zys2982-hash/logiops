@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --win --dir",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win"
   },
   "build": {
     "appId": "com.logiops.desktop",
@@ -29,6 +29,12 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -39,7 +45,11 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "LogiOps",
-      "artifactName": "LogiOps-Setup-${version}.${ext}"
+      "artifactName": "LogiOps-Setup-${version}.${ext}",
+      "runAfterFinish": false
+    },
+    "portable": {
+      "artifactName": "LogiOps-Portable-${version}.${ext}"
     }
   },
   "devDependencies": {
