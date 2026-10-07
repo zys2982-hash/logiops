@@ -22,26 +22,11 @@ const os = require('os')
 const path = require('path')
 
 /**
- * 启动打点：默认写系统临时目录 logiops-boot.log，可用 LOGIOPS_BOOT_LOG 指定路径。
- * 用途：Electron 应用若在"还没跑到 whenReady"就退出（单实例锁没拿到、渲染初始化失败等），
- * 界面上什么都看不到、stdout 也可能是空的 —— 这里留下最早期、最可靠的痕迹。
+ * 启动打点：固定写在 **用户主目录** `~\LogiOps-boot.log`
+ * （不用系统临时目录、也不依赖 Electron 的路径 API —— 不同启动方式的 TEMP/路径可能不同，
+ *   而且日志本身必须能在"Electron 路径设置失败"时照样写出来。2026-10-07 实测踩过两次。）
  */
-// 应用名 / 用户数据目录：**必须在 ready 之前、且在任何 getPath 使用之前设定**
-// （实测打包后 app.getName() 取的是 package.json 的 name=logiops-desktop，
-//   导致配置写到 %APPDATA%\logiops-desktop，与文档/菜单里显示的路径不一致）
-app.setName('LogiOps')
-app.setPath('userData', path.join(app.getPath('appData'), 'LogiOps'))
-
-// 企业网络常有 HTTP 代理：确保访问**本机本地服务**（127.0.0.1）时永远不走代理，
-// 否则页面加载可能被代理拦掉 → 窗口一片空白（"打开了没显示"）。
-app.commandLine.appendSwitch('proxy-bypass-list', '127.0.0.1,localhost')
-
-/**
- * 启动打点：固定写在 %APPDATA%\LogiOps\boot.log（可用 LOGIOPS_BOOT_LOG 覆盖）。
- * 用固定路径而不是系统临时目录 —— 不同启动方式（双击 / 命令行 / 计划任务）的 TEMP
- * 可能不一样，日志散落各处就查不到了（2026-10-07 实测踩过）。
- */
-const BOOT_LOG = process.env.LOGIOPS_BOOT_LOG || path.join(app.getPath('userData'), 'boot.log')
+const BOOT_LOG = process.env.LOGIOPS_BOOT_LOG || path.join(os.homedir(), 'LogiOps-boot.log')
 function bootLog(message) {
   try {
     fs.mkdirSync(path.dirname(BOOT_LOG), { recursive: true })
@@ -52,8 +37,66 @@ function bootLog(message) {
 }
 bootLog(
   `--- boot --- electron=${process.versions.electron} node=${process.versions.node} ` +
-    `runAsNode=${process.env.ELECTRON_RUN_AS_NODE ?? '(unset)'} argv=${process.argv.slice(1).join(' ') || '(none)'}`
+    `runAsNode=${process.env.ELECTRON_RUN_AS_NODE ?? '(unset)'} argv=${process.argv.slice(1).join(' ') || '(none)'} ` +
+    `exe=${process.execPath}`
 )
+
+// 应用名 / 用户数据目录：必须在 ready 之前、且在任何 getPath 使用之前设定。
+// 每一步都记录结果：这一步以前曾让整个应用静默退出，而日志里看不出任何信息。
+try {
+  app.setName('LogiOps')
+  bootLog('setName ok')
+} catch (error) {
+  bootLog(`setName 失败：${error && error.message}`)
+}
+try {
+  app.setPath('userData', path.join(app.getPath('appData'), 'LogiOps'))
+  bootLog(`setPath(userData) ok -> ${app.getPath('userData')}`)
+} catch (error) {
+  bootLog(`setPath(userData) 失败：${error && error.message}`)
+}
+
+// 企业网络常有 HTTP 代理：确保访问**本机本地服务**（127.0.0.1）时永远不走代理，
+// 否则页面加载可能被代理拦掉 → 窗口一片空白（"打开了没显示"）。
+try {
+  app.commandLine.appendSwitch('proxy-bypass-list', '127.0.0.1,localhost')
+  bootLog('appendSwitch(proxy-bypass-list) ok')
+} catch (error) {
+  bootLog(`appendSwitch 失败：${error && error.message}`)
+}
+
+/**
+ * 兼容模式开关（应对"安全软件拦截渲染子进程 / 沙箱无法初始化 / GPU 驱动异常"等环境问题）。
+ *
+ * 用法：在 `%APPDATA%\LogiOps\` 下放对应文件即可生效，**改完重启软件就行，不必重新打包**：
+ *   compat-no-sandbox.flag      → 关闭 Chromium 沙箱（最常解决 launch-failed）
+ *   compat-gpu-off.flag         → 关闭 GPU 硬加速
+ *   compat-single-process.flag  → 单进程模式：连渲染子进程都不开（对付"拦截子进程"的安全软件）
+ *
+ * 背景（2026-10-07 真机实测）：未签名的新 exe 被联想电脑管家（火绒引擎）拦掉渲染子进程，
+ * 表现为 render-process-gone{reason:launch-failed} + 主进程 0x80000003 崩溃，界面完全出不来。
+ */
+function applyCompatSwitches() {
+  const hasFlag = (name) => {
+    try {
+      return fs.existsSync(path.join(app.getPath('userData'), name))
+    } catch {
+      return false
+    }
+  }
+  const single = hasFlag('compat-single-process.flag')
+  const noSandbox = single || hasFlag('compat-no-sandbox.flag')
+  const gpuOff = hasFlag('compat-gpu-off.flag')
+  if (noSandbox) {
+    app.commandLine.appendSwitch('no-sandbox')
+    app.commandLine.appendSwitch('disable-gpu-sandbox')
+  }
+  if (single) app.commandLine.appendSwitch('single-process')
+  if (gpuOff) app.commandLine.appendSwitch('disable-gpu')
+  bootLog(`兼容开关：no-sandbox=${noSandbox} single-process=${single} gpu-off=${gpuOff}`)
+  return { noSandbox, single, gpuOff }
+}
+const compat = applyCompatSwitches()
 
 const DEFAULT_SERVER = 'http://101.200.139.115'
 const CONFIG_FILE = () => path.join(app.getPath('userData'), 'config.json')
@@ -721,6 +764,9 @@ if (!gotLock) {
       config = readConfig()
       writeConfig(config)
       log(`启动：serverUrl=${config.serverUrl} mode=${config.mode} version=${app.getVersion()}`)
+      if (compat.noSandbox || compat.single || compat.gpuOff) {
+        log(`兼容模式生效：${JSON.stringify(compat)}`)
+      }
       const port = await startLocalServer()
       log(`本地服务已启动：http://127.0.0.1:${port}`)
       bootLog(`本地服务端口=${port}`)
