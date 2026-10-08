@@ -589,7 +589,8 @@ onMounted(async () => {
         </div>
         <div class="u-text-muted u-mt-8">
           业务时间 {{ demo.businessTimeText }} · 承诺到达 {{ formatDateTime(exception.promised_delivery_at) }}
-          <template v-if="isDelayCase"> · 实际送达 {{ formatDateTime(exception.delivered_at) }}</template>
+          <!-- 延误判定的判定时点（2026-10-08 口径）：页头跟 SLA 卡保持一致，显示「预计到达」 -->
+          <template v-if="isDelayCase"> · 预计到达 {{ formatDateTime(exception.planned_delivery_at) }}</template>
         </div>
       </el-card>
 

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 /**
- * SLA 影响卡（2026-10-05 新口径：**只有延误单才有 SLA 影响**）：
+ * SLA 影响卡（**口径 2026-10-08：延误按「预计到达时间」判定**）：
  * - 承诺到达：规则算（发车 + SLA 规则偏移），只读；
- * - **实际送达**：订单事实（订单点「已送达」时的实际时间）；录错时可用「修改」修正
- *   → 调 `PATCH /orders/{id}/delivered-at`，后端立刻按新时间重算延误单（仍违约→重算；
- *     不再违约→只重算，单子仍挂着等人工点「关闭」）；
- * - 延误时长 = 实际送达 − 承诺到达（是否违约由规则判定）。
+ * - **预计到达**：判定时点（订单的 `planned_delivery_at`），录错时用「修改」改正
+ *   → `PATCH /orders/{id}`，后端立刻按新时间重算该订单的延误单（仍不自动收口，等人工点）；
+ * - 延误时长 = 预计到达 − 承诺到达（是否违约由规则判定）。
+ *
+ * 「实际送达」自 2026-10-08 起**不再参与延误判定**，所以卡片不再显示它
+ * （订单页仍保留「修正实际送达时间」，那是订单事实的纠错入口）。
  * 车辆故障单不渲染本卡片（用户口径："普通的车辆异常订单不应该有 sla 影响"）。
  */
 import { computed, ref, watch } from 'vue'
@@ -21,14 +23,14 @@ const props = defineProps<{ exception: ExceptionDetail }>()
 const emit = defineEmits<{ (e: 'updated'): void }>()
 
 const auth = useAuthStore()
-/** 修正实际送达时间改的是**订单**，所以看 order.manage 权限 */
+/** 改的是**订单**上的预计到达时间，所以看 order.manage 权限 */
 const canEdit = computed(() => auth.can(Perm.ORDER_MANAGE))
 const saving = ref(false)
 const editing = ref(false)
 const draft = ref('')
 
 watch(
-  () => props.exception.delivered_at,
+  () => props.exception.planned_delivery_at,
   (value) => {
     draft.value = value ? formatDateTime(value, 'YYYY-MM-DD HH:mm') : ''
   },
@@ -37,29 +39,26 @@ watch(
 
 const delayText = computed(() => formatDelay(props.exception.sla_delay_minutes))
 const promisedText = computed(() => formatDateTime(props.exception.promised_delivery_at))
-const deliveredText = computed(() => formatDateTime(props.exception.delivered_at))
+const plannedText = computed(() => formatDateTime(props.exception.planned_delivery_at))
 
 async function save(): Promise<void> {
   if (!draft.value) {
-    ElMessage.warning('请选择实际送达时间')
+    ElMessage.warning('请选择预计到达时间')
     return
   }
-  const deliveredUtc = displayIsoToUtc(draft.value)
-  if (!deliveredUtc) {
-    ElMessage.warning('实际送达时间格式不正确')
+  const plannedUtc = displayIsoToUtc(draft.value)
+  if (!plannedUtc) {
+    ElMessage.warning('预计到达时间格式不正确')
     return
   }
   saving.value = true
   try {
-    await orderApi.correctDeliveredAt(props.exception.order_id, {
-      delivered_at: deliveredUtc,
-      note: '修正实际送达时间（异常单 SLA 卡）',
-    })
-    ElMessage.success('实际送达时间已修正，延误与风险分已按新时间重算')
+    await orderApi.updateOrder(props.exception.order_id, { planned_delivery_at: plannedUtc })
+    ElMessage.success('预计到达时间已修正，延误与风险分已按新时间重算')
     editing.value = false
     emit('updated')
   } catch {
-    // 409（订单未送达）/403/422 已由响应拦截器提示
+    // 403 / 409 / 422 已由响应拦截器提示
   } finally {
     saving.value = false
   }
@@ -80,8 +79,8 @@ async function save(): Promise<void> {
       <div class="u-text-muted">
         {{
           exception.sla_breached
-            ? '规则口径：超出允许延迟即违约（§8.3）—— 送达时按实际时间判定'
-            : '实际送达仍在允许延迟范围内'
+            ? '规则口径：超出允许延迟即违约（§8.3）—— 按「预计到达时间」判定'
+            : '预计到达仍在允许延迟范围内'
         }}
       </div>
     </el-alert>
@@ -90,7 +89,7 @@ async function save(): Promise<void> {
       <el-descriptions-item label="承诺到达">
         {{ promisedText }}
       </el-descriptions-item>
-      <el-descriptions-item label="实际送达">
+      <el-descriptions-item label="预计到达">
         <template v-if="editing">
           <el-date-picker
             v-model="draft"
@@ -101,7 +100,7 @@ async function save(): Promise<void> {
           />
         </template>
         <template v-else>
-          {{ deliveredText }}
+          {{ plannedText }}
           <el-button v-if="canEdit" size="small" text type="primary" @click="editing = true">
             修改
           </el-button>
@@ -109,7 +108,7 @@ async function save(): Promise<void> {
       </el-descriptions-item>
       <el-descriptions-item label="延误时长">
         <el-tag :type="exception.sla_breached ? 'danger' : 'info'" size="small">{{ delayText }}</el-tag>
-        <span v-if="editing" class="u-text-muted">= 实际送达 − 承诺到达，保存后按规则重算</span>
+        <span v-if="editing" class="u-text-muted">= 预计到达 − 承诺到达，保存后按规则重算</span>
       </el-descriptions-item>
     </el-descriptions>
 
@@ -118,7 +117,11 @@ async function save(): Promise<void> {
       <el-button size="small" text @click="editing = false">取消</el-button>
     </div>
     <div v-else class="u-text-muted u-mt-8">
-      {{ canEdit ? '实际送达时间录错时可用「修改」修正，改完立刻重算延误与风险等级' : '没有 order.manage 权限，实际送达时间只读（§9.2 权限矩阵）' }}
+      {{
+        canEdit
+          ? '预计到达时间由运营在订单页登记；录错时可用「修改」改正，改完立刻重算延误与风险等级'
+          : '没有 order.manage 权限，预计到达时间只读（§9.2 权限矩阵）'
+      }}
     </div>
   </PanelCard>
 </template>

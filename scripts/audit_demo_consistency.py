@@ -178,10 +178,11 @@ def main() -> int:
             if events and base and max(e.occurred_at for e in events) < base:
                 bad(f"订单 {order.order_no} 轨迹全部早于派车时间")
 
-        # 6b) 新风险模型不变量（2026-10-05；收口口径 2026-10-06）
+        # 6b) 新风险模型不变量（2026-10-05；收口口径 2026-10-06；**延误口径 2026-10-08**）
         #     · 车辆故障单不做 SLA 判定 → 不应有 sla_delay_minutes / sla_breached
-        #     · 延误单只在送达后产生 → 订单必须已送达，且延误 = 实际送达 − 承诺送达
-        #     · sla_breached 必须与"延误 vs 规则允许延迟"一致（改过送达时间后可合法地翻成 False；
+        #     · 延误单由「预计到达时间」触发 → 订单必须有 planned_delivery_at，
+        #       且延误 = 预计到达 − 承诺送达（**不再**用实际送达；没填预计到达就不该有延误单）
+        #     · sla_breached 必须与"延误 vs 规则允许延迟"一致（改过预计到达时间后可合法地翻成 False；
         #       单子不再自动收口，会挂着等人工点「解决 / 关闭」）
         for case in cases:
             order = next((o for o in orders if o.id == case.order_id), None)
@@ -195,20 +196,23 @@ def main() -> int:
                 if codes & {"DELAY_BASE", "SLA_BREACH"}:
                     bad(f"ex#{case.id} {case.case_no} 车辆故障单不该带延误/违约因子：{sorted(codes)}")
             if str(case.type) == "DELAY_RISK":
-                if order is None or order.delivered_at is None:
-                    bad(f"ex#{case.id} {case.case_no} 延误单必须产生于送达之后，但订单未送达")
+                if order is None or order.planned_delivery_at is None:
+                    bad(
+                        f"ex#{case.id} {case.case_no} 延误单必须由「预计到达时间」触发，"
+                        f"但订单没有 planned_delivery_at"
+                    )
                     continue
                 if order.promised_delivery_at is not None and case.sla_delay_minutes is not None:
                     expected_delay = int(
-                        round((order.delivered_at - order.promised_delivery_at).total_seconds() / 60)
+                        round((order.planned_delivery_at - order.promised_delivery_at).total_seconds() / 60)
                     )
                     if abs(int(case.sla_delay_minutes) - expected_delay) > 1:
                         bad(
                             f"ex#{case.id} {case.case_no} 延误 {case.sla_delay_minutes} ≠ "
-                            f"实际送达−承诺送达 {expected_delay}"
+                            f"预计到达−承诺送达 {expected_delay}"
                         )
                 # sla_breached 必须与"延误 vs 规则允许延迟"一致。2026-10-06 起不能再要求
-                # "延误单一直报违约"：改过实际送达时间后它会合法地翻成 False（单子仍挂着或已人工收口）。
+                # "延误单一直报违约"：改过预计到达时间后它会合法地翻成 False（单子仍挂着或已人工收口）。
                 rule = rules.get(order.sla_rule_id) if order.sla_rule_id else None
                 if rule is not None and case.sla_delay_minutes is not None:
                     allowed = int(getattr(rule, "max_delay_minutes", 0) or 0)

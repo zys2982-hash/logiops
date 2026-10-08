@@ -32,7 +32,15 @@ OrderView = Annotated[RequestContext, Depends(require(Perm.ORDER_VIEW))]
 OrderManage = Annotated[RequestContext, Depends(require(Perm.ORDER_MANAGE))]
 # 派车是 OPERATOR+（§8.1），改基础信息是 ADMIN+（§9.2）→ 路由放宽，处理函数内按字段收紧
 OrderPatch = Annotated[RequestContext, Depends(require_any(Perm.ORDER_MANAGE, Perm.TRACKING_WRITE))]
-BASIC_FIELDS = ("origin_city", "dest_city", "cargo_desc", "weight_ton", "distance_km", "remark")
+BASIC_FIELDS = (
+    "origin_city",
+    "dest_city",
+    "cargo_desc",
+    "weight_ton",
+    "distance_km",
+    "planned_delivery_at",  # 「预计到达时间」：手工登记，与基础信息同权限（ORDER_MANAGE）
+    "remark",
+)
 
 SORT_FIELDS = {
     "id",
@@ -138,7 +146,7 @@ def patch_order(ctx: OrderPatch, order_id: int, payload: OrderUpdate) -> Any:
 @router.patch(
     "/{order_id}/delivered-at",
     response_model=OrderOut,
-    summary="修正实际送达时间（延误单只在送达后按实际时间判定；修正后自动重算）",
+    summary="修正实际送达时间（只改订单事实；延误判定用的是「预计到达时间」，不受这里影响）",
 )
 def correct_delivered_at(ctx: OrderPatch, order_id: int, payload: OrderDeliveredAtCorrect) -> Any:
     """订单已送达后，若实际送达时间录错，用这里修正。

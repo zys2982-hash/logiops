@@ -100,6 +100,17 @@ export interface LoginResult {
   user: User
 }
 
+/** POST /auth/password → {ok, message}（原密码错误返回 422 VALIDATION_ERROR，不是 401） */
+export interface ChangePasswordPayload {
+  old_password: string
+  new_password: string
+}
+
+export interface ChangePasswordResult {
+  ok: boolean
+  message: string
+}
+
 /** GET /auth/me → {user, role, permissions, workspace_id, workspace, workspaces}（实测形状） */
 export interface MeResult {
   user: User
@@ -320,6 +331,8 @@ export interface Order {
   original_eta_at?: string | null
   current_eta_at?: string | null
   delivered_at?: string | null
+  /** 「预计到达时间」：运营手工登记的独立字段（不产生轨迹事件、不进运输轨迹时间线） */
+  planned_delivery_at?: string | null
   last_tracking_at?: string | null
   remark?: string | null
   version?: number
@@ -357,6 +370,8 @@ export interface OrderUpdatePayload {
   carrier_id?: number | null
   vehicle_id?: number | null
   driver_id?: number | null
+  /** 「预计到达时间」（ISO UTC 字符串；手工登记的独立字段） */
+  planned_delivery_at?: string | null
   remark?: string
   status?: OrderStatus
 }
@@ -439,8 +454,10 @@ export interface ExceptionListItem {
   /** 当前风险（已解决/已关闭 → LOW / 0 分；历史等级见 level / risk_score） */
   current_level?: ExceptionLevel | null
   current_risk_score?: number | null
-  /** 订单实际送达时间（延误单的 SLA 卡要显示"承诺到达 / 实际送达 / 延误时长"） */
+  /** 订单实际送达时间（订单事实；延误判定自 2026-10-08 起改用 planned_delivery_at） */
   delivered_at?: string | null
+  /** 「预计到达时间」：延误判定的判定时点（SLA 卡显示"承诺到达 / 预计到达 / 延误时长"） */
+  planned_delivery_at?: string | null
   level: ExceptionLevel
   status: ExceptionStatus
   detected_by?: ActorType | string | null

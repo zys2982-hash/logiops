@@ -75,21 +75,24 @@ def _factor_sources(
     )
 
     if code == FACTOR_DELAY:
-        # 延误单的"依据"= 承诺到达 / 实际送达 / 规则允许 / 超出多少（2026-10-05：延误 = 实际送达 − 承诺送达，
-        # 只看这两个时间；旧的 SLA_BREACH 因子已取消，所以这些数字就挂在延误因子上）
+        # 延误单的"依据"（2026-10-08 新口径）：判定时点 = 订单的**预计到达时间**，
+        # 所以给的是 承诺到达 / 预计到达 / 规则允许 / 超出多少。
         if case.delay_minutes is not None:
             sources.append(
                 {
                     "kind": "MANUAL_DELAY",
-                    "text": f"人工录入延误 {_minutes(case.delay_minutes)}（历史数据；新口径由送达时间决定）",
+                    "text": f"人工录入延误 {_minutes(case.delay_minutes)}（历史数据；新口径由预计到达时间决定）",
                 }
             )
         parts: list[str] = []
         if case.promised_delivery_at is not None:
             parts.append(f"承诺到达 {read_models.iso(case.promised_delivery_at)}")
-        delivered = getattr(order, "delivered_at", None) if order is not None else None
-        if delivered is not None:
-            parts.append(f"实际送达 {read_models.iso(delivered)}")
+        planned = getattr(order, "planned_delivery_at", None) if order is not None else None
+        if planned is not None:
+            parts.append(f"预计到达 {read_models.iso(planned)}")
+        elif case.expected_eta_at is not None:
+            # 老数据（2026-10-08 前建的单）没有预计到达，用当初的判定时点兜底，避免依据缺一块
+            parts.append(f"判定时点 {read_models.iso(case.expected_eta_at)}")
         if rule_text:
             parts.append(rule_text)
         if case.sla_delay_minutes is not None and sla.get("max_delay_minutes") is not None:

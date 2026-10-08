@@ -11,6 +11,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.clock import local_text
 from app.core.errors import AppError, ErrorCode, validation_error
 from app.models.enums import (
     ActorType,
@@ -67,6 +68,7 @@ class OrderService:
             "dispatched_at": order.dispatched_at,
             "delivered_at": order.delivered_at,
             "promised_delivery_at": order.promised_delivery_at,
+            "planned_delivery_at": order.planned_delivery_at,
             "current_eta_at": order.current_eta_at,
         }
 
@@ -123,6 +125,7 @@ class OrderService:
         cargo_desc: str | None = None,
         weight_ton: Decimal | float | None = None,
         distance_km: int | None = None,
+        planned_delivery_at: datetime | None = None,
         remark: str | None = None,
         carrier_id: int | None = None,
         vehicle_id: int | None = None,
@@ -156,6 +159,11 @@ class OrderService:
             order.distance_km = distance_km
         if remark is not None:
             order.remark = remark
+        if planned_delivery_at is not None:
+            # 「预计到达时间」（2026-10-08）：只落这一个字段 —— 不派车、不写轨迹事件、
+            # 不触发 ETA 重算与异常检测，也不进运输轨迹时间线（用户明确要求"另一个数据"）。
+            # 本次也**不参与延误判定**：要不要用它替代"实际送达"另开改动。
+            order.planned_delivery_at = to_naive_utc(planned_delivery_at)
         if driver_id is not None:
             self.repos.drivers.get_or_404(driver_id, "司机不存在")
             order.driver_id = driver_id
@@ -194,6 +202,11 @@ class OrderService:
                 driver_id=previous_driver_id,
                 exclude_order_id=order.id,
             )
+
+        # 延误判定（用户口径 2026-10-08）：改「预计到达时间」→ **立即**按它判定/重算延误单。
+        # 放在最后，保证用的是本次改动之后的最终状态（含同一次请求里的派车与承诺时间）。
+        if planned_delivery_at is not None:
+            self._settle_planned_delay(order, actor_id=actor_id)
 
         write_audit(
             self.session,
@@ -593,44 +606,53 @@ class OrderService:
         )
 
         # 送达**不再自动收口异常**（用户口径 2026-10-06）：已解决 / 已关闭只能由人工在异常页或
-        # 订单页点「解决 / 关闭」触发。程序只做"送达超时 → 建延误单"（见 `_settle_delivered_delay`）
-        # 与数字重算，绝不替用户结束一张单 —— 送达那刻还开着的车辆故障单就继续挂着，等人工处置。
+        # 订单页点「解决 / 关闭」触发。送达也**不再建延误单/重算延误**（2026-10-08 起延误改由
+        # 「预计到达时间」驱动，见 `update_basic` → `_settle_planned_delay`），这里只做车辆故障因子对齐。
         #
         # 顺手把「车辆故障」因子对齐现状（比如上面因为车单还没收口而保留了 REPAIRING，
         # 或车辆此前已被别的路径改过状态）。读取时本来也会自愈，这里先落库，DB 层自检才一致。
         for case in self.repos.exceptions.list_open_by_order(order.id):
             eta_flow.sync_case_vehicle_factor(self.repos, case, order)
 
-        self._settle_delivered_delay(order, actor_id=actor_id)
+        # 延误判定已改由「预计到达时间」驱动（2026-10-08 用户口径）：**送达不再触发延误结算**，
+        # 判定发生在"保存 / 修改预计到达时间"时（见 update_basic → _settle_planned_delay）。
         return order
 
-    def _settle_delivered_delay(self, order: Order, *, actor_id: int | None) -> ExceptionCase | None:
-        """送达口径结算（用户口径 2026-10-05；收口口径 2026-10-06）——**只在送达后**比实际时间与承诺。
+    def _settle_planned_delay(self, order: Order, *, actor_id: int | None) -> ExceptionCase | None:
+        """按「预计到达时间」结算延误（**用户口径 2026-10-08**）。
 
-        · 实际送达 − 承诺送达 > 规则允许延迟 → 自动建「延误异常单」（DETECTED 待确认）；
+        与原口径（2026-10-05：送达时按**实际送达**判定）的差异：
+
+        |  | 原口径 | 现口径 |
+        |---|---|---|
+        | 判定时点 | `order.delivered_at` | `order.planned_delivery_at` |
+        | 触发点 | 订单送达 / 修正实际送达 | **保存或修改预计到达时间** |
+        | 没填预计到达 | —— | **不判定**（用户选择，不回落到实际送达） |
+
+        · 预计到达 − 承诺送达 > 规则允许延迟 → 自动建「延误异常单」（DETECTED 待确认）；
         · 未超 → 不建单；
-        · 已存在未结束的延误单（送达时间被修正的场合）→ 重算延误与分数，**但不自动收口**：
-          不再违约也只是把事实写进时间线，解决 / 关闭永远由人工点。
-        在途不再按预测 ETA 建延误异常（旧 `ETA_BREACH_SLA` 规则已下线）。
+        · 已存在未结束的延误单 → 只重算延误与分数，**不自动收口**（解决 / 关闭永远由人工点）。
+
+        注意：判定**不要求订单已送达**——用户口径是"保存预送达时就判定"。
         """
-        if order.delivered_at is None:
+        planned = to_naive_utc(order.planned_delivery_at)
+        if planned is None:
             return None
         match, promised = eta_flow.resolve_promised_at(self.repos, order)
         if promised is None:
             return None
-        actual_delay = int(round((order.delivered_at - promised).total_seconds() / 60))
-        breached = actual_delay > int(match.max_delay_minutes)
+        delay = int(round((planned - promised).total_seconds() / 60))
+        breached = delay > int(match.max_delay_minutes)
         # 按类型找：2026-10-06 起同一订单允许"未结束的车辆单 + 未结束的延误单"并存（各管一个问题），
         # 所以这里必须精确找**延误**单，不能拿"最新那张未结束单"顶替。
         existing = self.repos.exceptions.find_open_by_order_and_type(
             order.id, str(ExceptionType.DELAY_RISK)
         )
-        delay_case = existing
 
-        if delay_case is not None:
-            # 送达时间被修正 → 重算（允许升也允许降：修正就是要把算错的改回来）
+        if existing is not None:
+            # 预计到达被改了 → 重算（允许升也允许降：改的就是算错的那个值）
             eta_flow.refresh_case_impact(
-                self.repos, existing, order, eta_at=order.delivered_at, allow_downgrade=True
+                self.repos, existing, order, eta_at=planned, allow_downgrade=True
             )
             # 无论是否仍违约都**不自动收口**（用户口径 2026-10-06）：单子留给人工点「解决 / 关闭」，
             # 程序只把重算后的事实写进时间线，避免"系统悄悄结束一张单"。
@@ -644,25 +666,26 @@ class OrderService:
                 actor_type=ActorType.SYSTEM,
                 actor_id=actor_id,
                 note=(
-                    f"按修正后的实际送达时间重算：延误 {actual_delay} 分钟"
+                    f"按预计到达时间重算：延误 {delay} 分钟"
                     f"（允许 {match.max_delay_minutes} 分钟）"
                     + ("" if breached else "，已不再违约；是否收口由人工决定")
                 ),
                 detail={
-                    "delivered_at": str(order.delivered_at),
-                    "actual_delay_minutes": actual_delay,
+                    "planned_delivery_at": str(planned),
+                    "delay_minutes": delay,
                     "breached": breached,
                     "auto_closed": False,
                 },
             )
             return existing
 
-        if breached and delay_case is None:
-            return self._open_delivered_breach_case(
+        if breached:
+            return self._open_planned_breach_case(
                 order,
                 match=match,
                 promised=promised,
-                actual_delay=actual_delay,
+                planned=planned,
+                delay=delay,
                 actor_id=actor_id,
             )
         return None
@@ -675,18 +698,17 @@ class OrderService:
         note: str | None = None,
         actor_id: int | None = None,
     ) -> Order:
-        """修正**实际送达时间**（送达时间录错时用；用户口径 2026-10-05）。
+        """修正**实际送达时间**（送达时间录错时用；订单口径 2026-10-05）。
 
-        只允许在订单已送达（DELIVERED）后修正 —— 延误单本质上就是"实际 vs 承诺"的比较结果，
-        没有实际送达时间就没有延误可言。修正后立即按新时间重算该订单的延误单
-        （见 `_settle_delivered_delay`）：仍违约 → 重算分数；不再违约 → 只写事实，
-        **不自动收口**（解决 / 关闭由人工在异常页点）。
+        只允许在订单已送达（DELIVERED）后修正。**只改订单事实**（`delivered_at` / `current_eta_at` + 审计）：
+        延误判定自 2026-10-08 起改用「预计到达时间」，**不再受这里影响** ——
+        要动延误就去改订单页 / 异常页的「预计到达时间」。
         """
         order = self.get(order_id)
         if str(order.status) != str(OrderStatus.DELIVERED):
             raise AppError(
                 ErrorCode.STATE_TRANSITION_INVALID,
-                "订单尚未送达，实际送达时间还不存在（延误单只在送达后按实际时间判定）",
+                "订单尚未送达，实际送达时间还不存在（修正实际送达只在送达后可用）",
                 {"status": str(order.status)},
             )
         moment = parse_iso_naive(delivered_at)
@@ -711,19 +733,25 @@ class OrderService:
             before=before,
             after={**self._snapshot(order), "note": note_text},
         )
-        self._settle_delivered_delay(order, actor_id=actor_id)
+        # 延误判定已改用「预计到达时间」（2026-10-08）：修正实际送达**不再重算延误单**，
+        # 只留审计与事实。要改延误请去改「预计到达时间」。
         return order
 
-    def _open_delivered_breach_case(
+    def _open_planned_breach_case(
         self,
         order: Order,
         *,
         match: Any,
         promised: datetime,
-        actual_delay: int,
+        planned: datetime,
+        delay: int,
         actor_id: int | None,
     ) -> ExceptionCase | None:
-        """送达超时 → 自动建「延误异常单」（DETECTED 待确认，detection_rule=DELIVERED_BREACH）。"""
+        """预计到达超时 → 自动建「延误异常单」（DETECTED 待确认，detection_rule=DELIVERED_BREACH）。
+
+        注：`detection_rule` 沿用既有枚举值 `DELIVERED_BREACH`（历史数据也在用它，改名会动到
+        存量数据的语义），但它现在表示"**预计到达**超时建单"。
+        """
         from app.services import detection_flow  # 局部导入避免循环
 
         # 已有未结束的**延误**单就不再叠加（同一个问题只一张单，按类型精确查）；
@@ -739,14 +767,16 @@ class OrderService:
             self.repos,
             order,
             exception_type=str(ExceptionType.DELAY_RISK),
-            occurred_at=order.delivered_at,
+            occurred_at=planned,
             detection_rule=str(DetectionRule.DELIVERED_BREACH),
             detected_by="SYSTEM",
-            moment=order.delivered_at,
+            moment=planned,
             actor_id=actor_id,
         )
+        # 摘要整串落库、前端原样显示 → 时间必须在这里就转成业务时区（否则同屏出现 UTC）
         case.impact_summary = (
-            f"送达超时：实际送达 {order.delivered_at}，承诺 {promised}，延误 {actual_delay} 分钟"
+            f"预计到达超时：预计到达 {local_text(planned)}，"
+            f"承诺 {local_text(promised)}，延误 {delay} 分钟"
             f"（{match.rule_name} 允许 {match.max_delay_minutes} 分钟）"
         )
         add_event(
@@ -759,14 +789,14 @@ class OrderService:
             actor_type=ActorType.SYSTEM,
             actor_id=actor_id,
             note=(
-                f"订单送达后判定违约：实际送达 − 承诺送达 = {actual_delay} 分钟 > "
+                f"按预计到达时间判定违约：预计到达 − 承诺送达 = {delay} 分钟 > "
                 f"允许 {match.max_delay_minutes} 分钟（{match.rule_name}）"
             ),
             detail={
                 "rule": str(DetectionRule.DELIVERED_BREACH),
-                "delivered_at": str(order.delivered_at),
+                "planned_delivery_at": str(planned),
                 "promised_delivery_at": str(promised),
-                "actual_delay_minutes": actual_delay,
+                "delay_minutes": delay,
                 "max_delay_minutes": match.max_delay_minutes,
             },
         )
@@ -783,7 +813,7 @@ class OrderService:
                 "order_id": order.id,
                 "type": str(case.type),
                 "rule": str(DetectionRule.DELIVERED_BREACH),
-                "actual_delay_minutes": actual_delay,
+                "delay_minutes": delay,
                 "level": str(case.level),
                 "risk_score": case.risk_score,
             },

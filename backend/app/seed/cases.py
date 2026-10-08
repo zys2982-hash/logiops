@@ -234,8 +234,12 @@ def build_exception(
     )
     stamp = created_at or occurred_at
     # 车辆故障单不做 SLA 判定（用户口径 2026-10-05：普通的车辆异常订单不应该有 SLA 影响）；
-    # 延误单才有延误/SLA 字段（且建单前提是"实际送达已超允许延迟"）
+    # 延误单才有延误/SLA 字段（建单前提：**预计到达时间**已超允许延迟 —— 口径 2026-10-08）
     vehicle_case = str(case_type) == str(ExceptionType.VEHICLE_BREAKDOWN)
+    if not vehicle_case and expected is not None:
+        # 延误判定的判定时点在**订单**上（planned_delivery_at）：造数时一并写上，
+        # 这样 demo 数据在"延误 = 预计到达 − 承诺送达"的自检口径下自洽。
+        order.planned_delivery_at = expected
     impact_summary = (
         f"车辆故障：{root_cause_note or '车辆异常，待人工确认处置'}"
         if vehicle_case

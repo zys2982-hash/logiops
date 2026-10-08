@@ -41,6 +41,11 @@ class Order(Base, PkMixin, WorkspaceScopedMixin, TimestampMixin, VersionMixin, S
     original_eta_at: Mapped[datetime | None] = mapped_column(DateTime)
     current_eta_at: Mapped[datetime | None] = mapped_column(DateTime)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 「预计到达时间」：运营在订单详情页**手工登记**的独立字段（2026-10-08 用户需求）。
+    # 与 promised_delivery_at（SLA 规则算的承诺到达）、delivered_at（订单事实/实际送达）都不同：
+    # · **不产生轨迹事件、不进运输轨迹时间线**；
+    # · 只是一个可随时取用的独立数据，后续若要用于延误判定等逻辑再说（本次只加字段）。
+    planned_delivery_at: Mapped[datetime | None] = mapped_column(DateTime)
     remark: Mapped[str | None] = mapped_column(String(255))
 
     customer = relationship("Customer", lazy="joined")

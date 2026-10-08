@@ -54,7 +54,8 @@ const canCreateException = computed(() => auth.can(Perm.EXCEPTION_CREATE))
 const demo = useDemoStore()
 /**
  * 订单页的定位（用户口径 2026-10-06）：**这里只能加异常，不能结束异常**。
- * - 只能录「车辆故障」：延误＝实际送达 − 承诺送达，按 SLA 规则在**送达时自动生成**，不能手工录；
+ * - 只能录「车辆故障」：延误＝**预计到达时间** − 承诺送达，按 SLA 规则在**保存预计到达时间时自动生成**，
+ *   不能手工录；
  * - 结束 / 归档 / 车辆已修复 一律去「异常中心」那张单里做（本页不再提供）；
  * - 一个订单可以同时有「车辆故障 + 延误」两张独立异常单，但**同一类型只能有一张未关闭单**：
  *   后端 `find_open_by_order_and_type` 的"未关闭"含 RESOLVED（已解决未归档也占名额，CLOSED 才释放），
@@ -94,7 +95,7 @@ const exceptionForm = reactive({
   note: '',
 })
 
-/** 修正实际送达时间（订单已送达后；延误单只在送达后按实际时间判定） */
+/** 修正实际送达时间（订单已送达后；**只改订单事实**，不参与延误判定） */
 const deliverFixForm = reactive({
   delivered_at: '',
   note: '',
@@ -120,7 +121,7 @@ async function correctDeliveredAt(): Promise<void> {
       delivered_at: deliveredAt,
       note: deliverFixForm.note.trim() || '修正实际送达时间（订单页）',
     })
-    ElMessage.success('实际送达时间已修正；若该订单有延误异常，延误与风险分已按新时间重算')
+    ElMessage.success('实际送达时间已修正（延误判定用的是「预计到达时间」，不受此影响）')
     deliverFixForm.note = ''
     await load()
   } catch {
@@ -129,8 +130,45 @@ async function correctDeliveredAt(): Promise<void> {
     saving.value = false
   }
 }
-const exceptionSaving = ref(false)
+/**
+ * 预计到达时间（2026-10-08 用户需求 / 口径）：
+ * 作为**独立字段**保存在订单上 —— 不写轨迹事件、不进运输轨迹时间线；
+ * 但它是**延误判定的判定时点**（口径 2026-10-08：由"实际送达"改为"预计到达"）——
+ * 保存后后端立刻按 预计到达 − 承诺到达 与规则允许延迟比对，超了自动建延误单（仍不自动收口）。
+ */
+const planForm = reactive({ planned_delivery_at: '' })
+const planSaving = ref(false)
+watch(
+  () => order.value?.planned_delivery_at,
+  (value: string | null | undefined) => {
+    planForm.planned_delivery_at = value ? formatDateTime(value, 'YYYY-MM-DD HH:mm') : ''
+  },
+  { immediate: true },
+)
 
+async function savePlannedDeliveryAt(): Promise<void> {
+  if (!order.value) return
+  const planned = displayIsoToUtc(planForm.planned_delivery_at)
+  if (!planned) {
+    ElMessage.warning('请选择预计到达时间')
+    return
+  }
+  planSaving.value = true
+  try {
+    await orderApi.updateOrder(order.value.id, {
+      planned_delivery_at: planned,
+      expected_version: order.value.version,
+    })
+    ElMessage.success('预计到达时间已保存')
+    await load()
+  } catch {
+    // 403 / 409 / 422 已由响应拦截器提示
+  } finally {
+    planSaving.value = false
+  }
+}
+
+const exceptionSaving = ref(false)
 /** 时间线条目：把每个异常折算成"开始（+ 结束）"，交给时间线按时间混排 */
 const timelineIncidents = computed<TimelineIncident[]>(() =>
   relatedExceptions.value.map((item) => ({
@@ -318,7 +356,7 @@ async function createIncident(): Promise<void> {
     }
     await exceptionApi.createException({
       order_id: order.value.id,
-      // 订单页只允许录车辆故障（2026-10-06 口径）：延误只能由"实际送达 − 承诺送达"按 SLA 规则
+      // 订单页只允许录车辆故障（2026-10-06 口径）：延误只能由"预计到达时间 − 承诺送达"按 SLA 规则
       // 在订单送达时自动生成，不能手工录。
       type: 'VEHICLE_BREAKDOWN',
       occurred_at: occurredAt,
@@ -380,6 +418,7 @@ onMounted(async () => {
               <el-descriptions-item label="司机">{{ order.driver_name ?? '未指派' }}</el-descriptions-item>
               <el-descriptions-item label="发车时间">{{ formatDateTime(order.dispatched_at) }}</el-descriptions-item>
               <el-descriptions-item label="送达时间">{{ formatDateTime(order.delivered_at) }}</el-descriptions-item>
+              <el-descriptions-item label="预计到达时间">{{ formatDateTime(order.planned_delivery_at) }}</el-descriptions-item>
               <el-descriptions-item label="承诺到达（SLA 快照）">{{ formatDateTime(order.promised_delivery_at) }}</el-descriptions-item>
               <el-descriptions-item label="SLA 规则">{{ slaRuleName }}</el-descriptions-item>
             </el-descriptions>
@@ -393,7 +432,7 @@ onMounted(async () => {
           <PanelCard
             v-if="canManage && order.status === 'DELIVERED'"
             title="修正实际送达时间"
-            subtitle="送达时间录错时用这里改正；延误异常只在送达后按实际时间判定，改完立即重算"
+            subtitle="只改订单的送达事实（含审计）；延误判定用的是「预计到达时间」，不在这里改"
             icon="Timer"
             class="u-mb-12"
           >
@@ -418,7 +457,33 @@ onMounted(async () => {
                 <el-button type="primary" size="small" :loading="saving" @click="correctDeliveredAt">
                   保存并重算
                 </el-button>
-                <span class="u-text-muted">仍违约 → 重算延误与分数；不再违约 → 只重算，单子仍挂着等你点「关闭」</span>
+                <span class="u-text-muted">只改订单事实与审计；延误判定不受影响（要改延误请改「预计到达时间」）</span>
+              </el-form-item>
+            </el-form>
+          </PanelCard>
+
+          <PanelCard
+            v-if="canManage"
+            title="预计到达时间"
+            subtitle="延误判定的判定时点：保存后立即按它判定/重算延误（不等于实际送达，也不进轨迹时间线）"
+            icon="Clock"
+            class="u-mb-12"
+          >
+            <el-form label-width="90px" size="small">
+              <el-form-item label="预计到达">
+                <el-date-picker
+                  v-model="planForm.planned_delivery_at"
+                  type="datetime"
+                  value-format="YYYY-MM-DD HH:mm"
+                  placeholder="选择预计到达时间"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" size="small" :loading="planSaving" @click="savePlannedDeliveryAt">
+                  保存
+                </el-button>
+                <span class="u-text-muted">不动订单状态、不写轨迹；但会立即按新时间重算延误与风险分</span>
               </el-form-item>
             </el-form>
           </PanelCard>
@@ -536,7 +601,7 @@ onMounted(async () => {
           <PanelCard
             v-if="canCreateException"
             title="在途异常（只录车辆故障）"
-            subtitle="延误异常由订单送达时按 SLA 自动生成；结束 / 归档请去「异常中心」"
+            subtitle="延误异常由「预计到达时间」触发（保存即判定）；结束 / 归档请去「异常中心」"
             icon="Warning"
             class="u-mb-12"
           >
@@ -547,7 +612,7 @@ onMounted(async () => {
               show-icon
               class="u-mb-8"
               title="订单页只能录「车辆故障」"
-              description="延误＝实际送达 − 承诺送达，按 SLA 规则在订单点「送达」时自动判定并建单，所以不能手工录。同一订单可以同时有「车辆故障 + 延误」两张独立异常单，各管一个问题。"
+              description="延误＝预计到达时间 − 承诺送达，按 SLA 规则在保存「预计到达时间」时自动判定并建单，所以不能手工录。同一订单可以同时有「车辆故障 + 延误」两张独立异常单，各管一个问题。"
             />
             <el-alert
               v-if="unclosedVehicleException"

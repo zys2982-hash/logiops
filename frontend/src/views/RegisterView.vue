@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 
+import AuthShell from '@/components/AuthShell.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -38,42 +39,53 @@ async function submit(): Promise<void> {
 </script>
 
 <template>
-  <div class="auth-page">
-    <el-card class="auth-card" shadow="always">
-      <h2>注册 LogiOps 账号</h2>
-      <p class="u-text-muted">POST /auth/register → 201 user（注册后可创建/加入工作区）</p>
-      <el-form label-position="top" @submit.prevent="submit">
-        <el-form-item label="姓名">
-          <el-input v-model="form.name" placeholder="张三" />
-        </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="form.email" placeholder="you@example.com" />
-        </el-form-item>
-        <el-form-item label="密码（≥8 位）">
-          <el-input v-model="form.password" type="password" show-password />
-        </el-form-item>
-        <el-form-item label="确认密码">
-          <el-input v-model="form.confirm" type="password" show-password @keyup.enter="submit" />
-        </el-form-item>
-        <el-button type="primary" style="width: 100%" :loading="submitting" @click="submit">注册并登录</el-button>
-      </el-form>
-      <el-divider />
-      <router-link to="/login">已有账号？去登录</router-link>
-    </el-card>
-  </div>
+  <!-- 与登录页共用同一个视觉外壳（AuthShell） -->
+  <AuthShell title="创建账号" subtitle="注册后会自动为你创建一个工作区">
+    <el-form label-position="top" @submit.prevent="submit">
+      <el-form-item label="姓名">
+        <el-input v-model="form.name" size="large" placeholder="请输入姓名" autocomplete="name" />
+      </el-form-item>
+
+      <el-form-item label="邮箱">
+        <el-input
+          v-model="form.email"
+          size="large"
+          placeholder="you@example.com"
+          autocomplete="username"
+        />
+      </el-form-item>
+
+      <el-form-item label="密码（至少 8 位）">
+        <el-input
+          v-model="form.password"
+          size="large"
+          type="password"
+          show-password
+          placeholder="请设置密码"
+          autocomplete="new-password"
+        />
+      </el-form-item>
+
+      <el-form-item label="确认密码">
+        <el-input
+          v-model="form.confirm"
+          size="large"
+          type="password"
+          show-password
+          placeholder="请再次输入密码"
+          autocomplete="new-password"
+          @keyup.enter="submit"
+        />
+      </el-form-item>
+
+      <el-button class="submit-btn" type="primary" size="large" :loading="submitting" @click="submit">
+        注册并登录
+      </el-button>
+    </el-form>
+
+    <template #footer>
+      <span>已有账号？</span>
+      <router-link to="/login">去登录</router-link>
+    </template>
+  </AuthShell>
 </template>
-
-<style scoped>
-.auth-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  background: linear-gradient(135deg, #1f2d3d 0%, #2f6fed 100%);
-}
-
-.auth-card {
-  width: 420px;
-  border-radius: 10px;
-}
-</style>

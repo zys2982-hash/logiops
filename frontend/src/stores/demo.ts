@@ -6,6 +6,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
 import { demoApi } from '@/api'
+import { authSnapshot } from '@/api/runtime'
 import { ApiError } from '@/api/request'
 import type { DemoStatusResult } from '@/api/demo'
 import { demoState as fixtureDemoState } from '@/mocks/fixtures'
@@ -72,6 +73,14 @@ export const useDemoStore = defineStore('demo', () => {
   const offsetMinutes = computed(() => state.value.offset_minutes ?? 0)
 
   async function refresh(): Promise<void> {
+    // /demo/state 需要 demo.control 权限。未登录时不发这个请求：否则 401 会被 axios 拦截器
+    // 当成"会话失效"处理（弹"登录已过期" + logoutLocal），在登录/注册页上表现为无故报错。
+    // 此时保持本地 fixture 演示态即可（页面本来也不展示真实业务时间）。
+    if (!authSnapshot().token) {
+      mocked.value = false
+      lastError.value = null
+      return
+    }
     loading.value = true
     try {
       const result = await demoApi.getDemoState()

@@ -1,20 +1,15 @@
-"""送达口径（2026-10-05 新模型；收口口径 2026-10-06）：延误只在**订单送达时**按实际时间判定，
-并可按实际送达时间纠错。**异常的解决 / 关闭永远由人工触发，程序不自动收口**。
+"""延误结算口径测试（**2026-10-08 新口径：按「预计到达时间」判定**）。
 
-用户口径：
-- 「只有当我在运输订单中选择了送达……如果实际送达时间减去承诺送达时间按照 sla 规则进行比较，
-   出现风险等级的时候，再自动生成异常订单」；
-- 「可以留着修改功能，用于……没有正确输入送达时间后的修改」；
-- 「异常的关闭、解决等状态应该由我自己选择触发，不要让程序通过触发一些特定条件自己触发」。
+口径对照（用户亲自定的两版）：
 
-覆盖：
-a) 送达超允许延迟 → 自动建延误单（DETECTED / DELIVERED_BREACH / 延误=实际−承诺 / 违约 / 分数=档位+客户等级）；
-b) 送达未超 → **不建单**；
-c) 送达那刻还开着的车辆单**不被收口**（仍处理中），超时则另建一张延误单 —— 两张未结束单并存；
-d) 修正实际送达时间：仍违约 → 重算延误与分数；不再违约 → **也不自动收口**，只把事实写进时间线，
-   单子留待人工关闭；
-e) 未送达订单调用 → 409；OPERATOR → 403；早于派车时间 → 422；
-f) 写 `order.delivered_at_corrected` 审计（before/after 带 delivered_at）。
+|  | 旧（2026-10-05 ~ 10-08） | 现（2026-10-08 起） |
+|---|---|---|
+| 判定时点 | `order.delivered_at`（实际送达） | `order.planned_delivery_at`（预计到达） |
+| 触发点 | 订单送达 / 修正实际送达 | **保存或修改预计到达时间** |
+| 没填预计到达 | —— | **不判定** |
+
+覆盖：按预计到达建单 / 未超不建单 / 送达不再建单 / 与车辆单并存 / 改预计到达重算 /
+修正实际送达不影响延误 / 修正实际送达的校验与审计 / 摘要用北京时间。
 """
 
 from __future__ import annotations
@@ -58,7 +53,7 @@ def _repos(db_session, bootstrap) -> Repos:
 
 
 def _deliver(db_session, bootstrap, order_id: int, *, offset_minutes: int):
-    """发车（IN_TRANSIT）后按"承诺 + offset_minutes"送达（offset>允许延迟即违约）。"""
+    """发车（IN_TRANSIT）后按"承诺 + offset_minutes"送达 —— 现口径下**不再**触发延误判定。"""
     repos = _repos(db_session, bootstrap)
     OrderService(repos).append_tracking(
         order_id,
@@ -76,14 +71,32 @@ def _deliver(db_session, bootstrap, order_id: int, *, offset_minutes: int):
     return promised, delivered_at
 
 
+def _set_planned(client, db_session, bootstrap, order_id: int, *, offset_minutes: int, headers):
+    """把「预计到达时间」设成 承诺 + offset —— **新口径的判定触发点**（走 PATCH /orders/{id}）。"""
+    repos = _repos(db_session, bootstrap)
+    promised = to_naive_utc(repos.orders.get(order_id).promised_delivery_at)
+    assert promised is not None
+    planned = promised + timedelta(minutes=offset_minutes)
+    response = client.patch(
+        f"{ORDERS}/{order_id}",
+        headers=headers,
+        json={"planned_delivery_at": planned.strftime("%Y-%m-%dT%H:%M:%S")},
+    )
+    assert response.status_code == 200, response.text
+    return promised, planned
+
+
 def _cases(client, headers, order_id: int) -> list[dict]:
     return client.get(f"{ORDERS}/{order_id}/exceptions", headers=headers).json()
 
 
-def test_delivered_late_creates_delay_case(client, db_session, bootstrap, operator_headers, admin_headers):
-    """a) 送达超允许延迟（VIP 规则允许 0 分钟；晚 400 分钟）→ 自动建延误单。"""
+def test_planned_late_creates_delay_case(client, db_session, bootstrap, operator_headers, admin_headers):
+    """a) 预计到达超允许延迟（VIP 规则允许 0 分钟；晚 400 分钟）→ 自动建延误单。
+
+    新增口径特征：**不需要订单已送达** —— 保存预计到达时间那刻就判定并建单。
+    """
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    promised, _ = _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
+    _set_planned(client, db_session, bootstrap, order["id"], offset_minutes=400, headers=admin_headers)
 
     cases = _cases(client, operator_headers, order["id"])
     assert len(cases) == 1, cases
@@ -99,6 +112,11 @@ def test_delivered_late_creates_delay_case(client, db_session, bootstrap, operat
     assert int(case["risk_score"]) == 4 and case["level"] == "CRITICAL"
     assert case["promised_delivery_at"] is not None
 
+    # 订单还没送达也照样判定（新口径）
+    fresh = client.get(f"{ORDERS}/{order['id']}", headers=admin_headers).json()
+    assert fresh["status"] != "DELIVERED"
+    assert fresh["delivered_at"] is None
+
     events = client.get(f"{EXCEPTIONS}/{case['id']}/events", headers=operator_headers).json()["items"]
     assert any(event["event_type"] == "DETECTED" for event in events), events
     audits = list(
@@ -107,22 +125,28 @@ def test_delivered_late_creates_delay_case(client, db_session, bootstrap, operat
         ).all()
     )
     assert audits, "自动建单要留审计"
-    assert promised is not None
 
 
-def test_delivered_on_time_creates_no_case(client, db_session, bootstrap, operator_headers, admin_headers):
-    """b) 送达未超允许延迟 → 不建任何异常单。"""
+def test_planned_on_time_creates_no_case(client, db_session, bootstrap, operator_headers, admin_headers):
+    """b) 预计到达未超允许延迟 → 不建任何异常单。"""
     order = _order_with_vehicle(
         client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
     )
-    _deliver(db_session, bootstrap, order["id"], offset_minutes=25)  # NORMAL 允许 30 分钟
-    assert _cases(client, operator_headers, order["id"]) == []
+    _set_planned(client, db_session, bootstrap, order["id"], offset_minutes=25, headers=admin_headers)
+    assert _cases(client, operator_headers, order["id"]) == []  # NORMAL 允许 30 分钟
 
 
-def test_delivery_keeps_open_vehicle_case_and_adds_delay_case(
+def test_delivery_no_longer_creates_delay_case(client, db_session, bootstrap, operator_headers, admin_headers):
+    """c) **口径变更的护栏**：送达再晚也不建延误单（送达不再参与延误判定）。"""
+    order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
+    _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
+    assert _cases(client, operator_headers, order["id"]) == [], "送达不再触发延误判定"
+
+
+def test_planned_delay_case_and_vehicle_case_coexist(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
-    """c) 送达**不替用户收口**车辆单（仍处理中），超时则另建延误单 —— 两张未结束单并存。"""
+    """d) 车辆单 + 延误单并存（各管一个问题），送达也不替用户收口车辆单。"""
     order = _order_with_vehicle(
         client, operator_headers, bootstrap, admin_headers=admin_headers, customer="normal"
     )
@@ -143,18 +167,17 @@ def test_delivery_keeps_open_vehicle_case_and_adds_delay_case(
     ).json()
     assert confirmed["status"] == "PROCESSING"
 
-    _deliver(db_session, bootstrap, order["id"], offset_minutes=200)  # NORMAL 允许 30 → 违约
+    # 新口径：延误由「预计到达」触发（NORMAL 允许 30 → 设成晚 200 分钟即违约）
+    _set_planned(client, db_session, bootstrap, order["id"], offset_minutes=200, headers=admin_headers)
+    # 送达同样发生（它仍要释放车辆、对齐车辆故障因子，只是不参与延误判定）
+    _deliver(db_session, bootstrap, order["id"], offset_minutes=200)
 
     cases = _cases(client, operator_headers, order["id"])
     by_type = {case["type"]: case for case in cases}
-    # 车辆单保持处理中：状态只能由人工点「解决 / 关闭」改（不再"送达即闭环"）
     assert by_type["VEHICLE_BREAKDOWN"]["status"] == "PROCESSING", by_type
     assert by_type["VEHICLE_BREAKDOWN"]["resolved_at"] is None
-    # 而车已经跑完这趟（送达把它放回 IDLE）→「车辆故障」因子按现状消失（信号级闭环），
-    # 所以这张还开着的单当前风险是 0 —— 单子仍等你处置，只是风险按现状算
     assert by_type["VEHICLE_BREAKDOWN"]["risk_factors"] == [], by_type
     assert by_type["VEHICLE_BREAKDOWN"]["current_risk_score"] == 0, by_type
-    # 延误单照建（同一个问题只一张单，但允许与车单并存）
     assert by_type["DELAY_RISK"]["status"] == "DETECTED", by_type
     assert by_type["DELAY_RISK"]["detection_rule"] == "DELIVERED_BREACH"
     assert by_type["DELAY_RISK"]["sla_delay_minutes"] == 200
@@ -162,72 +185,52 @@ def test_delivery_keeps_open_vehicle_case_and_adds_delay_case(
     assert vehicle["status"] == "IDLE", vehicle
 
 
-def test_correct_delivered_at_to_on_time_keeps_case_open(
-    client, db_session, bootstrap, operator_headers, admin_headers
-):
-    """d-1) 送达时间录错：修正为"按时"→ **不自动收口**，单子仍待人工处置，但不再报违约。"""
+def test_change_planned_recomputes_delay_case(client, db_session, bootstrap, operator_headers, admin_headers):
+    """e) 改「预计到达时间」→ 延误与分数按新时间重算（400 → 200 分钟），不自动收口。"""
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    promised, _ = _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
-    case = _cases(client, operator_headers, order["id"])[0]
-    assert case["status"] == "DETECTED"
-
-    fixed = client.patch(
-        f"{ORDERS}/{order['id']}/delivered-at",
-        headers=admin_headers,
-        json={"delivered_at": promised.strftime("%Y-%m-%dT%H:%M:%S"), "note": "实为按时送达，之前录错"},
-    )
-    assert fixed.status_code == 200, fixed.text
-
-    after = client.get(f"{EXCEPTIONS}/{case['id']}", headers=operator_headers).json()
-    assert after["status"] == "DETECTED", after  # 仍然是待确认：收口由人工点
-    assert after["resolved_at"] is None and after["closed_at"] is None
-    assert after["sla_breached"] is False
-    assert int(after["sla_delay_minutes"] or 0) <= 0
-
-    # 人工点「关闭 / 误报」→ 才真正结束
-    closed = client.post(
-        f"{EXCEPTIONS}/{case['id']}/close",
-        headers=admin_headers,
-        json={
-            "reason_code": "INVALID",
-            "note": "修正送达时间后确认是误报",
-            "expected_version": after["version"],
-        },
-    )
-    assert closed.status_code == 200, closed.text
-    assert closed.json()["status"] == "CLOSED"
-
-
-def test_correct_delivered_at_still_breaching_recomputes(
-    client, db_session, bootstrap, operator_headers, admin_headers
-):
-    """d-2) 修正后仍违约（400 → 200 分钟）→ 延误与分数按新时间重算。"""
-    order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
-    promised, _ = _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
+    _set_planned(client, db_session, bootstrap, order["id"], offset_minutes=400, headers=admin_headers)
     case = _cases(client, operator_headers, order["id"])[0]
     assert int(case["risk_score"]) == 4
 
-    fixed = client.patch(
-        f"{ORDERS}/{order['id']}/delivered-at",
-        headers=admin_headers,
-        json={
-            "delivered_at": (promised + timedelta(minutes=200)).strftime("%Y-%m-%dT%H:%M:%S"),
-            "note": "实际为晚 200 分钟",
-        },
-    )
-    assert fixed.status_code == 200, fixed.text
+    _set_planned(client, db_session, bootstrap, order["id"], offset_minutes=200, headers=admin_headers)
 
     after = client.get(f"{EXCEPTIONS}/{case['id']}", headers=operator_headers).json()
     assert after["sla_delay_minutes"] == 200
     assert after["sla_breached"] is True
     assert int(after["risk_score"]) == 3 and after["level"] == "HIGH"  # 档位 2 + VIP 1
+    assert after["status"] == "DETECTED"  # 仍待人工处置
+    assert after["resolved_at"] is None and after["closed_at"] is None
+
+    events = client.get(f"{EXCEPTIONS}/{case['id']}/events", headers=operator_headers).json()["items"]
+    assert any(event["event_type"] == "ETA_UPDATED" for event in events), events
+
+
+def test_correct_delivered_at_does_not_affect_delay(
+    client, db_session, bootstrap, operator_headers, admin_headers
+):
+    """f) **口径护栏**：修正实际送达时间不再改延误（延误只看预计到达）。"""
+    order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
+    _set_planned(client, db_session, bootstrap, order["id"], offset_minutes=400, headers=admin_headers)
+    case = _cases(client, operator_headers, order["id"])[0]
+    assert case["sla_delay_minutes"] == 400
+
+    _, delivered = _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
+    fixed = client.patch(
+        f"{ORDERS}/{order['id']}/delivered-at",
+        headers=admin_headers,
+        json={"delivered_at": delivered.strftime("%Y-%m-%dT%H:%M:%S"), "note": "把实际送达往前挪"},
+    )
+    assert fixed.status_code == 200, fixed.text
+
+    after = client.get(f"{EXCEPTIONS}/{case['id']}", headers=operator_headers).json()
+    assert after["sla_delay_minutes"] == 400, "修正实际送达不应改延误（判定用预计到达）"
     assert after["status"] == "DETECTED"
 
 
 def test_correct_delivered_at_rejects_undelivered_and_operator(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
-    """e) 未送达 → 409；OPERATOR 无 order.manage → 403；早于派车时间 → 422。"""
+    """g) 修正实际送达：未送达 → 409；OPERATOR 无 order.manage → 403；早于派车时间 → 422。"""
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
     not_delivered = client.patch(
         f"{ORDERS}/{order['id']}/delivered-at",
@@ -253,7 +256,7 @@ def test_correct_delivered_at_rejects_undelivered_and_operator(
 
 
 def test_correct_delivered_at_writes_audit(client, db_session, bootstrap, operator_headers, admin_headers):
-    """f) 修正实际送达时间写 `order.delivered_at_corrected` 审计（before/after 带 delivered_at）。"""
+    """h) 修正实际送达时间写 `order.delivered_at_corrected` 审计（before/after 带 delivered_at）。"""
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
     promised, delivered_at = _deliver(db_session, bootstrap, order["id"], offset_minutes=400)
 
@@ -274,9 +277,47 @@ def test_correct_delivered_at_writes_audit(client, db_session, bootstrap, operat
     )
     assert rows, "必须留审计"
     row = rows[-1]
-    # 审计里的时间按 ISO 串（…T…）序列化存储
     assert str(row.before_json.get("delivered_at")).replace("T", " ") == str(delivered_at)
     expected_after = promised + timedelta(minutes=100)
     assert str(row.after_json.get("delivered_at")).replace("T", " ") == str(expected_after)
     assert row.after_json.get("note") == "纠错"
-    assert db_session.get(ExceptionCase, _cases(client, operator_headers, order["id"])[0]["id"]) is not None
+    # 送达不再自动建单 → 这张订单此时应当没有任何异常单
+    assert _cases(client, operator_headers, order["id"]) == []
+
+
+def test_delay_case_impact_summary_uses_beijing_time(
+    client, db_session, bootstrap, operator_headers, admin_headers
+):
+    """i) 摘要整串落库、前端原样显示 → 里面的时间必须是**北京时间**（口径 2026-10-08：都用北京时间）。
+
+    历史 bug：摘要曾在服务端用 Python 裸 datetime 拼串 → 存的是 UTC，
+    界面上出现"页头 16:09、摘要 08:09"的同屏不一致。本用例不复用被测代码算期望值，
+    直接用「朴素 UTC + 8 小时」独立校验。
+    """
+    order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
+    promised, planned = _set_planned(
+        client, db_session, bootstrap, order["id"], offset_minutes=400, headers=admin_headers
+    )
+
+    summary = _cases(client, operator_headers, order["id"])[0]["impact_summary"]
+    expected_planned = (planned + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
+    expected_promised = (promised + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
+    assert expected_planned in summary, summary
+    assert expected_promised in summary, summary
+    # 反向断言：不能再出现 UTC 写法
+    assert planned.strftime("%Y-%m-%d %H:%M:%S") not in summary, summary
+    assert promised.strftime("%Y-%m-%d %H:%M:%S") not in summary, summary
+
+
+def test_delay_case_persists_expected_eta_and_case_link(client, db_session, bootstrap, operator_headers, admin_headers):
+    """j) 建单后库里留痕正确：异常单存在、`expected_eta_at` = 预计到达（判定时点）。"""
+    order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
+    _, planned = _set_planned(
+        client, db_session, bootstrap, order["id"], offset_minutes=400, headers=admin_headers
+    )
+    case_id = _cases(client, operator_headers, order["id"])[0]["id"]
+    db_session.expire_all()
+    case = db_session.get(ExceptionCase, case_id)
+    assert case is not None
+    assert to_naive_utc(case.expected_eta_at) == planned
+    assert case.sla_delay_minutes == 400

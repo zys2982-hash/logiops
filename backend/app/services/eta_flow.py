@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
+from app.core.clock import local_text
 from app.core.config import get_settings
 from app.models.enums import ExceptionLevel, ExceptionStatus, ExceptionType, OrderStatus, VehicleStatus
 from app.models.exception import ExceptionCase
@@ -153,7 +154,13 @@ def refresh_case_impact(
     两条口径（用户口径 2026-10-05）：
     · **车辆故障单不做 SLA 判定**（"普通的车辆异常订单不应该有 sla 影响"）：只记订单的承诺/预计快照，
       `sla_delay_minutes=None`、`sla_breached=False`，风险分 = 车辆故障 + 客户等级；
-    · **延误单才走 SLA**：延误 = 实际送达 − 承诺送达（送达后才有延误单），风险分 = 延误档位 + 客户等级。
+    · **延误单才走 SLA**：延误 = **预计到达时间(planned_delivery_at)** − 承诺送达（用户口径 2026-10-08，
+      原口径是"实际送达 − 承诺送达"，已改）。风险分 = 延误档位 + 客户等级。
+
+    ⚠️ 延误口径就在这个函数里**集中落实**（见下方 `判断时点` 段）：所有调用方——检测建单、
+    重算 ETA、AI 回写、tick 刷新——传进来的 `eta_at` 对**延误单**都会被统一替换成订单的
+    `planned_delivery_at`，避免任何一条路径把延误数字算回"ETA / 实际送达"的旧口径。
+    订单没填预送达时：沿用库里已存的历史判定时点（重算是幂等的，等于"不重新判定"）。
 
     allow_downgrade=False：等级/风险分只升不降（用于 tick 的合并刷新）。
     机器提议阶段（DETECTED/CONFIRMING）不允许"高危单静默降档"。
@@ -163,6 +170,14 @@ def refresh_case_impact(
     settings = get_settings()
     customer = repos.customers.get(case.customer_id)
     match, promised = resolve_promised_at(repos, order)
+
+    # --- 判断时点（延误口径 2026-10-08）---------------------------------------------------
+    # 延误单：判定时点 = 订单的「预计到达时间」；没填则沿用库里已存的历史时点（不重新判定）。
+    # 车辆故障单：仍用调用方给的 ETA / 订单 ETA 快照（它本来就不做 SLA 判定）。
+    if str(case.type) == str(ExceptionType.DELAY_RISK):
+        planned = to_naive_utc(order.planned_delivery_at) if order is not None else None
+        eta_at = planned if planned is not None else to_naive_utc(case.expected_eta_at)
+
     expected = to_naive_utc(eta_at) if eta_at is not None else to_naive_utc(order.current_eta_at)
     if expected is None:
         expected = to_naive_utc(case.expected_eta_at)
@@ -217,8 +232,10 @@ def refresh_case_impact(
 
 def summary_text(match: sla_rules.SlaMatch, impact: sla_rules.SlaImpact, risk: risk_rules.RiskResult) -> str:
     verdict = "已违约" if impact.breached else "未违约"
+    # 摘要整串落库、前端原样显示 → 时间必须在这里就转成业务时区（否则同屏出现 UTC）
     text = (
-        f"{match.rule_name}：承诺 {impact.promised_delivery_at} / 预计 {impact.expected_eta_at}，"
+        f"{match.rule_name}：承诺 {local_text(impact.promised_delivery_at)}"
+        f" / 预计 {local_text(impact.expected_eta_at)}，"
         f"延误 {impact.delay_minutes} 分钟（{verdict}，允许 {match.max_delay_minutes} 分钟）；"
         f"风险 {risk.level}({risk.score})：{risk.explanation}"
     )

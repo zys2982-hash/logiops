@@ -46,6 +46,21 @@ def to_local(dt: datetime | None) -> datetime | None:
     return None if dt is None else dt.astimezone(LOCAL_TZ)
 
 
+def local_text(dt: datetime | None, fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """把库里的朴素 UTC 时间渲染成业务时区（Asia/Shanghai）文本，供「人可读摘要」使用。
+
+    为什么需要它：有些字段（如 exception_case.impact_summary）是**在服务端拼成整串再落库**的，
+    前端拿到的已经是纯文本、没有时间字段可以转换。若这里直接插 datetime 对象（默认 str()），
+    存进去的就是 UTC —— 界面上会表现为「页头北京时间、摘要 UTC」的同屏不一致。
+    用户口径（2026-10-08）：**全部统一北京时间**。
+
+    注意：DB 里是朴素 UTC。绝不能用 naive.astimezone(LOCAL_TZ) —— 那会按**本机时区**解释，
+    在东八区机器上等于没转换（本机实测：08:09 直接 astimezone 仍是 08:09，走本函数才是 16:09）。
+    """
+    local = to_local(dt)
+    return "-" if local is None else local.strftime(fmt)
+
+
 class ClockState:
     """ReplayClock 的可变状态（进程内单例；Demo/reset 会重置它）。"""
 

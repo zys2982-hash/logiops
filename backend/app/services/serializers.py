@@ -25,6 +25,8 @@ def order_out(repos: Repos, order: Order, *, full: bool = False) -> dict[str, An
             "weight_ton": float(order.weight_ton) if order.weight_ton is not None else None,
             "driver_id": order.driver_id,
             "sla_rule_id": order.sla_rule_id,
+            # 「预计到达时间」：运营手工登记的独立字段（不进运输轨迹时间线）
+            "planned_delivery_at": read_models.iso(order.planned_delivery_at),
             "remark": order.remark,
             "version": order.version,
             "created_at": read_models.iso(order.created_at),

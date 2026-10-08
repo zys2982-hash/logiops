@@ -1,5 +1,13 @@
 import { get, post } from './request'
-import type { LoginPayload, LoginResult, MeResult, RegisterPayload, User } from '@/types'
+import type {
+  ChangePasswordPayload,
+  ChangePasswordResult,
+  LoginPayload,
+  LoginResult,
+  MeResult,
+  RegisterPayload,
+  User,
+} from '@/types'
 
 /** POST /auth/register → 201 user */
 export function register(payload: RegisterPayload): Promise<User> {
@@ -19,4 +27,9 @@ export function me(): Promise<MeResult> {
 /** POST /auth/logout（服务端无黑名单，客户端丢弃 token） */
 export function logout(): Promise<{ ok: boolean }> {
   return post<{ ok: boolean }>('/auth/logout')
+}
+
+/** POST /auth/password → 改自己的密码（需原密码；原密码错误是 422，不会触发全局登出） */
+export function changePassword(payload: ChangePasswordPayload): Promise<ChangePasswordResult> {
+  return post<ChangePasswordResult>('/auth/password', payload)
 }

@@ -30,6 +30,8 @@ class OrderUpdate(BaseModel):
     cargo_desc: str | None = Field(default=None, max_length=128)
     weight_ton: float | None = Field(default=None, ge=0)
     distance_km: int | None = Field(default=None, gt=0)
+    # 「预计到达时间」：运营手工登记的独立字段（不产生轨迹事件、不进时间线）
+    planned_delivery_at: datetime | None = None
     remark: str | None = Field(default=None, max_length=255)
 
 
@@ -97,6 +99,8 @@ class OrderOut(BaseModel):
     original_eta_at: str | None = None
     current_eta_at: str | None = None
     delivered_at: str | None = None
+    # 手工登记的「预计到达时间」（独立于承诺到达 / 实际送达）
+    planned_delivery_at: str | None = None
     sla_rule_id: int | None = None
     remark: str | None = None
     version: int | None = None

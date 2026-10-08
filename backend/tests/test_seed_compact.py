@@ -32,10 +32,18 @@ def test_compact_scale_is_default_and_covers_every_exception_type(db_session, bo
     assert set(per_type) == {"VEHICLE_BREAKDOWN", "DELAY_RISK"}, f"应覆盖全部异常类型：{per_type}"
     assert per_type["VEHICLE_BREAKDOWN"] == 1, "车辆故障保留 CASE-A 一单（全闭环展示）"
     assert per_type["DELAY_RISK"] == 1, "延误单只有送达超时的 CASE-D2"
-    # 延误单只由"送达结算"产生：规则名必须是 DELIVERED_BREACH（在途 ETA 预测建单已下线）
+    # 延误单只由「预计到达时间」触发（口径 2026-10-08；旧的"送达结算建单"已下线）
     delay_case = next(case for case in cases if case.type == "DELAY_RISK")
     assert delay_case.detection_rule == "DELIVERED_BREACH" and delay_case.sla_breached is True
     assert delay_case.sla_delay_minutes == 31
+    # 造数必须把判定时点写到订单上，否则自检口径（延误 = 预计到达 − 承诺送达）不成立
+    delay_order = db_session.get(Order, delay_case.order_id)
+    assert delay_order is not None and delay_order.planned_delivery_at is not None, "延误单所属订单必须有预计到达时间"
+    assert delay_order.promised_delivery_at is not None
+    seeded_delay = int(
+        round((delay_order.planned_delivery_at - delay_order.promised_delivery_at).total_seconds() / 60)
+    )
+    assert seeded_delay == delay_case.sla_delay_minutes, f"造数的延误 {seeded_delay} ≠ 单上的 {delay_case.sla_delay_minutes}"
     # 车辆故障单不做 SLA 判定（新模型）
     vehicle_case = next(case for case in cases if case.type == "VEHICLE_BREAKDOWN")
     assert vehicle_case.sla_delay_minutes is None and vehicle_case.sla_breached is False

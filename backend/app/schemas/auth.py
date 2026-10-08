@@ -32,6 +32,33 @@ class LoginRequest(BaseModel):
         return value.strip().lower()
 
 
+class ChangePasswordRequest(BaseModel):
+    """修改自己的密码：必须验原密码（防"拿着 token 就能改密码"）。"""
+
+    old_password: str = Field(min_length=1, max_length=64, description="原密码")
+    new_password: str = Field(min_length=8, max_length=64, description="新密码，至少 8 位")
+
+    @field_validator("new_password")
+    @classmethod
+    def _check_strength(cls, value: str) -> str:
+        if value.strip() != value:
+            raise ValueError("新密码首尾不能有空格")
+        if not any(char.isalpha() for char in value) or not any(char.isdigit() for char in value):
+            raise ValueError("新密码需同时包含字母和数字")
+        return value
+
+    @model_validator(mode="after")
+    def _reject_unchanged(self) -> ChangePasswordRequest:
+        if self.old_password == self.new_password:
+            raise ValueError("新密码不能与原密码相同")
+        return self
+
+
+class ChangePasswordResponse(BaseModel):
+    ok: bool = True
+    message: str = "密码已修改，请用新密码登录"
+
+
 class UserOut(BaseModel):
     """用户出参：手机号脱敏（§8.7）。"""
 
@@ -103,6 +130,8 @@ class LogoutResponse(BaseModel):
 
 
 __all__ = [
+    "ChangePasswordRequest",
+    "ChangePasswordResponse",
     "LoginRequest",
     "LoginResponse",
     "LogoutResponse",

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { ArrowDown, Lock, SwitchButton } from '@element-plus/icons-vue'
 
+import ChangePasswordDialog from '@/components/ChangePasswordDialog.vue'
 import DemoBanner from './DemoBanner.vue'
 import { Perm } from '@/types'
 import { roleLabel } from '@/utils/permissions'
@@ -83,6 +85,19 @@ async function handleLogout(): Promise<void> {
   await auth.logout()
   router.push({ name: 'login' })
 }
+
+/** 顶栏用户菜单：修改密码 / 退出登录 */
+const passwordVisible = ref(false)
+
+const userInitial = computed(() => (auth.user?.name ?? '?').slice(0, 1))
+
+function handleUserCommand(command: string): void {
+  if (command === 'password') {
+    passwordVisible.value = true
+    return
+  }
+  if (command === 'logout') void handleLogout()
+}
 </script>
 
 <template>
@@ -124,9 +139,20 @@ async function handleLogout(): Promise<void> {
         <div class="topbar-right">
           <span class="u-text-muted">业务时间 {{ demo.businessTimeText }}</span>
           <el-divider direction="vertical" />
-          <span>{{ auth.user?.name ?? '未登录' }}</span>
-          <el-tag size="small" effect="plain">{{ roleLabel(auth.role) }}</el-tag>
-          <el-button text type="primary" @click="handleLogout">退出</el-button>
+          <el-dropdown trigger="click" @command="handleUserCommand">
+            <span class="user-chip">
+              <span class="user-avatar">{{ userInitial }}</span>
+              <span class="user-name">{{ auth.user?.name ?? '未登录' }}</span>
+              <el-tag size="small" effect="plain">{{ roleLabel(auth.role) }}</el-tag>
+              <el-icon class="user-arrow"><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="password" :icon="Lock">修改密码</el-dropdown-item>
+                <el-dropdown-item command="logout" :icon="SwitchButton" divided>退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
       </el-header>
 
@@ -138,6 +164,8 @@ async function handleLogout(): Promise<void> {
         </router-view>
       </el-main>
     </el-container>
+
+    <ChangePasswordDialog v-model="passwordVisible" />
   </el-container>
 </template>
 
@@ -195,5 +223,42 @@ async function handleLogout(): Promise<void> {
 .topbar-title {
   font-weight: 600;
   margin-right: 8px;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.2s;
+}
+
+.user-chip:hover {
+  background: #f2f6fd;
+}
+
+.user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #2f6fed 0%, #1f2d3d 100%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.user-name {
+  font-weight: 500;
+}
+
+.user-arrow {
+  color: #909399;
+  font-size: 12px;
 }
 </style>

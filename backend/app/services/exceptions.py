@@ -1581,6 +1581,8 @@ class ExceptionService:
             "current_eta_at": read_models.iso(order.current_eta_at) if order else None,
             "expected_eta_at": read_models.iso(case.expected_eta_at),
             "delivered_at": read_models.iso(order.delivered_at) if order else None,
+            # 「预计到达时间」：延误判定的**判定时点**（2026-10-08 起）；SLA 卡显示这一行
+            "planned_delivery_at": read_models.iso(order.planned_delivery_at) if order else None,
             "sla_delay_minutes": case.sla_delay_minutes,
             "sla_breached": bool(case.sla_breached),
             "risk_score": case.risk_score,

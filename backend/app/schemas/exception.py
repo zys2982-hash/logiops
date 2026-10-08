@@ -150,6 +150,8 @@ class ExceptionOut(BaseModel):
     expected_eta_at: str | None = None
     current_eta_at: str | None = None
     delivered_at: str | None = None
+    # 「预计到达时间」：延误判定的判定时点（2026-10-08 起），SLA 卡显示它
+    planned_delivery_at: str | None = None
     delay_minutes: int | None = None
     sla_delay_minutes: int | None = None
     sla_breached: bool | None = None

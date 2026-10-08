@@ -194,3 +194,66 @@ def test_order_exceptions_endpoint_shape(client, bootstrap, admin_headers, opera
     response = client.get(f"{ORDERS}/{created['id']}/exceptions", headers=operator_headers)
     assert response.status_code == 200
     assert response.json() == []
+
+
+def _tracking_count(client, headers, order_id: int) -> int:
+    raw = client.get(f"{ORDERS}/{order_id}/tracking-events", headers=headers).json()
+    return len(raw["items"]) if isinstance(raw, dict) else len(raw)
+
+
+def test_patch_planned_delivery_at_is_independent_field(client, db_session, bootstrap, admin_headers):
+    """「预计到达时间」= 订单上的**独立字段**（2026-10-08 用户需求）。
+
+    三条硬约束：
+    1. PATCH 能存、GET 能读（ISO UTC）；
+    2. **不产生轨迹事件** → 不会出现在运输轨迹时间线上；
+    3. 不改订单状态、不碰实际送达 / 承诺到达。
+       （补充口径 2026-10-08：该字段**是延误判定的判定时点**——订单有承诺到达时保存它会触发延误判定；
+       本用例的订单未派车、没有承诺到达，因此这里不会建单。）
+    """
+    order = _create_order(client, admin_headers, bootstrap)
+    before_count = _tracking_count(client, admin_headers, order["id"])
+    promised_before = order["promised_delivery_at"]
+
+    planned = "2026-10-09T02:30:00Z"
+    response = client.patch(
+        f"{ORDERS}/{order['id']}", headers=admin_headers, json={"planned_delivery_at": planned}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["planned_delivery_at"] == planned
+    assert body["status"] == "CREATED"          # 状态不变
+    assert body["delivered_at"] is None          # 不等于"已送达"
+    assert body["promised_delivery_at"] == promised_before  # 承诺到达是 SLA 算的，不受影响
+
+    # GET 能读回
+    assert client.get(f"{ORDERS}/{order['id']}", headers=admin_headers).json()["planned_delivery_at"] == planned
+    # 不产生轨迹事件
+    assert _tracking_count(client, admin_headers, order["id"]) == before_count
+
+    # 留痕：审计里能看到这次改动带上了该字段
+    from sqlalchemy import select
+
+    from app.models import AuditLog
+
+    rows = db_session.scalars(
+        select(AuditLog).where(
+            AuditLog.action == "order.updated",
+            AuditLog.resource_id == order["id"],
+        )
+    ).all()
+    assert rows, "应当写 order.updated 审计"
+    assert rows[-1].after_json is not None
+    assert str(rows[-1].after_json.get("planned_delivery_at", "")).startswith("2026-10-09T02:30")
+
+
+def test_patch_planned_delivery_at_requires_order_manage(client, bootstrap, admin_headers, operator_headers):
+    """它与基础信息同权限：OPERATOR 只负责派车 → 改这个字段 403。"""
+    order = _create_order(client, admin_headers, bootstrap)
+    response = client.patch(
+        f"{ORDERS}/{order['id']}",
+        headers=operator_headers,
+        json={"planned_delivery_at": "2026-10-09T02:30:00Z"},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "PERM_DENIED"

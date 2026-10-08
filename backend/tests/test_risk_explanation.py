@@ -126,10 +126,10 @@ def test_vehicle_factor_points_to_current_vehicle_status(
 def test_delivered_delay_case_sources_show_promised_actual_and_allowance(
     client, db_session, bootstrap, operator_headers, admin_headers
 ):
-    """延误单由**送达超时**产生：因子只有 延误时长 + 客户等级，依据给出 承诺/实际送达/允许/超出。"""
+    """延误单由**预计到达超时**产生（2026-10-08 新口径）：因子只有 延误时长 + 客户等级，
+    依据给出 承诺到达 / **预计到达** / 允许延误 / 超出多少。"""
     order = _order_with_vehicle(client, operator_headers, bootstrap, admin_headers=admin_headers)
     repos = Repos(db_session, workspace_id=bootstrap["workspace_id"])
-    # 发车（IN_TRANSIT）后按"承诺 + 400 分钟"送达 → 触发自动建单
     OrderService(repos).append_tracking(
         order["id"],
         event_type="DEPART",
@@ -140,12 +140,16 @@ def test_delivered_delay_case_sources_show_promised_actual_and_allowance(
     )
     row = repos.orders.get(order["id"])
     assert row.promised_delivery_at is not None
-    OrderService(repos).mark_delivered(
-        order["id"],
-        occurred_at=to_naive_utc(row.promised_delivery_at) + timedelta(minutes=400),
-        actor_id=None,
-    )
     db_session.commit()
+
+    # 新口径的触发点：保存「预计到达时间」= 承诺 + 400 分钟 → 自动建单
+    planned = to_naive_utc(row.promised_delivery_at) + timedelta(minutes=400)
+    patched = client.patch(
+        f"{ORDERS}/{order['id']}",
+        headers=admin_headers,
+        json={"planned_delivery_at": planned.strftime("%Y-%m-%dT%H:%M:%S")},
+    )
+    assert patched.status_code == 200, patched.text
 
     cases = client.get(f"{ORDERS}/{order['id']}/exceptions", headers=operator_headers).json()
     assert len(cases) == 1, cases
@@ -160,7 +164,7 @@ def test_delivered_delay_case_sources_show_promised_actual_and_allowance(
     by_code = {factor["code"]: factor for factor in explanation["factors"]}
     assert set(by_code) == {"DELAY_BASE", "CUSTOMER_VIP"}, by_code
     text = " ".join(source["text"] for source in by_code["DELAY_BASE"]["sources"])
-    assert "承诺到达" in text and "实际送达" in text and "允许延误" in text and "超出" in text, text
+    assert "承诺到达" in text and "预计到达" in text and "允许延误" in text and "超出" in text, text
 
 
 def test_list_does_not_carry_explanation(client, db_session, bootstrap, operator_headers, admin_headers):

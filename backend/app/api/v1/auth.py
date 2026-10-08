@@ -14,13 +14,15 @@ from fastapi import APIRouter, Header, status
 from app.api.deps import ContextDep, CurrentUser, DbDep
 from app.core.audit import record_audit
 from app.core.clock import utcnow_naive
-from app.core.errors import AppError, ErrorCode, conflict
+from app.core.errors import AppError, ErrorCode, conflict, validation_error
 from app.core.permissions import perms_for
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.auth import User, Workspace, WorkspaceMember
 from app.models.enums import Role
 from app.repositories import Repos
 from app.schemas.auth import (
+    ChangePasswordRequest,
+    ChangePasswordResponse,
     LoginRequest,
     LoginResponse,
     LogoutResponse,
@@ -174,6 +176,44 @@ def me(
 def logout(ctx: ContextDep) -> LogoutResponse:
     ctx.audit("auth.logout", resource_type="user", resource_id=ctx.user.id)
     return LogoutResponse()
+
+
+@router.post(
+    "/password",
+    response_model=ChangePasswordResponse,
+    summary="修改当前用户密码（需验原密码）",
+)
+def change_password(db: DbDep, user: CurrentUser, payload: ChangePasswordRequest) -> ChangePasswordResponse:
+    """改「自己」的密码：目标用户取自 token，接口不接受 user_id/email 参数 —— 结构上不可能越权改他人。
+
+    注意：JWT 无状态、服务端不维护黑名单（与 logout 同一口径），所以改完密码后**已签发的旧 token
+    在过期前仍然有效**；要立刻失效只能由前端重新登录、丢弃旧 token。
+    """
+    if not verify_password(payload.old_password, user.password_hash):
+        # 刻意用 422 而不是 401：前端 axios 拦截器把**任何 401** 都当"会话失效"并执行
+        # logoutLocal()（见 frontend/src/stores/auth.ts 的 onUnauthorized）——
+        # 这里若返回 401，用户只是打错一次原密码就会被踢下线。语义上也说得通：
+        # 请求本身已通过认证，错的是提交上来的 old_password 字段。
+        raise validation_error("原密码不正确", field="old_password")
+
+    repos = Repos(db, workspace_id=None)
+    user.password_hash = hash_password(payload.new_password)
+    repos.users.save(user)
+
+    memberships = _memberships(db, user.id)
+    if memberships:
+        # 只记"谁在什么时候改了自己的密码"，不记任何密码/哈希内容
+        record_audit(
+            db,
+            workspace_id=memberships[0][0].id,
+            action="auth.password_changed",
+            resource_type="user",
+            resource_id=user.id,
+            actor_id=user.id,
+            after={"email": user.email},
+            source="MANUAL",
+        )
+    return ChangePasswordResponse()
 
 
 __all__ = ["router"]
