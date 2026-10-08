@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     LogiOps 一键开发启动（Windows PowerShell 7）。
 
@@ -96,7 +96,7 @@ function Show-Help {
     Write-Host ''
     Write-Host '启动后：'
     Write-Host '  后端 OpenAPI   http://127.0.0.1:8000/docs'
-    Write-Host '  健康检查       http://127.0.0.1:8000/healthz'
+    Write-Host '  健康检查       http://127.0.0.1:8000/api/v1/healthz'
     Write-Host '  前端           http://127.0.0.1:5173'
     Write-Host ''
     Write-Host '相关脚本：scripts/seed.ps1、scripts/acceptance.ps1（基线 §14.5 一键验收）'
@@ -153,12 +153,24 @@ if ($WithDocker) {
 Write-Host "数据库模式：$(if ($WithDocker) { '路径 B（docker compose，3307）' } else { '路径 A（本机 MySQL，3306）' })"
 
 function Test-PortListening([int]$Port) {
+    # ⚠️ 2026-10-08 实测：Get-NetTCPConnection 依赖 CIM，在受限环境（如 DSH 沙箱）下会
+    # **静默返回空**——后端明明在监听 8000，它却返回 0 条，于是上面的"端口已被占用"守卫失效、
+    # 重复拉起第二个实例（撞端口 / 前端抢 5173）。原实现用 -ErrorAction SilentlyContinue 把失败
+    # 一起吞了，所以既没结果也没报错。这里改成：先试 CIM，拿不到就回退 netstat。
     try {
-        $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-        return [bool]$conn
+        $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
+        if ($conn) { return $true }
     } catch {
-        return $false
+        # CIM 不可用（受限环境）→ 落到 netstat 回退
     }
+    try {
+        foreach ($line in (netstat -ano -p TCP 2>$null)) {
+            if ($line -match "^\s*TCP\s+\S+:$Port\s+\S+\s+LISTENING\s+\d+") { return $true }
+        }
+    } catch {
+        # netstat 也不可用：无法判定，按"未占用"处理（与原行为一致，不阻断启动）
+    }
+    return $false
 }
 if (-not $SkipBackend -and (Test-PortListening $BackendPort)) {
     Write-Host "[错误] 端口 $BackendPort 已被占用（后端可能已在运行）。" -ForegroundColor Red
@@ -295,7 +307,7 @@ foreach ($item in $started) { Write-Host "      - $item" -ForegroundColor Green 
 Write-Host ''
 Write-Host '常用地址：'
 Write-Host "  后端 OpenAPI   http://127.0.0.1:$BackendPort/docs"
-Write-Host "  健康检查       http://127.0.0.1:$BackendPort/healthz"
+Write-Host "  健康检查       http://127.0.0.1:$BackendPort/api/v1/healthz"
 Write-Host "  前端           http://127.0.0.1:$FrontendPort"
 Write-Host ''
 Write-Host '演示控制（需登录 + X-Workspace-Id）：'

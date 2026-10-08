@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     LogiOps 演示数据生成（seed --reset --demo，幂等可重建）。
 
