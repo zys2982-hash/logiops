@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.ai.errors import AiOutputInvalid
+from app.core import labels
 from app.services import read_models
 
 MAX_TRACKING_LIMIT = 50
@@ -127,7 +128,10 @@ def _get_order(ctx: ToolContext, args: dict[str, Any]) -> ToolOutcome:
     view = read_models.order_view(ctx.repos, order_id)  # type: ignore[arg-type]
     if view is None:
         return ToolOutcome("get_order", args, None, f"订单 {order_id} 不存在", status="ERROR", error="ORDER_NOT_FOUND")
-    summary = f"{view['order_no']} {view['origin_city']}→{view['dest_city']} {view['status']}"
+    summary = (
+        f"{view['order_no']} {view['origin_city']}→{view['dest_city']} "
+        f"{labels.label(labels.ORDER_STATUS, view['status'])}"
+    )
     return ToolOutcome("get_order", {"order_id": order_id}, view, summary)
 
 
@@ -148,7 +152,10 @@ def _get_customer(ctx: ToolContext, args: dict[str, Any]) -> ToolOutcome:
     view = read_models.customer_view(ctx.repos, customer_id)  # type: ignore[arg-type]
     if view is None:
         return ToolOutcome("get_customer", args, None, f"客户 {customer_id} 不存在", status="ERROR")
-    summary = f"{view['name']}（{view['level']}）通知偏好 {view['notify_pref'] or '-'}"
+    summary = (
+        f"{view['name']}（{labels.label(labels.CUSTOMER_LEVEL, view['level'])}）"
+        f"通知偏好 {labels.label(labels.NOTIFY_PREF, view['notify_pref'], '未设置')}"
+    )
     return ToolOutcome("get_customer", {"customer_id": customer_id}, view, summary)
 
 
@@ -157,7 +164,8 @@ def _get_customer_sla(ctx: ToolContext, args: dict[str, Any]) -> ToolOutcome:
     order_id = _as_int(args, "order_id", required=False)
     view = read_models.sla_view(ctx.repos, customer_id=customer_id, order_id=order_id)  # type: ignore[arg-type]
     summary = (
-        f"{view['scope_type']}:{view['scope_value'] or '-'} 发车后 {view['deadline_offset_hours']}h，"
+        f"{labels.label(labels.SLA_SCOPE, view['scope_type'])}：{view['scope_value'] or '-'} "
+        f"发车后 {view['deadline_offset_hours']}h，"
         f"允许延迟 {view['max_delay_minutes']}min，延误 {view['delay_minutes']}min"
     )
     return ToolOutcome("get_customer_sla", {"customer_id": customer_id, "order_id": order_id}, view, summary)
@@ -168,7 +176,7 @@ def _get_vehicle(ctx: ToolContext, args: dict[str, Any]) -> ToolOutcome:
     view = read_models.vehicle_view(ctx.repos, vehicle_id)  # type: ignore[arg-type]
     if view is None:
         return ToolOutcome("get_vehicle", args, None, f"车辆 {vehicle_id} 不存在", status="ERROR")
-    summary = f"{view['plate_no']} {view['status']} 当前 {view['current_city'] or '-'}"
+    summary = f"{view['plate_no']} {view.get('status_label') or view['status']} 当前 {view['current_city'] or '-'}"
     return ToolOutcome("get_vehicle", {"vehicle_id": vehicle_id}, view, summary)
 
 

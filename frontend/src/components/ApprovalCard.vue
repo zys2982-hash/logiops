@@ -35,7 +35,14 @@ const FIELD_LABELS: Record<string, string> = {
   subject: '通知标题',
   due_at: '截止时间',
   assignee_role: '建议处理角色',
+  priority: '优先级',
   notification_id: '通知单号',
+}
+
+/** 枚举型 payload 值的中文说法（给人看的表格里不出现 OPERATOR / NORMAL 这类英文常量） */
+const PAYLOAD_VALUE_LABELS: Record<string, Record<string, string>> = {
+  assignee_role: { OPERATOR: '运营人员', ADMIN: '管理员', VIEWER: '只读用户' },
+  priority: { LOW: '低', NORMAL: '普通', HIGH: '高', URGENT: '紧急' },
 }
 
 const DATE_FIELDS = new Set(['eta_at', 'due_at'])
@@ -115,7 +122,8 @@ function displayValue(key: string, value: unknown): string {
   if (value === null || value === undefined || value === '') return '—'
   if (DATE_FIELDS.has(key) && typeof value === 'string') return formatDateTime(value)
   if (typeof value === 'object') return JSON.stringify(value)
-  return String(value)
+  const mapped = PAYLOAD_VALUE_LABELS[key]?.[String(value)]
+  return mapped ?? String(value)
 }
 
 function useFieldDate(key: string): boolean {

@@ -124,7 +124,8 @@ def test_order_tracking_vehicle_sla_tools_return_facts(repos, case_a):
     ctx = ToolContext(repos=repos, exception_id=case_a["exception_id"])
     order = call_tool("get_order", {"order_id": case_a["order_id"]}, ctx)
     assert order.status == "OK" and order.payload["order_no"] == "SO20260930021"
-    assert "IN_TRANSIT" in order.summary
+    # 摘要给人看 → 用中文（口径：不出现 IN_TRANSIT / REPAIRING 这类英文常量）
+    assert "在途" in order.summary, order.summary
 
     tracking = call_tool("get_tracking_events", {"order_id": case_a["order_id"], "limit": 999}, ctx)
     assert tracking.payload[0]["event_type"] == "REPAIR_START"
@@ -133,6 +134,10 @@ def test_order_tracking_vehicle_sla_tools_return_facts(repos, case_a):
 
     vehicle = call_tool("get_vehicle", {"vehicle_id": case_a["case"].vehicle_id}, ctx)
     assert vehicle.payload["plate_no"] == "津A·12345"
+    # 中文标签随状态走，且摘要里不出现英文常量
+    assert vehicle.payload["status_label"] == "在途", vehicle.payload
+    assert "在途" in vehicle.summary
+    assert "IN_TRANSIT" not in vehicle.summary
 
     customer = call_tool("get_customer", {"customer_id": case_a["case"].customer_id}, ctx)
     assert customer.payload["level"] == "VIP"

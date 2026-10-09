@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import math
+import re
+from collections import Counter
 from typing import Any
 
-from sqlalchemy import String, cast, func, or_, select, text
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.errors import not_found
@@ -16,6 +19,56 @@ from app.models.master import Carrier, Customer, Driver, SlaRule, Vehicle
 from app.models.ops import AuditLog, KnowledgeChunk, KnowledgeDoc
 from app.models.transport import Order, TrackingEvent
 from app.repositories.base import BaseRepository
+
+# --- 知识库检索打分（纯 Python，无第三方依赖）--------------------------------
+# 2026-10-08 重写：原来只按 MySQL MATCH...AGAINST（自然语言模式）的词频打分，
+# 小语料上排序很容易被"什么词都沾一点"的泛化小节顶掉（实测 12 条自然语言 query：
+# hit@1 = 2/12、hit@5 = 6/12）。现在改为字符 bigram 的 BM25-lite：
+#   · IDF 由当前语料现算 → 填充词权重趋零、术语权重高；
+#   · 小节标题命中额外加权 → "什么情况算违约" 能落到《2.3 违约判定》；
+#   · BM25 长度归一 → 长小节不再因为"词多"虚高；
+#   · 命中覆盖度门槛 → 只沾一个泛化词的长 query 视为**无命中**（宁可不说，也别引错规范）。
+# 副作用（有意）：不再依赖 MySQL FULLTEXT/ngram 索引，SQLite 与 MySQL 行为一致。
+SEARCH_CANDIDATE_LIMIT = 2000  # 全量候选上限；知识库是小语料，超过则截断，避免无界扫描
+BM25_K1 = 1.2
+BM25_B = 0.6
+TITLE_BOOST = 2.0
+MIN_QUERY_COVERAGE = 0.25  # 命中的 query 检索单元占比低于此值 → 视为无命中
+COVERAGE_FLOOR = 0.5  # 覆盖度对总分的影响下限（覆盖越全，分数越高）
+
+# 中文疑问句里的填充 bigram：它们几乎出现在每篇规范里，参与打分只会把泛化小节顶上去
+_STOP_TOKENS = frozenset(
+    {
+        "什么", "么样", "怎么", "怎样", "如何", "哪些", "哪个", "哪种", "多久", "多长",
+        "是否", "能否", "可以", "需要", "必须", "应该", "情况", "时候", "的话", "一下",
+        "我们", "你们", "请问", "为何", "为什",
+    }
+)
+
+_ASCII_WORD = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+_CJK_RUN = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def _search_tokens(text: str) -> list[str]:
+    """切成检索单元：ASCII 词（小写整词）+ 中文 2-gram（不引入分词器依赖）。"""
+    tokens = [match.group(0).lower() for match in _ASCII_WORD.finditer(text)]
+    for run in _CJK_RUN.findall(text):
+        if len(run) == 1:
+            tokens.append(run)
+        else:
+            tokens.extend(run[i : i + 2] for i in range(len(run) - 1))
+    return tokens
+
+
+def _informative_tokens(tokens: list[str]) -> set[str]:
+    """剔除疑问句填充词；若全是填充词（比如只问了"怎么办"）则退回原集合。"""
+    informative = {token for token in tokens if token not in _STOP_TOKENS}
+    return informative or set(tokens)
+
+
+def _idf(doc_freq: int, total: int) -> float:
+    """BM25 的 IDF：语料越小越平滑，df=0（语料里根本没有）也不会炸。"""
+    return math.log(1 + (total - doc_freq + 0.5) / (doc_freq + 0.5))
 
 
 # --- 认证与工作区 -----------------------------------------------------------
@@ -464,43 +517,77 @@ class KnowledgeRepository(BaseRepository[KnowledgeDoc]):
         return chunk
 
     def search_chunks(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        """跨方言检索：MySQL 用 FULLTEXT(ngram) 优先，退化到 LIKE 打分。"""
-        dialect = self.session.bind.dialect.name if self.session.bind is not None else "sqlite"
-        rows: list[dict[str, Any]] = []
-        if dialect == "mysql":
-            sql = text(
-                """
-                SELECT c.id, c.doc_id, c.section_path, c.content, d.title AS doc_title,
-                       MATCH(c.content) AGAINST (:q IN NATURAL LANGUAGE MODE) AS score
-                FROM knowledge_chunk c
-                JOIN knowledge_doc d ON d.id = c.doc_id
-                WHERE MATCH(c.content) AGAINST (:q IN NATURAL LANGUAGE MODE)
-                ORDER BY score DESC
-                LIMIT :k
-                """
+        """知识库检索：字符 bigram BM25-lite + 小节标题加权（打分口径见文件头说明）。
+
+        返回键与旧实现保持一致：``id / doc_id / doc_title / section_path / content / score``。
+        命中覆盖度不足时返回**空列表** —— 宁可不给依据，也不要引错规范（AI 引用会经 guard 校验）。
+        """
+        query_terms = _informative_tokens(_search_tokens(query))
+        if not query_terms:
+            return []
+
+        rows = self.session.execute(
+            select(
+                KnowledgeChunk.id,
+                KnowledgeChunk.doc_id,
+                KnowledgeChunk.section_path,
+                KnowledgeChunk.content,
+                KnowledgeDoc.title.label("doc_title"),
             )
-            try:
-                result = self.session.execute(sql, {"q": query, "k": top_k}).mappings().all()
-                rows = [dict(row) for row in result]
-            except Exception:  # FULLTEXT 索引未建等 → 退化
-                rows = []
+            .join(KnowledgeDoc, KnowledgeDoc.id == KnowledgeChunk.doc_id)
+            .order_by(KnowledgeChunk.id)
+            .limit(SEARCH_CANDIDATE_LIMIT)
+        ).all()
         if not rows:
-            like_sql = (
-                select(
-                    KnowledgeChunk.id,
-                    KnowledgeChunk.doc_id,
-                    KnowledgeChunk.section_path,
-                    KnowledgeChunk.content,
-                    KnowledgeDoc.title.label("doc_title"),
-                )
-                .join(KnowledgeDoc, KnowledgeDoc.id == KnowledgeChunk.doc_id)
-                .where(cast(KnowledgeChunk.content, String).like(f"%{query}%"))
-                .limit(top_k)
+            return []
+
+        candidates: list[tuple[Any, Counter[str], int, set[str]]] = []
+        doc_freq: Counter[str] = Counter()
+        for row in rows:
+            freq = Counter(_search_tokens(row.content or ""))
+            title_terms = set(_search_tokens(f"{row.section_path or ''} {row.doc_title or ''}"))
+            candidates.append((row, freq, sum(freq.values()), title_terms))
+            for token in freq:
+                doc_freq[token] += 1
+
+        total = len(candidates)
+        avg_len = sum(item[2] for item in candidates) / total
+        scored: list[tuple[float, Any]] = []
+        for row, freq, length, title_terms in candidates:
+            matched = 0
+            body_score = 0.0
+            title_score = 0.0
+            for token in query_terms:
+                idf = _idf(doc_freq[token], total)
+                hit = freq.get(token, 0)
+                in_title = token in title_terms
+                if hit:
+                    body_score += idf * hit * (BM25_K1 + 1) / (
+                        hit + BM25_K1 * (1 - BM25_B + BM25_B * length / max(avg_len, 1.0))
+                    )
+                if in_title:
+                    title_score += idf * TITLE_BOOST
+                if hit or in_title:
+                    matched += 1
+            coverage = matched / len(query_terms)
+            if coverage < MIN_QUERY_COVERAGE:
+                continue
+            scored.append(
+                ((body_score + title_score) * (COVERAGE_FLOOR + (1 - COVERAGE_FLOOR) * coverage), row)
             )
-            rows = [dict(row._mapping) for row in self.session.execute(like_sql).all()]
-            for index, row in enumerate(rows):
-                row["score"] = float(len(rows) - index)
-        return rows
+
+        scored.sort(key=lambda item: (-item[0], item[1].id))
+        return [
+            {
+                "id": row.id,
+                "doc_id": row.doc_id,
+                "doc_title": row.doc_title,
+                "section_path": row.section_path,
+                "content": row.content,
+                "score": round(score, 4),
+            }
+            for score, row in scored[:top_k]
+        ]
 
 
 class Repos:

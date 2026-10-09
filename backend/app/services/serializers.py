@@ -95,6 +95,10 @@ def exception_brief(repos: Repos, case: ExceptionCase) -> dict[str, Any]:
         "sla_breached": bool(case.sla_breached),
         "risk_score": case.risk_score,
         "risk_factors": case.risk_factors_json or [],
+        # 建单时冻结的风险快照（口径 2026-10-08）：建单响应也要带上，否则前端拿到的整单"没有快照"
+        "initial_risk_score": case.initial_risk_score,
+        "initial_level": case.initial_level,
+        "initial_risk_factors": case.initial_risk_factors_json or [],
         "assigned_to": case.assigned_to,
         "resolved_at": read_models.iso(case.resolved_at),
         "closed_at": read_models.iso(case.closed_at),

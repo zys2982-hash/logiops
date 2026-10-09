@@ -125,13 +125,36 @@ def _to_fixture(payload: dict[str, Any], path: Path) -> ReplayFixture:
 
 
 # --- 默认（无录制）工具计划 ---------------------------------------------------
+# 风险因子 → 知识库检索词（**用户口径 2026-10-08**）：AI 拿到的是**系统已算好的风险因子**，
+# 再按因子分别去知识库找"该怎么做"的规范 —— VIP 客户查 VIP 规则、延误查 SLA 规则、
+# 车辆故障查车辆故障规范，形成"因子 → 规范 → 动作"一条链，而不是笼统地查一次。
+FACTOR_QUERIES: dict[str, str] = {
+    "DELAY_BASE": "延误",
+    "CUSTOMER_VIP": "VIP 客户",
+    "CUSTOMER_SVIP": "SVIP 客户",
+    "VEHICLE_BREAKDOWN": "车辆故障",
+}
+FALLBACK_QUERY = "延误"
+
+
+def knowledge_queries(facts: dict[str, Any]) -> list[str]:
+    """按风险因子给出检索词（去重、保序）；没有因子时退回按建单原因查一次。"""
+    risk = (facts or {}).get("risk") or {}
+    queries: list[str] = []
+    for factor in risk.get("factors") or []:
+        query = FACTOR_QUERIES.get(str((factor or {}).get("code") or ""))
+        if query and query not in queries:
+            queries.append(query)
+    if not queries:
+        case = (facts or {}).get("exception") or {}
+        kind = str(case.get("type") or "")
+        queries.append("车辆故障" if kind == "VEHICLE_BREAKDOWN" else FALLBACK_QUERY)
+    return queries
+
+
 def knowledge_query(facts: dict[str, Any]) -> str:
-    """知识库检索词：取能在五篇规范里稳定命中的短语。"""
-    case = (facts.get("exception") or {}) if facts else {}
-    exception_type = str(case.get("type") or "")
-    if exception_type == "VEHICLE_BREAKDOWN":
-        return "车辆故障"
-    return "延误"
+    """首个（最主要）检索词；兼容既有调用方。"""
+    return knowledge_queries(facts)[0]
 
 
 def default_t2_plan(facts: dict[str, Any]) -> list[ToolCall]:
@@ -155,7 +178,9 @@ def default_t2_plan(facts: dict[str, Any]) -> list[ToolCall]:
         calls.append(ToolCall("get_vehicle", {"vehicle_id": vehicle_id}))
     if customer_id:
         calls.append(ToolCall("get_exception_history", {"customer_id": customer_id, "days": 90}))
-    calls.append(ToolCall("search_knowledge", {"query": knowledge_query(facts), "top_k": 5}))
+    # 每个风险因子各查一次知识库：让模型看到"这个因子对应的规范怎么做"
+    for query in knowledge_queries(facts):
+        calls.append(ToolCall("search_knowledge", {"query": query, "top_k": 5}))
     return calls
 
 
@@ -263,6 +288,7 @@ __all__ = [
     "ReplayProvider",
     "ReplayStore",
     "default_t2_plan",
+    "knowledge_queries",
     "knowledge_query",
     "plan_from_steps",
     "resolve_replay_dir",

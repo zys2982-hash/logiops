@@ -83,10 +83,29 @@ const canForceClose = computed(() => auth.can(Perm.EXCEPTION_FORCE_CLOSE))
 const pendingApprovals = computed(() => approvals.value.filter((a) => a.status === 'PENDING'))
 const decidedApprovals = computed(() => approvals.value.filter((a) => a.status !== 'PENDING'))
 
-/** 已结束（已解决/已关闭）→ 风险卡改为"历史判定"，不再声称是当前风险 */
+/** 已结束（已解决/已关闭）→ 风险卡改为"建单时快照"，不再声称是当前风险 */
 const isEnded = computed(() =>
   ['RESOLVED', 'CLOSED'].includes(String(exception.value?.status ?? '')),
 )
+
+/**
+ * 建单时**冻结**的风险判定（口径 2026-10-08）：
+ * `risk_score / level / risk_factors` 会被后续重算覆盖（改预计到达时间、修正实际送达、车辆修复），
+ * 所以详情页对已结束的单显示 `initial_*` 快照，且写明它不代表当前风险。
+ */
+const riskSnapshotRows = computed(() => exception.value?.initial_risk_factors ?? [])
+const shownRiskScore = computed(() =>
+  isEnded.value
+    ? (exception.value?.initial_risk_score ?? exception.value?.risk_score ?? null)
+    : (exception.value?.risk_score ?? null),
+)
+const shownRiskLevel = computed(() =>
+  isEnded.value
+    ? (exception.value?.initial_level ?? exception.value?.level ?? null)
+    : (exception.value?.level ?? null),
+)
+/** 已结束 → 表格显示冻结快照；进行中 → 保持"当前因子 + 依据" */
+const shownRiskFactorRows = computed(() => (isEnded.value ? riskSnapshotRows.value : riskFactorRows.value))
 
 /** 本页异常自身作为时间线上的"异常条目"（开始 + 已结束时追加结束那条） */
 const timelineIncidents = computed<TimelineIncident[]>(() => {
@@ -629,8 +648,12 @@ onMounted(async () => {
           <SlaImpactCard v-if="isDelayCase" :exception="exception" @updated="refreshAfterWrite" />
 
           <PanelCard
-            :title="isEnded ? '风险等级（历史判定）' : '风险等级（当前）'"
-            :subtitle="isEnded ? '该异常已结束，以下为结束时的判定依据' : '规则逐项加权，LLM 无权修改'"
+            :title="isEnded ? '风险等级（建单时快照）' : '风险等级（当前）'"
+            :subtitle="
+              isEnded
+                ? '建单那一刻的规则判定，已冻结不再改变（留痕用）'
+                : '规则逐项加权，LLM 无权修改'
+            "
             icon="WarnTriangleFilled"
           >
             <template #actions>
@@ -650,14 +673,15 @@ onMounted(async () => {
               :closable="false"
               show-icon
               class="u-mb-8"
-              :title="`该异常已${exceptionStatusLabel(exception.status)}，当前无风险等级`"
-              description="下面的等级与因子是异常结束那一刻的判定依据（留痕用），不代表当前风险。"
+              :title="`该异常已${exceptionStatusLabel(exception.status)}，当前风险 ${exception.current_risk_score ?? 0} 分（无风险等级）`"
+              description="下面显示的是**建单时**的判定（已冻结，不随后续重算变化），不代表当前风险。"
             />
             <div class="risk-head u-mb-8">
-              <RiskTag :level="exception.level" :score="exception.risk_score" show-score size="large" />
+              <RiskTag :level="shownRiskLevel" :score="shownRiskScore" show-score size="large" />
+              <span v-if="isEnded" class="u-text-muted">建单时</span>
               <span class="u-text-muted">0→低 / 1-2→中 / 3→高 / 4→严重（封顶）</span>
             </div>
-            <el-table :data="riskFactorRows" size="small" border empty-text="无风险因子明细">
+            <el-table :data="shownRiskFactorRows" size="small" border empty-text="无风险因子明细">
               <el-table-column type="expand">
                 <template #default="{ row }">
                   <div v-if="row.sources?.length" class="factor-sources">

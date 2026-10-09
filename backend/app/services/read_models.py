@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from app.core import labels
 from app.core.clock import now_utc
 from app.core.masking import mask_email, mask_phone
 from app.models.exception import ExceptionCase
@@ -53,6 +54,9 @@ def order_view(repos: Repos, order_id: int) -> dict[str, Any] | None:
         "original_eta_at": iso(order.original_eta_at),
         "current_eta_at": iso(order.current_eta_at),
         "delivered_at": iso(order.delivered_at),
+        # 延误判定的**判定时点**（口径 2026-10-08：由"实际送达"改为"预计到达时间"）。
+        # AI agent 的 get_order 工具走这个视图，所以必须暴露——否则模型看不到判罚依据。
+        "planned_delivery_at": iso(order.planned_delivery_at),
     }
 
 
@@ -112,6 +116,8 @@ def vehicle_view(repos: Repos, vehicle_id: int | None) -> dict[str, Any] | None:
         "id": vehicle.id,
         "plate_no": vehicle.plate_no,
         "status": vehicle.status,
+        # 中文说法（口径：给人看的文字不要出现 REPAIRING 这类英文常量）
+        "status_label": labels.label(labels.VEHICLE_STATUS, vehicle.status),
         "current_city": vehicle.current_city,
         "carrier_id": vehicle.carrier_id,
         "vehicle_type": vehicle.vehicle_type,
@@ -192,7 +198,9 @@ def exception_facts(repos: Repos, exception_id: int) -> dict[str, Any]:
             "id": case.id,
             "case_no": case.case_no,
             "type": case.type,
+            "type_label": labels.label(labels.EXCEPTION_TYPE, case.type),
             "level": case.level,
+            "level_label": labels.label(labels.EXCEPTION_LEVEL, case.level),
             "status": case.status,
             "occurred_at": iso(case.occurred_at),
             "impact_summary": case.impact_summary,
@@ -204,6 +212,12 @@ def exception_facts(repos: Repos, exception_id: int) -> dict[str, Any]:
             "sla_breached": bool(case.sla_breached),
             "risk_score": case.risk_score,
             "risk_level": case.level,
+            # 建单时冻结的快照（口径 2026-10-08）：只作参考，让 AI 能看出"风险有没有变化"
+            "initial_risk": {
+                "score": case.initial_risk_score,
+                "level": case.initial_level,
+                "factors": case.initial_risk_factors_json or [],
+            },
         },
         "order": order,
         "customer": customer,

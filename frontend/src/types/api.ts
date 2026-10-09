@@ -473,6 +473,10 @@ export interface ExceptionListItem {
   sla_breached: boolean
   risk_score?: number | null
   risk_factors?: RiskFactor[] | null
+  /** 建单时冻结的风险快照（口径 2026-10-08）：已结束的单在详情页显示这一份，永不改变 */
+  initial_risk_score?: number | null
+  initial_level?: ExceptionLevel | null
+  initial_risk_factors?: RiskFactor[] | null
   /** 详情才返回：因子的来源 + 信号流（列表为 null） */
   risk_explanation?: RiskExplanation | null
   assigned_to?: number | null

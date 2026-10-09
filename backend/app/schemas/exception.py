@@ -157,6 +157,10 @@ class ExceptionOut(BaseModel):
     sla_breached: bool | None = None
     risk_score: int | None = None
     risk_factors: list[dict[str, Any]] | None = None
+    # 建单时冻结的风险快照（口径 2026-10-08）：详情页「建单时」卡片显示它，永不改变
+    initial_risk_score: int | None = None
+    initial_level: str | None = None
+    initial_risk_factors: list[dict[str, Any]] | None = None
     risk_explanation: dict[str, Any] | None = None
     assigned_to: int | None = None
     resolved_at: str | None = None

@@ -19,7 +19,7 @@ from app.models.enums import (
     ExceptionStatus,
     ExceptionType,
 )
-from app.models.exception import ExceptionCase
+from app.models.exception import ExceptionCase, freeze_initial_risk
 from app.models.transport import Order
 from app.repositories import Repos
 from app.rules import detection as detection_rules
@@ -63,6 +63,9 @@ def create_case_record(
     )
     repos.exceptions.add(case)
     eta_flow.refresh_case_impact(repos, case, order, eta_at=case.expected_eta_at)
+    # 建单快照（口径 2026-10-08）：风险值是在插入之后才由上面这行写入的，
+    # 所以必须在这里再冻结一次 —— initial_* 只在为空时写，之后任何重算都不碰。
+    freeze_initial_risk(case)
     return case
 
 

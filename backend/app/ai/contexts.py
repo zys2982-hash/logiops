@@ -17,6 +17,35 @@ def _kv(value: Any, default: str = EMPTY) -> str:
     return str(value)
 
 
+def _risk_factors_text(facts: dict[str, Any]) -> str:
+    """风险分构成（系统已算好，模型只引用不算）。
+
+    形如：`延误时长(+2：实际延误 270 分钟)、VIP 客户(+1：VIP 客户需优先处理) → 合计 3 分，等级 HIGH`。
+    """
+    risk = facts.get("risk") or {}
+    case = facts.get("exception") or {}
+    factors = [item for item in (risk.get("factors") or []) if isinstance(item, dict)]
+    score = risk.get("score")
+    if score is None:
+        score = case.get("risk_score")
+    level = risk.get("level") or case.get("risk_level") or case.get("level")
+    if not factors:
+        return f"无加分项（风险分 {score if score is not None else 0}，等级 {level or EMPTY}）"
+    parts = [f"{item.get('label')}(+{item.get('weight')}：{item.get('detail')})" for item in factors]
+    return f"{'、'.join(parts)} → 合计 {score if score is not None else 0} 分，等级 {level or EMPTY}"
+
+
+def _initial_risk_text(facts: dict[str, Any]) -> str:
+    """建单时**冻结**的风险快照（只作参考，口径 Q5a）：`4 分 / CRITICAL（延误时长(+3)、VIP 客户(+1)）`。"""
+    initial = ((facts.get("exception") or {}).get("initial_risk")) or {}
+    score = initial.get("score")
+    if score is None:
+        return "历史数据无快照"
+    factors = [item for item in (initial.get("factors") or []) if isinstance(item, dict)]
+    parts = "、".join(f"{item.get('label')}(+{item.get('weight')})" for item in factors) or "无加分项"
+    return f"{score} 分 / {initial.get('level') or EMPTY}（{parts}）"
+
+
 def build_t1_context(
     *,
     raw_text: str,
@@ -66,8 +95,8 @@ def build_t2_context(
     )
     return {
         "case_no": _kv(case.get("case_no")),
-        "exception_type": _kv(case.get("type")),
-        "current_level": _kv(case.get("level")),
+        "exception_type": _kv(case.get("type_label") or case.get("type")),
+        "current_level": _kv(case.get("level_label") or case.get("level")),
         "order_no": _kv(order.get("order_no")),
         # 实体主键（真实模型必须靠这些 id 调工具；只给业务编号会让它拿订单号当主键猜）
         "exception_id": _kv(case.get("id")),
@@ -87,9 +116,13 @@ def build_t2_context(
         "expected_eta_at": _kv(case.get("expected_eta_at") or sla.get("expected_eta_at")),
         "sla_delay_minutes": _kv(_backend_delay(facts), "0"),
         "sla_breached": _kv(case.get("sla_breached"), "false"),
-        "risk_level": _kv(risk.get("level") or case.get("level")),
+        "risk_level": _kv(risk.get("level_label") or case.get("level_label") or risk.get("level") or case.get("level")),
+        # 风险分构成：AI 的处置建议要**从这些因子出发**逐项给方案（用户口径 2026-10-08）
+        "risk_factors": _kv(_risk_factors_text(facts)),
+        # 建单时冻结的快照：仅作参考 —— 建议一律按"当前"因子给（口径 Q5a）
+        "initial_risk": _kv(_initial_risk_text(facts)),
         "vehicle_plate": _kv(vehicle.get("plate_no")),
-        "vehicle_status": _kv(vehicle.get("status")),
+        "vehicle_status": _kv(vehicle.get("status_label") or vehicle.get("status")),
         "last_move_city": _kv(last_event.get("city")),
         "last_move_at": _kv(last_event.get("occurred_at")),
         "latest_message": _kv(message.get("raw_text")),

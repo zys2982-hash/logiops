@@ -184,7 +184,7 @@ onMounted(async () => {
 
 <template>
   <div class="page">
-    <PanelCard title="车辆主数据" :subtitle="`共 ${result.total} 台（状态影响 ETA 重算：REPAIRING 走 REPAIR_WAIT）`" icon="Van">
+    <PanelCard title="车辆主数据" :subtitle="`共 ${result.total} 台（车辆为「维修中」时，车辆故障因子会按现状计入风险分）`" icon="Van">
       <template #actions>
         <!-- 承运商不再单独占一个菜单项（ADR-A17）：它是归属字典，入口收在这里 -->
         <el-button v-if="canViewCarriers" size="small" text type="primary" @click="goCarriers">

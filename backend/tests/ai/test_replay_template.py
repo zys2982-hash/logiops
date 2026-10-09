@@ -12,6 +12,7 @@ from app.ai.replay import (
     ReplayProvider,
     ReplayStore,
     default_t2_plan,
+    knowledge_queries,
     knowledge_query,
     plan_from_steps,
     resolve_replay_dir,
@@ -91,16 +92,20 @@ def test_plan_from_steps_ignores_non_tool_steps():
 def test_default_plan_matches_documented_tool_order(repos, case_a):
     facts = read_models.exception_facts(repos, case_a["exception_id"])
     names = [call.name for call in default_t2_plan(facts)]
-    assert names == [
+    # 前 5 个固定工具 + **每个风险因子各查一次知识库**（用户口径 2026-10-08：
+    # AI 拿着系统算好的风险因子，按因子分别去知识库找方案）
+    assert names[:5] == [
         "get_order",
         "get_tracking_events",
         "get_customer_sla",
         "get_vehicle",
         "get_exception_history",
-        "search_knowledge",
     ]
-    # 检索词跟着**建单原因**走：CASE-A 在 AI 层夹具里是延误单（车辆单不做 SLA 判定，
-    # 需要"已违约"的夹具只能按延误口径造）→ 默认计划检索"延误"
+    assert set(names[5:]) == {"search_knowledge"}
+    assert len(names) == 5 + len(knowledge_queries(facts))
+    # 检索词跟着**风险因子**走：CASE-A 是"延误 270 分钟(+2) + VIP 客户(+1)" → 延误 + VIP 各查一次
+    assert knowledge_queries(facts) == ["延误", "VIP 客户"]
+    # 兼容入口仍返回首个（最主要）检索词
     assert knowledge_query(facts) == "延误"
 
 
@@ -190,12 +195,13 @@ def test_replay_provider_prefers_fixture_and_reports_template(tmp_path, repos, c
         },
     )()
     plan = provider.preset_plan("ANALYZE_EXCEPTION", state=state)
-    assert [call.name for call in plan] == [  # 无 fixture → 默认计划
+    assert [call.name for call in plan] == [  # 无 fixture → 默认计划（每个风险因子各查一次知识库）
         "get_order",
         "get_tracking_events",
         "get_customer_sla",
         "get_vehicle",
         "get_exception_history",
+        "search_knowledge",
         "search_knowledge",
     ]
     result = provider.next_step("ANALYZE_EXCEPTION", state=state, repair_errors=[])

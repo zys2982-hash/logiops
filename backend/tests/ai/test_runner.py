@@ -109,6 +109,8 @@ def test_execute_analysis_template_fallback_without_fixture(db_session, repos, c
         "get_customer_sla",
         "get_vehicle",
         "get_exception_history",
+        # 每个风险因子各查一次知识库：CASE-A = 延误(+2) + VIP 客户(+1)
+        "search_knowledge",
         "search_knowledge",
     ]
     assert len(tool_steps) + len(llm_steps) <= 8  # 有界循环（§11.3）
@@ -254,6 +256,7 @@ def test_prompt_refresh_exposes_tool_observations(db_session, repos, case_a, tmp
         "get_customer_sla",
         "get_vehicle",
         "get_exception_history",
+        "search_knowledge",
         "search_knowledge",
     ]
 

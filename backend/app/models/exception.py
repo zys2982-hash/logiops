@@ -3,9 +3,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Connection,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+)
+from sqlalchemy.orm import Mapped, Mapper, mapped_column, relationship
 
 from app.core.clock import utcnow_naive
 from app.db.base import (
@@ -59,6 +72,13 @@ class ExceptionCase(
     sla_breached: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
     risk_score: Mapped[int | None] = mapped_column(Integer)
     risk_factors_json: Mapped[list | None] = mapped_column(JSON)
+    # 建单时**冻结**的风险判定（口径 2026-10-08，用户要求"写死在那里不再改变"）：
+    # 上面三个字段每次重算都会被覆盖（改预计到达时间 / 修正实际送达 / 车辆修复 / tick 刷新），
+    # 所以"建单那一刻的判定"必须单独存一份不可变的快照，供详情页留痕。
+    # 由模块底部的 before_insert 事件写入；建单之后任何路径都不再修改它们。
+    initial_risk_score: Mapped[int | None] = mapped_column(Integer)
+    initial_level: Mapped[str | None] = mapped_column(String(16))
+    initial_risk_factors_json: Mapped[list | None] = mapped_column(JSON)
     assigned_to: Mapped[int | None] = mapped_column(PKType)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -135,3 +155,34 @@ class Notification(Base, PkMixin, WorkspaceScopedMixin, TimestampMixin, VersionM
     approved_at: Mapped[datetime | None] = mapped_column(DateTime)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
     source_approval_id: Mapped[int | None] = mapped_column(PKType)
+
+
+# --- 建单快照：把"建单那一刻"的风险判定冻结下来（口径 2026-10-08）------------------
+def freeze_initial_risk(target: ExceptionCase, *, overwrite: bool = False) -> None:
+    """把**当前**规则判定抄进 initial_*。
+
+    `overwrite=True` 只允许在**建单流程还没结束**时使用：人工建单是"先建单（此时车辆还没置维修中，
+    车辆故障因子不计分）→ 车辆转维修中 → 再重算风险"三步走，只有最后一步的值才是"异常出现时的值"。
+    建单流程结束之后**任何地方都不许**再用 overwrite，快照因此保持不可变。
+    """
+    if not overwrite and target.initial_risk_score is not None:
+        return
+    if target.risk_score is None:
+        return
+    from app.rules.risk import level_of  # 局部导入：避免模型层与规则层的导入环
+
+    target.initial_risk_score = int(target.risk_score)
+    target.initial_level = str(level_of(int(target.risk_score)))
+    target.initial_risk_factors_json = [dict(item) for item in (target.risk_factors_json or [])]
+
+
+@event.listens_for(ExceptionCase, "before_insert")
+def _freeze_initial_risk(
+    mapper: Mapper[Any], connection: Connection, target: ExceptionCase
+) -> None:
+    """插入 `exception_case` 时尽量冻结快照（放在 ORM 事件上，任何建单路径都不会漏）。
+
+    入口不止一处（检测自动建单、人工建单、延误自动建单、演示造数 …… 将来还可能新增），
+    放在插入事件上是最不容易漏的做法；插入时风险值还没算的路径由显式调用补齐。
+    """
+    freeze_initial_risk(target)

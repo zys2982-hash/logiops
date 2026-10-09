@@ -6,7 +6,15 @@ import PanelCard from './PanelCard.vue'
 import { useAiAnalysis } from '@/composables/useAiAnalysis'
 import { useDemoStore } from '@/stores/demo'
 import { formatDateTime, formatDelay } from '@/utils/datetime'
-import { analysisStatusLabel, analysisStatusType, formatDuration, toolNameLabel } from '@/utils/format'
+import {
+  analysisStatusLabel,
+  analysisStatusType,
+  approvalActionLabel,
+  formatDuration,
+  riskLevelLabel,
+  rootCauseLabel,
+  toolNameLabel,
+} from '@/utils/format'
 import type { AiAnalysis, AiAnalysisStep, AnalysisSummary, ExceptionDetail } from '@/types'
 
 const props = defineProps<{
@@ -36,6 +44,16 @@ const STEP_LIMIT = 14
 
 const steps = computed<AiAnalysisStep[]>(() => analysis.value?.steps ?? [])
 const output = computed(() => analysis.value?.output ?? null)
+
+/**
+ * 详细分析（工具调用步骤 + 模型元信息）默认**收起**，只展示"完整的结论"（摘要/根因/影响/建议/待确认/证据）。
+ * 例外：分析进行中或等待超时时**强制展开** —— 否则用户看不到进度、只能干等。
+ * 选择记在 localStorage 里，刷新页面后保持（不用每次重新展开）。
+ */
+const DETAIL_KEY = 'logiops.aiDetail'
+const showDetail = ref(localStorage.getItem(DETAIL_KEY) === '1')
+watch(showDetail, (value) => localStorage.setItem(DETAIL_KEY, value ? '1' : '0'))
+const showProcess = computed(() => showDetail.value || isRunning.value || timedOut.value)
 
 /** 等待反馈：跑起来以后显示"已用 N 秒"，避免只看到一句"等待后端返回步骤…"干等 */
 const demo = useDemoStore()
@@ -139,6 +157,15 @@ defineExpose({ loadExisting, isPolling, analysisId })
         {{ analysisStatusLabel(status) }}
       </el-tag>
       <el-button
+        v-if="status && !isRunning"
+        size="small"
+        text
+        type="primary"
+        @click="showDetail = !showDetail"
+      >
+        {{ showDetail ? '收起详细分析' : '查看 AI 详细分析' }}
+      </el-button>
+      <el-button
         v-if="canAnalyze && !isRunning"
         size="small"
         type="primary"
@@ -190,48 +217,59 @@ defineExpose({ loadExisting, isPolling, analysisId })
     </div>
 
     <template v-else>
-      <div class="progress-title">
-        <span>工具调用步骤（{{ steps.length }}/{{ STEP_LIMIT }}）</span>
-        <span v-if="analysis?.is_replay" class="u-text-muted">来源：预录样本（replay fixture）</span>
-      </div>
-      <div
-        v-for="(step, index) in steps"
-        :key="step.step_no"
-        class="ai-step"
-        :class="`ai-step--${stepState(index)}`"
-      >
-        <div class="ai-step-head">
-          <el-icon :color="stepColor(index)" :class="{ 'is-loading': stepState(index) === 'running' }">
-            <component :is="stepIcon(index)" />
-          </el-icon>
-          <b>{{ step.step_no }}.</b>
-          <span>{{ stepTitle(step) }}</span>
-          <span class="u-text-muted">{{ formatDuration(step.duration_ms) }}</span>
+      <!-- ===== 详细分析（工具调用步骤 + 模型元信息）：默认收起，点「查看 AI 详细分析」展开 ===== -->
+      <template v-if="showProcess">
+        <div class="progress-title">
+          <span>工具调用步骤（{{ steps.length }}/{{ STEP_LIMIT }}）</span>
+          <span v-if="analysis?.is_replay" class="u-text-muted">来源：预录样本（replay fixture）</span>
         </div>
-        <div v-if="step.result_summary" class="u-text-muted">{{ step.result_summary }}</div>
-        <div v-if="step.error" class="u-text-muted log-level-CRITICAL">{{ step.error }}</div>
-      </div>
-      <div v-if="steps.length === 0" class="u-text-muted waiting">
-        <el-icon class="is-loading"><Loading /></el-icon>
-        <span v-if="isRunning">正在分析，已用 {{ elapsedSeconds }} 秒…</span>
-        <span v-else>等待后端返回步骤…</span>
-        <span class="u-text-muted">
-          （后端每完成一步才写一条记录，所以第一次模型调用结束前这里是空的；{{
-            demo.aiMode === 'live' ? '当前是实时模型模式，单步约 3–10 秒' : '回放样本模式通常 1 秒内完成'
-          }}）
-        </span>
-      </div>
-      <div v-else-if="isRunning" class="u-text-muted">分析进行中，已用 {{ elapsedSeconds }} 秒…</div>
+        <div
+          v-for="(step, index) in steps"
+          :key="step.step_no"
+          class="ai-step"
+          :class="`ai-step--${stepState(index)}`"
+        >
+          <div class="ai-step-head">
+            <el-icon :color="stepColor(index)" :class="{ 'is-loading': stepState(index) === 'running' }">
+              <component :is="stepIcon(index)" />
+            </el-icon>
+            <b>{{ step.step_no }}.</b>
+            <span>{{ stepTitle(step) }}</span>
+            <span class="u-text-muted">{{ formatDuration(step.duration_ms) }}</span>
+          </div>
+          <div v-if="step.result_summary" class="u-text-muted">{{ step.result_summary }}</div>
+          <div v-if="step.error" class="u-text-muted log-level-CRITICAL">{{ step.error }}</div>
+        </div>
+        <div v-if="steps.length === 0" class="u-text-muted waiting">
+          <el-icon class="is-loading"><Loading /></el-icon>
+          <span v-if="isRunning">正在分析，已用 {{ elapsedSeconds }} 秒…</span>
+          <span v-else>等待后端返回步骤…</span>
+          <span class="u-text-muted">
+            （后端每完成一步才写一条记录，所以第一次模型调用结束前这里是空的；{{
+              demo.aiMode === 'live' ? '当前是实时模型模式，单步约 3–10 秒' : '回放样本模式通常 1 秒内完成'
+            }}）
+          </span>
+        </div>
+        <div v-else-if="isRunning" class="u-text-muted">分析进行中，已用 {{ elapsedSeconds }} 秒…</div>
 
-      <el-divider />
+        <div class="u-text-muted u-mt-8 u-mono">
+          model={{ analysis?.model ?? '—' }} · prompt={{ analysis?.prompt_version ?? '—' }} · tokens={{
+            analysis?.tokens_in ?? 0
+          }}/{{ analysis?.tokens_out ?? 0 }} · latency={{ formatDuration(analysis?.latency_ms) }} · finished={{
+            formatDateTime(analysis?.finished_at)
+          }}
+        </div>
+        <el-divider />
+      </template>
 
+      <!-- ===== 结论（模型输出）：默认展示 ===== -->
       <template v-if="output">
         <h4 class="block-title">结论摘要</h4>
         <p class="summary-text">{{ output.summary }}</p>
 
         <h4 class="block-title">根因</h4>
         <div>
-          <el-tag size="small" type="warning" effect="plain">{{ output.root_cause.code }}</el-tag>
+          <el-tag size="small" type="warning" effect="plain">{{ rootCauseLabel(output.root_cause.code) }}</el-tag>
           <span>{{ output.root_cause.note }}</span>
         </div>
 
@@ -247,7 +285,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
             {{ output.impact.affected_customer_level ?? '—' }}
           </el-descriptions-item>
           <el-descriptions-item label="规则等级（AI 无权改）">
-            {{ analysis?.risk_level_calculated ?? '—' }}
+            {{ riskLevelLabel(analysis?.risk_level_calculated) }}
           </el-descriptions-item>
         </el-descriptions>
 
@@ -255,7 +293,7 @@ defineExpose({ loadExisting, isPolling, analysisId })
         <ol class="suggestion-list">
           <li v-for="suggestion in output.suggestions" :key="suggestion.code">
             <b>{{ suggestion.title }}</b>
-            <el-tag size="small" effect="plain">{{ suggestion.code }}</el-tag>
+            <el-tag size="small" effect="plain">{{ approvalActionLabel(suggestion.code) }}</el-tag>
             <div v-if="suggestion.rationale" class="u-text-muted">依据：{{ suggestion.rationale }}</div>
           </li>
         </ol>
@@ -269,12 +307,8 @@ defineExpose({ loadExisting, isPolling, analysisId })
         <h4 class="block-title">证据来源（点击可跳原文）</h4>
         <EvidenceList :refs="output.evidence_refs" :order-id="exception.order_id" :exception-id="exception.id" />
 
-        <div class="u-text-muted u-mt-12 u-mono">
-          model={{ analysis?.model ?? '—' }} · prompt={{ analysis?.prompt_version ?? '—' }} · tokens={{
-            analysis?.tokens_in ?? 0
-          }}/{{ analysis?.tokens_out ?? 0 }} · latency={{ formatDuration(analysis?.latency_ms) }} · finished={{
-            formatDateTime(analysis?.finished_at)
-          }}
+        <div v-if="!showProcess" class="u-text-muted u-mt-12">
+          以上是 AI 的完整结论；工具调用过程、模型与 token 信息点右上角「查看 AI 详细分析」。
         </div>
       </template>
       <div v-else-if="isRunning" class="u-text-muted u-mt-12">分析进行中，结论将在 READY 后展示…</div>

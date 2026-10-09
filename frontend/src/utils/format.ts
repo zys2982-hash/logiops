@@ -60,6 +60,20 @@ export function riskScoreLabel(score?: number | null): string {
   return `${score} 分`
 }
 
+/** AI 根因 code → 中文（给人看的地方不出现 VEHICLE_BREAKDOWN 这类英文常量） */
+export const ROOT_CAUSE_MAP: Record<string, string> = {
+  VEHICLE_BREAKDOWN: '车辆故障',
+  TRAFFIC: '交通受阻',
+  WEATHER: '天气原因',
+  CUSTOMS: '关务原因',
+  CUSTOMER: '客户原因',
+  UNKNOWN: '待确认',
+}
+
+export function rootCauseLabel(code?: string | null): string {
+  return code ? (ROOT_CAUSE_MAP[code] ?? code) : '—'
+}
+
 /* -------------------------------------------------------------- 异常 */
 
 export const EXCEPTION_STATUS_MAP: Record<ExceptionStatus, Labeled> = {

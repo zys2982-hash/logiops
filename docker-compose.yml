@@ -88,9 +88,12 @@ services:
       # 演示数据规模：compact=3 单（默认，界面清爽）| full=1000 单
       SEED_SCALE: ${SEED_SCALE:-compact}
       CLOCK_MODE: system
-      AI_MODE: replay
+      # AI 总开关（默认关闭）与模式：由根目录 .env 控制，改完 `docker compose up -d` 生效。
+      # 开启且 AI_MODE=live 才会真的调大模型（需要 LLM_API_KEY，且会花钱）。
+      AI_ENABLED: ${AI_ENABLED:-false}
+      AI_MODE: ${AI_MODE:-replay}
       AI_REPLAY_DIR: tests/fixtures/ai
-      # 仅 AI_MODE=live 时才需要；AI 默认关闭（AI_ENABLED=false），留空也能跑全流程
+      # 仅 AI_ENABLED=true 且 AI_MODE=live 时才需要真实 key
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com/v1}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}

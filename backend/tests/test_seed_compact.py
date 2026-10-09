@@ -43,7 +43,9 @@ def test_compact_scale_is_default_and_covers_every_exception_type(db_session, bo
     seeded_delay = int(
         round((delay_order.planned_delivery_at - delay_order.promised_delivery_at).total_seconds() / 60)
     )
-    assert seeded_delay == delay_case.sla_delay_minutes, f"造数的延误 {seeded_delay} ≠ 单上的 {delay_case.sla_delay_minutes}"
+    assert seeded_delay == delay_case.sla_delay_minutes, (
+        f"造数的延误 {seeded_delay} ≠ 单上的 {delay_case.sla_delay_minutes}"
+    )
     # 车辆故障单不做 SLA 判定（新模型）
     vehicle_case = next(case for case in cases if case.type == "VEHICLE_BREAKDOWN")
     assert vehicle_case.sla_delay_minutes is None and vehicle_case.sla_breached is False

@@ -36,7 +36,7 @@ from app.models.enums import (
     RootCauseCode,
     VehicleStatus,
 )
-from app.models.exception import CarrierMessage, ExceptionCase
+from app.models.exception import CarrierMessage, ExceptionCase, freeze_initial_risk
 from app.models.transport import Order
 from app.repositories import Repos
 from app.rules import state_machine
@@ -481,6 +481,9 @@ class ExceptionService:
         # 车辆故障异常：先把车辆置"维修中"并记下原状态，再重算风险（车辆故障因子按现状计入）
         if self._apply_vehicle_repairing(case, actor_id=actor_id) is not None:
             eta_flow.refresh_case_impact(self.repos, case, order, eta_at=case.expected_eta_at)
+        # 建单流程走到这里才算"异常出现"，此时才冻结风险快照（口径 2026-10-08）：
+        # 上面那次 create_case_record 里的冻结抓的是"车辆还没置维修中"的中间值（会少 1 分）。
+        freeze_initial_risk(case, overwrite=True)
         if level is not None:
             case.level = str(level).upper()
         bump_version(case)
@@ -1587,6 +1590,10 @@ class ExceptionService:
             "sla_breached": bool(case.sla_breached),
             "risk_score": case.risk_score,
             "risk_factors": case.risk_factors_json or [],
+            # 建单时**冻结**的风险判定（口径 2026-10-08）：详情页显示这一份，不随后续重算变化
+            "initial_risk_score": case.initial_risk_score,
+            "initial_level": case.initial_level,
+            "initial_risk_factors": case.initial_risk_factors_json or [],
             # 可解释性：每个因子的事实来源 + 这张单由哪些在途信号构成（用户反馈"信号像是凭空变成一张单"）
             "risk_explanation": explain.risk_explanation(self.repos, case, order),
             "assigned_to": case.assigned_to,
